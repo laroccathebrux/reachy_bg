@@ -230,6 +230,62 @@ Measured with synthetic voices through the Mac speakers:
 
 `listen.py` (Whisper + Ollama) stays as the offline path and for the research components.
 
+## Done: "stay quiet" decided locally, no cloud turn for table talk (2026-09-14)
+
+The agent used to answer everything the microphone heard. Now the local ear decides first and
+the agent only hears what is for the robot (`src/speech/gatekeeper.py`,
+`src/speech/agent_audio.py`), so a sentence between players costs no turn and no tokens:
+
+- **Addressee gate.** After the echo gate, every 250 ms frame is held in a time-stamped
+  buffer instead of going to the agent. When the local VAD closes the utterance (600 ms of
+  silence), the gatekeeper transcribes it with the local Whisper, names the voice, applies
+  the rules and either releases the frames of that utterance in a burst (plus 1 s of silence
+  so the agent's turn detector closes the turn) or drops them. The agent sees audio without
+  timestamps, so a held-then-burst utterance is just a late one; the barge-in path already
+  relied on that.
+- **No extra wait when the name is heard.** While a voice is running (from 0.9 s, then every
+  1.2 s of new voice) the same Whisper transcribes the audio so far; if the robot's name is in
+  it, the gate opens at once and the rest of the sentence streams live. A barge-in that
+  passed the echo check opens the gate the same way.
+- **Language switch before the audio leaves.** When Whisper says the utterance is in the
+  other language (confidence >= 0.8, three words or more), the audio is dropped, the session
+  restarts with the native voice and the text is sent there: the rules search now runs once
+  per question. In `--always-answer` mode the old session's tools also stop searching once it
+  is being closed (`client_tools(active=...)`).
+- **Rules added**: another enrolled player named as the vocative ("Bruno, o que você acha?")
+  is not for the robot; a question after a leading "e"/"então"/"so"/"and" is still a question;
+  the self-echo label applies only to utterances that overlapped the robot's playback (an
+  English rules question 24 s after the answer was marked `self_echo` before); Whisper's
+  looping keyword hallucination ("omen omen omen...") counts as no speech.
+- **Whisper twice as fast for the gate**: `mlx_whisper.transcribe` runs the encoder once
+  for language id and again to decode, on a 30 s padded window either way; the gate path
+  (`Transcriber.transcribe(fast=True)`) encodes once and reuses the features for both.
+- **Flags**: `--humans N` (people at the table; default the enrolled voices; 1 = solo,
+  everything is for the robot and the gate is off), `--always-answer` (gate off, decisions
+  logged as shadow). The diart sidecar is started automatically when
+  `tools/live-diarizer/.venv` exists and nothing listens on :8765 (with a clean environment;
+  our venv variables made its torch import from the wrong site-packages).
+- `scripts/gate_replay.py` replays saved captures through the gate (no microphone, no agent),
+  the way to test rule changes on real voices without spending agent minutes.
+- 114 tests in the main project (+4 in the sidecar).
+
+Measured on the owner's real-voice captures of this day (`scripts/gate_replay.py`, Mac loaded
+with work apps):
+
+| Signal | Value |
+|---|---|
+| Whisper on a 1-4 s utterance, `mlx_whisper.transcribe` (two encoder passes) | 1.1-1.8 s, median 1.26 s |
+| Same with the single-pass gate path | 0.64-0.73 s, median 0.70 s (first call after load 1.2 s) |
+| Gate decision after the VAD closes the utterance | 0.67-0.78 s |
+| Extra delay before the agent gets a released utterance | about 1.3 s (0.6 s VAD tail + 0.7 s Whisper), minus what the agent saves by receiving the audio in a burst |
+| Utterances that name the robot (>= 0.9 s of voice) | no extra delay once the partial transcript has the name |
+| Decisions on the 20 captures (two humans assumed) | 4 released (name, rules questions), 3 switched to English, 11 discarded, 2 no speech; 0 wrong |
+
+Not yet done: the live test with the owner speaking (one sentence with "Reachy", one table
+sentence without it, one rules question), checking in `conversation.jsonl` that only the
+table sentence produced no `heard`/`said` turn. Run it with `--humans 2` (one enrolled voice
+otherwise means solo mode, where everything is for the robot).
+
 ## Decisions taken
 
 | Topic | Decision | Where |
@@ -241,6 +297,7 @@ Measured with synthetic voices through the Mac speakers:
 | Speech output | ElevenLabs by default, local TTS optional | src/config.py |
 | Conversation | ElevenLabs agent (cloud) + local client tools; local Whisper + Ollama kept as fallback | docs/SPEECH_PIPELINE.md |
 | Agent LLM | `gpt-4.1-mini` inside ElevenLabs (owner's decision, 2026-09-14): follows the prompt better than the Gemini default; billed through the ElevenLabs account, no OpenAI key | src/config.py |
+| Turn-taking | the local ear decides speak/stay-quiet before any audio reaches the agent (rules on the local Whisper transcript; a local LLM classifier only if the rules prove insufficient) | src/speech/gatekeeper.py |
 | Game setup | verbal briefing + knowledge base, no card OCR | docs/SETUP_PROTOCOL.md |
 | Vision | YOLO-World + image-embedding gallery, SAM not used | docs/DESIGN_DOCUMENT.md |
 | Prior project | read for lessons only; no code copied | CLAUDE.md |
@@ -261,16 +318,14 @@ Blocked on the owner deciding where the robot sits at the table.
 
 ### Immediate next steps (decided 2026-09-14 with the owner)
 
-1. **Local "stay quiet" gate, no LLM tokens** (`talk.py`): when the local addressee rules say
-   the utterance is not for the robot, hold the audio back from the agent (same mechanism as
-   the echo gate) instead of only logging a shadow decision. Rules first (name, solo mode,
-   follow-up, game question); a small local LLM only if the rules prove insufficient, so no
-   cloud tokens are spent before the robot decides to speak.
+1. ~~Local "stay quiet" gate, no LLM tokens~~ done (section above); pending its live test
+   with the owner speaking, and a local LLM classifier only if the rules prove insufficient
+   in real sessions.
 2. **Phase 1, board vision**: the owner will place the robot so the camera sees the whole
    board; then camera permission, calibration photos, `src/vision/`.
 3. A recorded 2-3 player session (the annotated dataset) waits until players are available.
-4. Small fixes pending: the rules tool runs twice across a language switch; the shadow
-   label marked an English question as echo; start the diart sidecar by default when present.
+4. ~~Small fixes: the rules tool ran twice across a language switch; the shadow label marked
+   an English question as echo; start the diart sidecar by default when present~~ done.
 
 ### Phase 2: speech and turn-taking (weeks 2-3)
 
@@ -282,6 +337,7 @@ Blocked on the owner deciding where the robot sits at the table.
 - [x] `tools/live-diarizer/`: diart sidecar publishing speaker turns over WebSocket.
 - [x] Speaker enrolment and voiceprint matching.
 - [x] Rule-based addressee classifier + speak/silence log.
+- [x] The classifier gates the audio to the agent (no cloud turn unless addressed).
 - [ ] Record and annotate a real 2-3 player session; measure the rules against the annotation.
 - [ ] Map diart labels to enrolled names over time (label -> name votes) for overlap cases.
 

@@ -35,6 +35,8 @@ SAMPLE_RATE = 16_000
 # AND a low average log-probability is silence or noise, not words.
 NO_SPEECH_THRESHOLD = 0.6
 LOGPROB_THRESHOLD = -1.0
+REPETITION_MAX_UNIQUE = 0.34  # unique/total words at or below this is a looping hallucination
+COMPRESSION_MAX = 2.4  # Whisper's own threshold for repetitive output
 # Below this probability the language head is guessing; the speaker's last language wins.
 LANGUAGE_MIN_CONFIDENCE = 0.5
 
@@ -132,6 +134,9 @@ def is_hallucination(text: str, avg_logprob: float, no_speech_prob: float) -> bo
         return True
     if any(len(word) > 15 and len(set(word)) <= 3 for word in normalised.split()):
         return True  # "Eeeeeeeeee", "hahahahaha": a stretched noise, not speech
+    words = normalised.split()
+    if len(words) >= 4 and len(set(words)) / len(words) <= REPETITION_MAX_UNIQUE:
+        return True  # "omen omen omen omen ...": the prompt's keywords looping on noise
     return no_speech_prob > NO_SPEECH_THRESHOLD and avg_logprob < LOGPROB_THRESHOLD
 
 
@@ -193,19 +198,63 @@ class Transcriber:
         return time.perf_counter() - started
 
     # ------------------------------------------------------------------ recognition
-    def identify_language(self, audio: np.ndarray) -> tuple[str, str, float]:
-        """``(tag, whisper_code, probability)`` for float32 16 kHz audio."""
+    def _encode(self, audio: np.ndarray) -> Any:
+        """Encoder features of one 30 s window (float32 16 kHz audio, padded or trimmed)."""
         import mlx.core as mx
         from mlx_whisper.audio import N_FRAMES, log_mel_spectrogram, pad_or_trim
 
         model = self._load()
         mel = log_mel_spectrogram(audio, n_mels=model.dims.n_mels)
         segment = pad_or_trim(mel, N_FRAMES, axis=-2).astype(mx.float16)
-        _, probs = model.detect_language(segment)
+        return model.encoder(segment[None])
+
+    def _language_from(self, features: Any) -> tuple[str, str, float]:
+        from mlx_whisper.decoding import detect_language as mlx_detect_language
+
+        _, probs = mlx_detect_language(self._load(), features)
         distribution = probs[0] if isinstance(probs, list) else probs
         tag, prob = choose_language(distribution, self.supported)
         code = whisper_code(tag) if tag else max(distribution, key=distribution.get)
         return tag, code, prob
+
+    def identify_language(self, audio: np.ndarray) -> tuple[str, str, float]:
+        """``(tag, whisper_code, probability)`` for float32 16 kHz audio."""
+        return self._language_from(self._encode(audio))
+
+    def _choose(self, tag: str, code: str, confidence: float, fallback_language: str, minimum: float):
+        fallback = map_language(fallback_language, self.supported)
+        if fallback and confidence < minimum and tag != fallback:
+            log.info("language %s at %.2f is unsure; decoding as %s", tag or code, confidence, fallback)
+            return fallback, whisper_code(fallback)
+        return tag, code
+
+    def _transcribe_window(
+        self, samples: np.ndarray, fallback_language: str, min_language_confidence: float
+    ) -> tuple[str, str, float, str, float, float]:
+        """One encoder pass for both language id and decoding (audio of at most 30 s).
+
+        ``mlx_whisper.transcribe`` runs the encoder twice (once to detect the language, once
+        to decode) and pads every input to 30 s, so a 2 s utterance costs the same as a
+        30 s one; reusing the features halves the time of the gate decision.
+        Returns ``(tag, code, confidence, text, avg_logprob, no_speech_prob)``.
+        """
+        from mlx_whisper.decoding import DecodingOptions, decode
+
+        model = self._load()
+        features = self._encode(samples)
+        if self.pinned:
+            tag, code, confidence = map_language(self.pinned, self.supported), self.pinned, 1.0
+        else:
+            tag, code, confidence = self._language_from(features)
+            tag, code = self._choose(tag, code, confidence, fallback_language, min_language_confidence)
+        options = DecodingOptions(
+            language=code, prompt=self.prompt, fp16=True, temperature=0.0, without_timestamps=True
+        )
+        result = decode(model, features, options)[0]
+        text = " ".join(str(result.text).split())
+        if result.compression_ratio > COMPRESSION_MAX:
+            text = ""
+        return tag, code, confidence, text, float(result.avg_logprob), float(result.no_speech_prob)
 
     def transcribe(
         self,
@@ -214,12 +263,14 @@ class Transcriber:
         *,
         fallback_language: str = "",
         min_language_confidence: float = LANGUAGE_MIN_CONFIDENCE,
+        fast: bool = False,
     ) -> Transcript:
         """Recognize ``audio``; when the language head is unsure, decode in ``fallback_language``.
 
         Short or cut utterances often get a low-probability wrong language (English at 0.25
         for a Portuguese fragment) and then decode as nonsense; the speaker's previous
-        language is the better bet in that case.
+        language is the better bet in that case. ``fast`` decodes one 30 s window with a
+        single encoder pass (the gate's path: about half the time, no temperature fallback).
         """
         if sample_rate != SAMPLE_RATE:
             from src.speech.microphone import resample
@@ -231,14 +282,19 @@ class Transcriber:
         from mlx_whisper.transcribe import transcribe as whisper_transcribe
 
         self._load()
+        if fast and audio_s <= 30:
+            try:
+                tag, code, confidence, text, avg_logprob, no_speech = self._transcribe_window(
+                    samples, fallback_language, min_language_confidence
+                )
+            except Exception as exc:
+                raise ASRError(f"whisper failed: {exc}") from exc
+            return self._finish(text, tag, code, confidence, avg_logprob, no_speech, audio_s, started)
         if self.pinned:
             tag, code, confidence = map_language(self.pinned, self.supported), self.pinned, 1.0
         else:
             tag, code, confidence = self.identify_language(samples)
-            fallback = map_language(fallback_language, self.supported)
-            if fallback and confidence < min_language_confidence and tag != fallback:
-                log.info("language %s at %.2f is unsure; decoding as %s", tag or code, confidence, fallback)
-                tag, code = fallback, whisper_code(fallback)
+            tag, code = self._choose(tag, code, confidence, fallback_language, min_language_confidence)
         try:
             result = whisper_transcribe(
                 samples,
@@ -255,6 +311,19 @@ class Transcriber:
             raise ASRError(f"whisper failed: {exc}") from exc
         avg_logprob, no_speech = summarise_segments(result.get("segments", []))
         text = " ".join(str(result.get("text", "")).split())
+        return self._finish(text, tag, code, confidence, avg_logprob, no_speech, audio_s, started)
+
+    def _finish(
+        self,
+        text: str,
+        tag: str,
+        code: str,
+        confidence: float,
+        avg_logprob: float,
+        no_speech: float,
+        audio_s: float,
+        started: float,
+    ) -> Transcript:
         if is_hallucination(text, avg_logprob, no_speech):
             text = ""
         seconds = time.perf_counter() - started

@@ -6,13 +6,14 @@
 The rules, in order of confidence:
 
 1. The robot's name (or what Whisper hears instead of it) appears: addressed.
-2. A question or a short reply within ``FOLLOW_UP_WINDOW_S`` after the robot spoke: follow-up.
-3. A question about the rules or the game while it is the robot's turn: probably for it.
-4. A rules question to the table: answered when ``ANSWER_GAME_QUESTIONS`` is on (a
+2. Another player is named as the vocative ("Bruno, what do you think?"): not for the robot.
+3. A question or a short reply within ``FOLLOW_UP_WINDOW_S`` after the robot spoke: follow-up.
+4. A question about the rules or the game while it is the robot's turn: probably for it.
+5. A rules question to the table: answered when ``ANSWER_GAME_QUESTIONS`` is on (a
    knowledgeable player would), logged either way.
-5. With a single person at the table (``humans_present=1``), anything they say out loud is
+6. With a single person at the table (``humans_present=1``), anything they say out loud is
    for the robot (second-person forms with more confidence).
-6. Everything else: stay quiet (people talk to each other most of the time).
+7. Everything else: stay quiet (people talk to each other most of the time).
 
 Every decision is appended to ``data/game_logs/addressee.jsonl`` by :class:`TurnLogger`;
 that file is the dataset for the learned classifier later.
@@ -24,6 +25,7 @@ import json
 import re
 import time
 import unicodedata
+from collections.abc import Iterable
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
@@ -61,16 +63,11 @@ def _words(text: str) -> list[str]:
     return re.findall(r"[a-z0-9]+", _strip_accents(text.lower()))
 
 
-def mentions_robot(text: str, aliases: tuple[str, ...] = ROBOT_NAME_ALIASES) -> bool:
-    """The robot is named as a vocative: at the start or end of the sentence, or before a comma.
-
-    Some aliases are ordinary English words ("rich"), so a match in the middle of a sentence
-    ("the rich merchant") does not count.
-    """
+def _vocative(text: str, names: set[str]) -> bool:
+    """One of ``names`` is used as a vocative: first or last word, after an interjection, or before a comma."""
     words = _words(text)
-    if not words:
+    if not words or not names:
         return False
-    names = {_strip_accents(a) for a in aliases}
     candidates = {words[0], words[-1]}
     if len(words) > 1 and words[0] in _INTERJECTIONS:
         candidates.add(words[1])
@@ -80,10 +77,31 @@ def mentions_robot(text: str, aliases: tuple[str, ...] = ROBOT_NAME_ALIASES) -> 
     return bool(names & before_punctuation)
 
 
+def mentions_robot(text: str, aliases: tuple[str, ...] = ROBOT_NAME_ALIASES) -> bool:
+    """The robot is named as a vocative: at the start or end of the sentence, or before a comma.
+
+    Some aliases are ordinary English words ("rich"), so a match in the middle of a sentence
+    ("the rich merchant") does not count.
+    """
+    return _vocative(text, {_strip_accents(a.lower()) for a in aliases})
+
+
+def mentions_person(text: str, names: Iterable[str]) -> bool:
+    """Someone else at the table is named as the vocative (first names, accents ignored)."""
+    people = {_strip_accents(n.strip().lower().split()[0]) for n in names if n and n.strip()}
+    return _vocative(text, people)
+
+
+_LEADING = frozenset("e ai entao mas ok ta hey ei oi ola and so but then well".split())
+
+
 def is_question(text: str, language: str) -> bool:
+    """A question mark, or an interrogative as the first word (after "e", "então", "so", "and"...)."""
     if "?" in text:
         return True
     words = _words(text)
+    while len(words) > 1 and words[0] in _LEADING:
+        words = words[1:]
     return bool(words) and words[0] in _INTERROGATIVES.get(language, ())
 
 
@@ -165,15 +183,20 @@ def decide(
     answer_game_questions: bool = ANSWER_GAME_QUESTIONS,
     humans_present: int | None = None,
     follow_up_ok: bool = True,
+    other_names: Iterable[str] = (),
 ) -> Decision:
     """Decide whether the utterance is for the robot.
 
     ``humans_present`` is how many people can be talked to besides the robot (None =
     unknown); ``follow_up_ok`` says whether the speaker is the one the robot was talking to
-    (a stranger's cough right after an answer is not a follow-up).
+    (a stranger's cough right after an answer is not a follow-up); ``other_names`` are the
+    other players at the table (the speaker excluded), so that naming one of them means the
+    sentence is not for the robot.
     """
     if mentions_robot(text):
         return Decision(True, "name", 0.95)
+    if mentions_person(text, other_names):
+        return Decision(False, "other_person", 0.85)
     if humans_present == 1 and len(_words(text)) >= 2:
         # One person at the table: whatever they say out loud is for the robot (a second-person
         # form makes it certain, anything else is still far more likely than talking alone).
@@ -216,6 +239,7 @@ __all__ = [
     "decide",
     "looks_like_echo",
     "mentions_robot",
+    "mentions_person",
     "is_question",
     "about_the_game",
     "second_person",

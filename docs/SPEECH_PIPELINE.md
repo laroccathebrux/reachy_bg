@@ -226,18 +226,32 @@ robot starts talking: 5-6 s after the person stopped, on a busy Mac
 ## The conversation as built: ElevenLabs agent + local ears (2026-09-14)
 
 ```
-Mac microphone --250 ms pcm16k--> RobotAudioInterface --gate--> ElevenLabs agent (ASR, LLM, TTS, turns)
-      |                                   |  held while the speaker is busy      |  client_tool_call
-      |  tap                              |                                      v
-      v                                   |                       game_rules / game_knowledge (Qdrant, local)
-LocalEar: Segmenter (VAD) -> voiceprint  |                                      |
-      |        -> diarizer label          |  <---- pcm16k audio + transcripts ---+
+Mac microphone --250 ms pcm16k--> RobotAudioInterface --echo gate--> addressee gate --> ElevenLabs agent
+      |                                   |  held while the speaker   |  held per utterance   (ASR, LLM, TTS, turns)
+      |  tap                              |  is busy (+0.3 s)         |  until the local        |  client_tool_call
+      v                                   |                           |  decision               v
+LocalEar: Segmenter (VAD) -> voiceprint  |                           |            game_rules / game_knowledge (Qdrant)
+      |        -> diarizer label          |                           |                         |
+      |  utterance closed                 |  <---- pcm16k audio + transcripts ----------------------+
       v                                   v
-EchoAwareBargeIn (Whisper on held voice)  USB "Reachy Mini Audio" speaker + HeadSway
-      |  player's words -> release_gate(): forward held 2 s, cut playback
-      v
-shadow addressee decision -> addressee.jsonl ; every event -> conversation.jsonl
+Gatekeeper: Whisper (single pass) ->     USB "Reachy Mini Audio" speaker + HeadSway
+  decide() -> release_utterance()        ^
+  (burst + 1 s silence) or discard       |  EchoAwareBargeIn (Whisper on the echo-held voice):
+  or restart the session in the other    |  player's words -> release_gate(): forward held 2 s,
+  language with the text                 |  cut playback, pass_through() for the rest
+NameSpotter (Whisper on the voice so far): robot's name -> pass_through() at once
+every decision -> addressee.jsonl (shadow=False when the gate controlled the audio); every event -> conversation.jsonl
 ```
+
+The addressee gate is what makes "stay quiet" free: an utterance the rules judge as table
+talk is dropped before any byte reaches the agent, so there is no cloud turn and no LLM
+tokens for it. The cost is latency for the utterances that are released: the VAD tail
+(0.6 s) plus the local Whisper (0.7 s on this Mac with the single-encoder-pass path), unless
+the robot's name was heard in the partial transcript, in which case the gate opens while the
+person is still talking. Measured numbers and the rules are in PROJECT_STATUS.md; the rules
+themselves live in `src/speech/addressee.py` and the gate in `src/speech/gatekeeper.py`.
+With one person at the table (`--humans 1`) or `--always-answer` the gate is off and the
+decisions are logged as shadow decisions only.
 
 Language and voice: the agent's own `language_detection` tool is unreliable (the LLM often
 answers in English with the Portuguese voice, tested live). So the switch is local and

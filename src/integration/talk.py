@@ -4,24 +4,35 @@
     uv run python -m src.integration.talk --no-robot          # gestures logged, robot speaker still used
     uv run python -m src.integration.talk --players "Ana,Bruno"   # enrol voices first (local)
     uv run python -m src.integration.talk --device "MacBook Pro Microphone"
+    uv run python -m src.integration.talk --humans 2          # two people at the table: the gate is on
+    uv run python -m src.integration.talk --always-answer     # no gate: the agent hears everything
 
 The agent does ASR, LLM, TTS and turn-taking in the cloud (about half a second per turn)
 and calls back into this process for rules and knowledge (Qdrant). Locally, the same
 microphone audio feeds the voice activity detector, the voiceprints and the live diarizer,
-so every heard utterance is still attributed to a player and judged by the addressee rules;
-those decisions are logged as *shadow* decisions next to what the agent actually did, which
-is the turn-taking dataset. Everything heard and said goes to data/game_logs/conversation.jsonl.
+so every heard utterance is attributed to a player and judged by the addressee rules *before*
+the agent hears it: the audio of an utterance is held back, transcribed by the local Whisper,
+and only released to the agent when the rules say it was for the robot (see
+src/speech/gatekeeper.py). Table talk that is not for the robot never reaches the cloud, so it
+costs no turn and no tokens. With ``--always-answer`` (or one person at the table) the gate
+only watches and its decisions are logged as shadow decisions. Every decision goes to
+data/game_logs/addressee.jsonl; everything heard and said to data/game_logs/conversation.jsonl.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import os
+import queue
 import random
 import signal
+import socket
+import subprocess
 import sys
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -30,6 +41,7 @@ import numpy as np
 
 from src.config import (
     DEFAULT_LANGUAGE,
+    DIARIZER_URL,
     ELEVENLABS_API_KEY,
     GAME_LOG_DIR,
     HEAD_SWAY,
@@ -38,12 +50,13 @@ from src.config import (
 from src.logger import get_logger
 from src.robot.reachy import AGREE_MOVES, GREETING_MOVES, Robot
 from src.robot.sway import HeadSway
-from src.speech.addressee import Decision, TurnLogger, decide, looks_like_echo
+from src.speech.addressee import TurnLogger
 from src.speech.agent_audio import RobotAudioInterface
 from src.speech.asr import Transcriber
 from src.speech.barge_in import EchoAwareBargeIn
 from src.speech.diarization import DiarizerClient
 from src.speech.eleven_agent import client_tools, ensure_agent, session_override
+from src.speech.gatekeeper import Gatekeeper, NameSpotter
 from src.speech.language import detect_language
 from src.speech.microphone import Segmenter, Utterance, write_wav
 from src.speech.speakers import MIN_ENROLL_S, SpeakerRegistry
@@ -56,6 +69,7 @@ ENROL_PROMPTS = {
     "en-US": "{name}, say a long sentence, about five seconds, so I can learn your voice.",
 }
 ENROL_THANKS = {"pt-BR": "Obrigado, {name}.", "en-US": "Thank you, {name}."}
+SIDECAR_DIR = Path(__file__).resolve().parents[2] / "tools" / "live-diarizer"
 
 
 def wall_time(monotonic_t: float) -> float:
@@ -87,6 +101,7 @@ class LocalEar:
     recent: list[tuple[Utterance, str, float]] = field(default_factory=list)  # (utterance, name, score)
     lock: threading.Lock = field(default_factory=threading.Lock)
     pending: np.ndarray = field(default_factory=lambda: np.zeros(0, dtype=np.int16))
+    on_utterance: Callable[[Utterance, str, float], None] | None = None  # the gate, once wired
 
     def feed(self, frame: np.ndarray) -> None:
         n = self.segmenter.frame_samples
@@ -117,6 +132,11 @@ class LocalEar:
                 log.warning("could not save the capture: %s", exc)
         self.recent.append((utterance, name, score))
         self.recent = self.recent[-20:]
+        if self.on_utterance is not None:
+            try:
+                self.on_utterance(utterance, name, score)
+            except Exception as exc:
+                log.warning("utterance callback failed: %s", exc)
 
     # The barge-in checker reads the speech in progress through these two.
     @property
@@ -189,82 +209,80 @@ class Table:
         self.voice_language = DEFAULT_LANGUAGE  # the language (and native voice) of the current session
         self.restart: Any = None  # set by main: restart(language, text)
         self._switching = False
+        self.keeper: Gatekeeper | None = None  # set by main once the table size is known
+        self._judge_queue: queue.Queue[tuple[Utterance, str, float] | None] = queue.Queue()
+        self._judge: threading.Thread | None = None
 
-    def on_user_transcript(self, text: str) -> None:
-        heard = self.ear.last_utterance()
-        name, score, label = "", 0.0, ""
-        if heard is not None:
-            utterance, name, score = heard
+    # ------------------------------------------------------------------ the local gate
+    def on_utterance(self, utterance: Utterance, name: str, score: float) -> None:
+        """The local VAD closed an utterance (audio thread): judge it on the gate thread, in order."""
+        self.audio.utterance_ended()
+        if self.keeper is None:
+            return
+        if self._judge is None:
+            self._judge = threading.Thread(target=self._judge_loop, name="gatekeeper", daemon=True)
+            self._judge.start()
+        self._judge_queue.put((utterance, name, score))
+
+    def _judge_loop(self) -> None:
+        while True:
+            item = self._judge_queue.get()
+            if item is None:
+                return
+            utterance, name, score = item
+            label = ""
             if self.ear.diarizer is not None and self.ear.diarizer.connected:
                 label, _ = self.ear.diarizer.speaker_between(
                     wall_time(utterance.started_at), wall_time(utterance.speech_ended_at)
                 )
-        language = detect_language(text)
-        since = None if self.robot_spoke_at is None else round(time.monotonic() - self.robot_spoke_at, 1)
-        humans = (
-            len(self.ear.registry.names)
-            if self.ear.registry is not None and self.ear.registry.names
-            else None
-        )
-        if looks_like_echo(text, self.spoken_recently):
-            decision = Decision(False, "self_echo", 0.9)
-        else:
-            decision = decide(
-                text,
-                language,
-                seconds_since_robot_spoke=since,
-                humans_present=humans,
-                follow_up_ok=bool(name) and name == self.last_addressed,
+            try:
+                verdict = self.keeper.judge(utterance, name, score, label)  # type: ignore[union-attr]
+            except Exception as exc:
+                log.warning("gate decision failed (%s); releasing the utterance", exc)
+                self.audio.release_utterance(utterance.ended_at)
+                continue
+            self.diary.write(
+                "gate",
+                route=verdict.route,
+                text=verdict.text,
+                language=verdict.language,
+                speaker=name,
+                score=round(score, 3),
+                diart=label,
+                addressed=verdict.decision.addressed,
+                reason=verdict.decision.reason,
+                forwarded=verdict.forwarded,
+                dropped=verdict.dropped,
+                decision_ms=verdict.decision_ms,
+                whisper_ms=verdict.whisper_ms,
             )
-        self.turn_log.log(
-            decision,
-            text=text,
-            language=language,
-            speaker=name,
-            speaker_score=score,
-            diart_label=label,
-            seconds_since_robot_spoke=since,
-            shadow=True,
-            capture=str(heard[0].path) if heard is not None and heard[0].path else "",
-        )
-        self.diary.write(
-            "heard",
-            text=text,
-            speaker=name,
-            score=score,
-            diart=label,
-            shadow_addressed=decision.addressed,
-            reason=decision.reason,
-        )
+            if verdict.route == "echo_gate":
+                continue
+            log.info(
+                "gate [%s %.2f%s] %s: %r  (%s, %s; whisper %d ms, decided %d ms after the voice ended)",
+                name or "?",
+                score,
+                f" {label}" if label else "",
+                verdict.route,
+                verdict.text,
+                "for me" if verdict.decision.addressed else "not for me",
+                verdict.decision.reason,
+                verdict.whisper_ms,
+                verdict.decision_ms,
+            )
+
+    def on_user_transcript(self, text: str) -> None:
+        """What the agent's ASR made of the audio the gate released (the diary keeps both texts)."""
+        heard = self.ear.last_utterance()
+        name, score = ("", 0.0) if heard is None else (heard[1], heard[2])
+        language = detect_language(text)
+        self.diary.write("heard", text=text, speaker=name, score=round(score, 3))
         self.last_addressed = name
-        # Cheap, immediate hint from the transcript text; the Whisper check below catches the
-        # cases where the agent's ASR (pinned to the current language) mangled the words.
+        # The gate already checked the language with Whisper before releasing; this is the
+        # fallback for the cases where Whisper was unsure and the agent's transcript is not.
         if language != self.voice_language and len(text.split()) >= 3:
             self.switch_language(language, text, "transcript")
-        elif heard is not None and self.transcriber is not None:
-            threading.Thread(
-                target=self._check_language, args=(heard[0],), name="language-watch", daemon=True
-            ).start()
-        log.info(
-            "heard [%s %.2f%s]: %s  (shadow: %s, %s)",
-            name or "?",
-            score,
-            f" {label}" if label else "",
-            text,
-            "answer" if decision.addressed else "quiet",
-            decision.reason,
-        )
-
-    def _check_language(self, utterance: Utterance) -> None:
-        """The agent's ASR mangles Portuguese once the session is English; our Whisper catches it."""
-        try:
-            result = self.transcriber.transcribe(utterance.audio, utterance.sample_rate)  # type: ignore[union-attr]
-        except Exception as exc:
-            log.warning("language check failed: %s", exc)
-            return
-        if not result.language or result.language_confidence < 0.8 or result.language == self.voice_language:
-            return
-        self.switch_language(result.language, result.text, f"whisper {result.language_confidence:.2f}")
+        log.info("heard [%s %.2f]: %s", name or "?", score, text)
 
     def switch_language(self, language: str, text: str, source: str) -> None:
         """Restart the agent session with the other native voice and re-ask ``text`` there.
@@ -311,13 +329,22 @@ class Table:
         self.diary.write("said", text=text)
         log.info("robot: %s", text)
 
-    def watch_for_barge_in(self, transcriber: Transcriber, stop: threading.Event) -> None:
-        """While the robot speaks, transcribe any voice the gate is holding back; a player's words release it."""
+    def watch_voice(self, transcriber: Transcriber, stop: threading.Event) -> None:
+        """Whisper on the voice in progress: a player's words over the robot release the echo gate;
+        the robot's name while it listens opens the addressee gate before the sentence ends."""
         checker: EchoAwareBargeIn | None = None
+        spotter = (
+            NameSpotter(self.ear, self.keeper) if self.keeper is not None and self.keeper.active else None
+        )
         while not stop.is_set():
             time.sleep(0.1)
             if not self.audio.gated:
                 checker = None
+                if spotter is not None and self.audio.holding:
+                    heard = spotter()
+                    if heard:
+                        self.diary.write("early_release", heard=heard)
+                        log.info("named while listening (%r); the rest streams live", heard)
                 continue
             if checker is None:
                 checker = EchoAwareBargeIn(
@@ -397,8 +424,19 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--device", default=None, help="input device name substring or index")
     parser.add_argument("--output-device", default=None, help="output device name substring")
     parser.add_argument("--players", default="", help="comma-separated names to enrol by voice at the start")
-    parser.add_argument("--no-diarizer", action="store_true")
+    parser.add_argument("--no-diarizer", action="store_true", help="neither start nor use the diart sidecar")
     parser.add_argument("--no-sway", action="store_true", help="do not move the head with the voice")
+    parser.add_argument(
+        "--humans",
+        type=int,
+        default=None,
+        help="people at the table (default: enrolled voices); 1 = solo, everything is for the robot",
+    )
+    parser.add_argument(
+        "--always-answer",
+        action="store_true",
+        help="no addressee gate: the agent hears everything (decisions logged as shadow)",
+    )
     args = parser.parse_args(argv)
 
     problems = validate_config()
@@ -417,12 +455,13 @@ def main(argv: list[str] | None = None) -> int:
     if registry.names:
         log.info("speaker model warm-up: %.1fs", registry.warm_up())
     transcriber = Transcriber()
-    log.info("whisper warm-up (barge-in checks): %.1fs", transcriber.warm_up())
+    log.info("whisper warm-up (gate and barge-in checks): %.1fs", transcriber.warm_up())
+    input_device = args.device if args.device is not None else AUDIO_INPUT_DEVICE
+    sidecar = None if args.no_diarizer else start_sidecar(input_device)
     diarizer = None if args.no_diarizer else DiarizerClient().start()
     ear = LocalEar(Segmenter(), registry, diarizer, AUDIO_CAPTURE_DIR if SAVE_CAPTURES else None)
     audio = RobotAudioInterface(
-        args.device if args.device is not None else AUDIO_INPUT_DEVICE,
-        args.output_device if args.output_device is not None else AUDIO_OUTPUT_DEVICE,
+        input_device, args.output_device if args.output_device is not None else AUDIO_OUTPUT_DEVICE
     )
     audio.taps.append(ear.feed)
     diary = Diary()
@@ -439,12 +478,16 @@ def main(argv: list[str] | None = None) -> int:
             from elevenlabs.conversational_ai.conversation import ConversationInitiationData
 
             def open_session(language: str) -> Any:
+                alive = threading.Event()  # cleared before the session is closed: its tools stop searching
+                alive.set()
                 conv = TableConversation(
                     client,
                     agent_id,
                     requires_auth=True,
                     audio_interface=audio,
-                    client_tools=client_tools(on_call=table.on_tool),  # a fresh loop per session
+                    client_tools=client_tools(
+                        on_call=table.on_tool, active=alive.is_set
+                    ),  # fresh per session
                     config=ConversationInitiationData(
                         conversation_config_override=session_override(language)
                     ),
@@ -454,12 +497,14 @@ def main(argv: list[str] | None = None) -> int:
                     callback_latency_measurement=table.on_latency,
                     on_raw=table.on_raw_event,
                 )
+                conv.alive = alive
                 table.conversation = conv
                 table.voice_language = language
                 return conv
 
             def restart(language: str, text: str) -> None:
                 nonlocal conversation
+                conversation.alive.clear()
                 _end_session(conversation)
                 conversation = open_session(language)
                 conversation.start_session()
@@ -485,6 +530,30 @@ def main(argv: list[str] | None = None) -> int:
                 enrol(robot, ear, players)
                 audio.stop()
                 audio.muted = False
+            humans = args.humans if args.humans is not None else (len(registry.names) or None)
+            gate_on = not args.always_answer and humans != 1
+            table.keeper = Gatekeeper(
+                audio,
+                transcriber,
+                table.turn_log,
+                active=gate_on,
+                humans=humans,
+                names=tuple(registry.names),
+                spoken_recently=lambda: table.spoken_recently,
+                robot_spoke_at=lambda: table.robot_spoke_at,
+                voice_language=lambda: table.voice_language,
+                on_switch=table.switch_language,
+            )
+            audio.hold_utterances = gate_on
+            ear.on_utterance = table.on_utterance
+            log.info(
+                "addressee gate %s (%s at the table%s)",
+                "on: the agent only hears what is for the robot"
+                if gate_on
+                else "off: the agent hears everything",
+                "?" if humans is None else humans,
+                ", --always-answer" if args.always_answer else "",
+            )
             if diarizer is not None and diarizer.wait_connected(2.0):
                 log.info("live diarizer connected")
             if HEAD_SWAY and not args.no_sway and not robot.simulated:
@@ -492,10 +561,12 @@ def main(argv: list[str] | None = None) -> int:
             conversation.start_session()
             stop_watch = threading.Event()
             threading.Thread(
-                target=table.watch_for_barge_in, args=(transcriber, stop_watch), name="barge-in", daemon=True
+                target=table.watch_voice, args=(transcriber, stop_watch), name="voice-watch", daemon=True
             ).start()
             log.info("talking (Ctrl+C to stop); players: %s", ", ".join(registry.names) or "unknown voices")
-            diary.write("session_start", agent_id=agent_id, players=registry.names)
+            diary.write(
+                "session_start", agent_id=agent_id, players=registry.names, humans=humans, gate=gate_on
+            )
             while True:
                 time.sleep(0.5)
     except KeyboardInterrupt:
@@ -511,8 +582,59 @@ def main(argv: list[str] | None = None) -> int:
             _end_session(conversation)
         if diarizer is not None:
             diarizer.stop()
+        stop_sidecar(sidecar)
         diary.write("session_end")
     return 0
+
+
+def sidecar_port_open(url: str = DIARIZER_URL, timeout: float = 0.3) -> bool:
+    host, _, port = url.split("//", 1)[-1].partition(":")
+    try:
+        with socket.create_connection((host or "127.0.0.1", int(port.split("/")[0] or 8765)), timeout):
+            return True
+    except OSError:
+        return False
+
+
+def start_sidecar(device: str, sidecar_dir: Path = SIDECAR_DIR) -> subprocess.Popen | None:
+    """Launch ``tools/live-diarizer`` when it is installed and not already listening.
+
+    Its output goes to ``data/game_logs/live_diarizer.log``; the client connects on its own
+    once the models are loaded (about 20 s). Returns the process to stop at exit, or None.
+    """
+    if sidecar_port_open():
+        log.info("live diarizer already listening at %s", DIARIZER_URL)
+        return None
+    if not (sidecar_dir / ".venv").exists():
+        log.info("live diarizer not installed (%s); speaker labels off", sidecar_dir / ".venv")
+        return None
+    GAME_LOG_DIR.mkdir(parents=True, exist_ok=True)
+    log_file = (GAME_LOG_DIR / "live_diarizer.log").open("ab")
+    command = ["uv", "run", "python", "-m", "live_diarizer"]
+    if device:
+        command += ["--device", device]
+    # The sidecar has its own venv (numpy < 2); the variables of ours must not leak into it,
+    # or its torch imports half of their packages from our site-packages and crash.
+    env = {k: v for k, v in os.environ.items() if k not in ("VIRTUAL_ENV", "PYTHONPATH", "PYTHONHOME")}
+    try:
+        process = subprocess.Popen(
+            command, cwd=sidecar_dir, env=env, stdout=log_file, stderr=subprocess.STDOUT
+        )
+    except OSError as exc:
+        log.warning("could not start the live diarizer: %s", exc)
+        return None
+    log.info("live diarizer starting (pid %d); log: %s", process.pid, GAME_LOG_DIR / "live_diarizer.log")
+    return process
+
+
+def stop_sidecar(process: subprocess.Popen | None, timeout: float = 5.0) -> None:
+    if process is None or process.poll() is not None:
+        return
+    process.terminate()
+    try:
+        process.wait(timeout)
+    except subprocess.TimeoutExpired:
+        process.kill()
 
 
 def _wait_connected(conversation: Any, timeout: float) -> bool:

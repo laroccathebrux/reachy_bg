@@ -67,6 +67,9 @@ uv run python scripts/venv_postinstall.py       # macOS: make the venv's .pth fi
 uv run python -m src.integration.smoke          # typed question -> spoken answer
 uv run python -m src.integration.talk           # table conversation on the ElevenLabs agent (Ctrl+C to stop)
 uv run python -m src.integration.talk --players "Ana,Bruno"     # enrol voices first
+uv run python -m src.integration.talk --humans 2                 # the gate: only what is for the robot reaches the agent
+uv run python -m src.integration.talk --always-answer            # no gate: the agent hears everything
+uv run python scripts/gate_replay.py data/captures/audio/*.wav --humans 2   # replay captures through the gate, offline
 uv run python -m src.integration.listen         # fully local pipeline (Whisper + Ollama), slower
 uv run python -m src.integration.listen --list-devices
 ```

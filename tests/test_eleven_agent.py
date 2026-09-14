@@ -1,3 +1,5 @@
+import json
+
 import pytest
 
 from src.speech.eleven_agent import agent_config, knowledge_lookup, language_of, rules_lookup
@@ -70,3 +72,22 @@ def test_language_of():
     assert language_of("pt") == "pt-BR"
     assert language_of("en") == "en-US"
     assert language_of("xx") == "pt-BR"
+
+
+def test_client_tools_stop_searching_once_the_session_is_closing():
+    from src.speech.eleven_agent import CLOSING_RESULT, client_tools
+
+    calls = []
+    alive = {"ok": True}
+
+    def retriever(question, **kwargs):
+        calls.append(question)
+        return []
+
+    tools = client_tools(retriever=retriever, active=lambda: alive["ok"])
+    handler, _ = tools.tools["game_rules"]
+    handler({"question": "how many actions?"})
+    assert calls == ["how many actions?"]
+    alive["ok"] = False
+    assert json.loads(handler({"question": "again?"})) == CLOSING_RESULT
+    assert calls == ["how many actions?"]

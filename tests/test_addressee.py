@@ -7,6 +7,7 @@ from src.speech.addressee import (
     decide,
     is_question,
     looks_like_echo,
+    mentions_person,
     mentions_robot,
     needs_rules,
 )
@@ -26,6 +27,9 @@ def test_is_question_in_both_languages():
     assert is_question("Quantas ações eu posso fazer?", "pt-BR")
     assert is_question("quantas ações eu posso fazer", "pt-BR")
     assert is_question("Can I travel twice", "en-US")
+    assert is_question("E posso viajar duas vezes na mesma ação", "pt-BR")
+    assert not is_question("E eu vou viajar duas vezes", "pt-BR")  # a statement without intonation stays one
+    assert is_question("so can I rest there", "en-US")
     assert not is_question("Eu vou viajar para Londres", "pt-BR")
     assert not is_question("I will rest this round", "en-US")
 
@@ -120,3 +124,24 @@ def test_needs_rules_separates_game_talk_from_banter():
     assert needs_rules("Posso usar o Flesh Ward contra um Monster?", "pt-BR")
     assert not needs_rules("Então esse é o seu nome.", "pt-BR")
     assert not needs_rules("Hey Rich, can you hear me?", "en-US")
+
+
+def test_mentions_person_is_a_vocative_of_another_player():
+    assert mentions_person("Bruno, o que você acha?", ["Alessandro", "Bruno"])
+    assert mentions_person("what do you think, Ana?", ["Ana Paula"])
+    assert mentions_person("Ei Alessandro, sua vez", ["Alessandro"])
+    assert not mentions_person("o Bruno já viajou para Londres", ["Bruno"])  # mentioned, not addressed
+    assert not mentions_person("Bruno, o que você acha?", [])
+
+
+def test_naming_another_player_is_not_for_the_robot():
+    others = ["Bruno"]
+    assert decide("Bruno, quantas ações eu tenho?", "pt-BR", other_names=others) == Decision(
+        False, "other_person", 0.85
+    )
+    assert (
+        decide("Bruno, quantas ações eu tenho?", "pt-BR", other_names=others, humans_present=2).addressed
+        is False
+    )
+    # The robot's name wins over another name in the same sentence.
+    assert decide("Reachy, o Bruno pode viajar?", "pt-BR", other_names=others).reason == "name"

@@ -108,3 +108,11 @@ def test_whisper_transcribes_a_synthetic_english_sentence(tmp_path: Path):
     assert result.language_confidence > 0.5
     assert "actions" in result.text.lower()
     assert result.seconds < 30
+
+
+def test_looping_keywords_are_a_hallucination():
+    from src.speech.asr import is_hallucination
+
+    assert is_hallucination("Omen, omen, omen, omen, omen, omen, omen.", -0.2, 0.1)
+    assert not is_hallucination("How many actions can I take per round?", -0.2, 0.1)
+    assert not is_hallucination("omen omen", -0.2, 0.1)  # too short to judge by repetition

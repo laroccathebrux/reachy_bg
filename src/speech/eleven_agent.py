@@ -17,6 +17,7 @@ a language preset plus the ``language_detection`` system tool.
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -286,13 +287,28 @@ def knowledge_lookup(name: str, question: str = "", *, retriever: Any = None) ->
     }
 
 
-def client_tools(*, retriever: Any = None, on_call: Any = None) -> Any:
-    """SDK ``ClientTools`` with the local implementations registered."""
+CLOSING_RESULT: dict[str, Any] = {
+    "passages": "",
+    "note": "This voice session is closing; do not answer, the question is being re-asked elsewhere.",
+}
+
+
+def client_tools(
+    *, retriever: Any = None, on_call: Any = None, active: Callable[[], bool] | None = None
+) -> Any:
+    """SDK ``ClientTools`` with the local implementations registered.
+
+    ``active`` says whether the session these tools belong to is still the live one; a session
+    being closed for a language switch gets :data:`CLOSING_RESULT` instead of a search, so the
+    rules lookup does not run twice (once per session) for the same question.
+    """
     from elevenlabs.conversational_ai.conversation import ClientTools
 
     tools = ClientTools()
 
     def game_rules(parameters: dict) -> str:
+        if active is not None and not active():
+            return json.dumps(CLOSING_RESULT, ensure_ascii=False)
         question = str(parameters.get("question", ""))
         result = rules_lookup(question, retriever=retriever)
         if on_call:
@@ -300,6 +316,8 @@ def client_tools(*, retriever: Any = None, on_call: Any = None) -> Any:
         return json.dumps(result, ensure_ascii=False)  # the orchestrator validates the result as text
 
     def game_knowledge(parameters: dict) -> str:
+        if active is not None and not active():
+            return json.dumps(CLOSING_RESULT, ensure_ascii=False)
         result = knowledge_lookup(
             str(parameters.get("name", "")), str(parameters.get("question", "")), retriever=retriever
         )
@@ -325,6 +343,7 @@ __all__ = [
     "AGENT_FILE",
     "agent_config",
     "client_tools",
+    "CLOSING_RESULT",
     "ensure_agent",
     "knowledge_lookup",
     "language_name",
