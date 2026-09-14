@@ -30,8 +30,19 @@ def _env_bool(name: str, default: bool = False) -> bool:
 
 # --------------------------------------------------------------------------- game
 GAME_ID = os.getenv("GAME_ID", "eldritch-horror")
-# Language the robot listens to and speaks (BCP-47). Code and data stay in English regardless.
-SPOKEN_LANGUAGE = os.getenv("SPOKEN_LANGUAGE", "pt-BR")
+
+# --------------------------------------------------------------------------- languages
+# The table is bilingual: players switch between Brazilian Portuguese and English at will.
+# Each utterance is language-identified, the robot answers in that language, and every
+# language has its own NATIVE voice (a Brazilian voice never reads English and vice versa).
+# Code, prompts and data stay in English regardless.
+SPOKEN_LANGUAGES = tuple(
+    lang.strip() for lang in os.getenv("SPOKEN_LANGUAGES", "pt-BR,en-US").split(",") if lang.strip()
+)
+DEFAULT_LANGUAGE = os.getenv("DEFAULT_LANGUAGE", SPOKEN_LANGUAGES[0] if SPOKEN_LANGUAGES else "en-US")
+# How many consecutive utterances in another supported language before the robot switches;
+# 1 = switch immediately, 2 = ignore a single stray sentence.
+LANGUAGE_SWITCH_THRESHOLD = _env_int("LANGUAGE_SWITCH_THRESHOLD", 1)
 
 # --------------------------------------------------------------------------- Qdrant
 QDRANT_URL = os.getenv("QDRANT_URL", "http://127.0.0.1:6333")
@@ -61,9 +72,11 @@ AUDIO_INPUT_DEVICE = os.getenv("AUDIO_INPUT_DEVICE", "")
 AUDIO_SAMPLE_RATE = _env_int("AUDIO_SAMPLE_RATE", 16000)
 
 # --------------------------------------------------------------------------- speech
-# Whisper checkpoint for mlx-whisper (Metal). "large-v3-turbo" balances Portuguese quality
-# and latency on an M1 Max.
+# Whisper checkpoint for mlx-whisper (Metal). "large-v3-turbo" balances Portuguese and
+# English quality against latency on an M1 Max. Language is identified per utterance
+# ("auto"); set a BCP-47 code to pin it.
 WHISPER_MODEL = os.getenv("WHISPER_MODEL", "mlx-community/whisper-large-v3-turbo")
+WHISPER_LANGUAGE = os.getenv("WHISPER_LANGUAGE", "auto")
 # Live diarizer sidecar (diart in its own venv) publishes speaker events here.
 DIARIZER_URL = os.getenv("DIARIZER_URL", "ws://127.0.0.1:8765")
 # Hugging Face token: required once to download the gated pyannote models.
@@ -72,7 +85,30 @@ HF_TOKEN = os.getenv("HF_TOKEN", "")
 # --------------------------------------------------------------------------- voice output
 TTS_PROVIDER = os.getenv("TTS_PROVIDER", "elevenlabs")  # "elevenlabs" | "local"
 ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY", "")
-ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "")
+ELEVENLABS_MODEL_ID = os.getenv("ELEVENLABS_MODEL_ID", "eleven_flash_v2_5")
+
+
+def _voice_map(prefix: str) -> dict[str, str]:
+    """``{"pt-BR": <voice>, "en-US": <voice>}`` from ``<prefix>_PT_BR`` / ``<prefix>_EN_US`` style vars."""
+    voices: dict[str, str] = {}
+    for lang in SPOKEN_LANGUAGES:
+        value = os.getenv(f"{prefix}_{lang.replace('-', '_').upper()}", "")
+        if value:
+            voices[lang] = value
+    return voices
+
+
+# One native voice per language. Missing entries fall back to DEFAULT_LANGUAGE's voice.
+ELEVENLABS_VOICES = _voice_map("ELEVENLABS_VOICE_ID")
+# Local TTS (Piper-style voice names, e.g. pt_BR-faber-medium / en_US-lessac-medium).
+LOCAL_TTS_VOICES = _voice_map("LOCAL_TTS_VOICE")
+
+
+def voice_for(language: str, provider: str = TTS_PROVIDER) -> str:
+    """Voice id for ``language`` with the active provider, falling back to the default language."""
+    voices = ELEVENLABS_VOICES if provider == "elevenlabs" else LOCAL_TTS_VOICES
+    return voices.get(language) or voices.get(DEFAULT_LANGUAGE, "")
+
 
 # --------------------------------------------------------------------------- vision
 VISION_URL = os.getenv("VISION_URL", "http://127.0.0.1:8090")
@@ -105,6 +141,14 @@ def validate_config() -> list[str]:
     problems: list[str] = []
     if TTS_PROVIDER == "elevenlabs" and not ELEVENLABS_API_KEY:
         problems.append("TTS_PROVIDER=elevenlabs but ELEVENLABS_API_KEY is empty")
+    if DEFAULT_LANGUAGE not in SPOKEN_LANGUAGES:
+        problems.append(f"DEFAULT_LANGUAGE={DEFAULT_LANGUAGE} is not in SPOKEN_LANGUAGES={SPOKEN_LANGUAGES}")
+    configured = ELEVENLABS_VOICES if TTS_PROVIDER == "elevenlabs" else LOCAL_TTS_VOICES
+    for lang in SPOKEN_LANGUAGES:
+        if lang not in configured:
+            # voice_for() would fall back to another language's voice, which is exactly the
+            # "Brazilian voice reading English" problem; surface it instead of hiding it.
+            problems.append(f"no native {TTS_PROVIDER} voice configured for {lang}")
     if AUDIO_SAMPLE_RATE not in (16000, 24000, 44100, 48000):
         problems.append(f"AUDIO_SAMPLE_RATE={AUDIO_SAMPLE_RATE} is unusual")
     return problems
@@ -113,7 +157,9 @@ def validate_config() -> list[str]:
 __all__ = [
     "BASE_DIR",
     "GAME_ID",
-    "SPOKEN_LANGUAGE",
+    "SPOKEN_LANGUAGES",
+    "DEFAULT_LANGUAGE",
+    "LANGUAGE_SWITCH_THRESHOLD",
     "QDRANT_URL",
     "QDRANT_API_KEY",
     "OLLAMA_BASE_URL",
@@ -126,11 +172,15 @@ __all__ = [
     "AUDIO_INPUT_DEVICE",
     "AUDIO_SAMPLE_RATE",
     "WHISPER_MODEL",
+    "WHISPER_LANGUAGE",
     "DIARIZER_URL",
     "HF_TOKEN",
     "TTS_PROVIDER",
     "ELEVENLABS_API_KEY",
-    "ELEVENLABS_VOICE_ID",
+    "ELEVENLABS_MODEL_ID",
+    "ELEVENLABS_VOICES",
+    "LOCAL_TTS_VOICES",
+    "voice_for",
     "VISION_URL",
     "VISION_MODEL",
     "VISION_MIN_CONFIDENCE",

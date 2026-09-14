@@ -11,8 +11,11 @@ This document fixes the audio design for Phase 2 and records the study it is bas
 2. **Several people around one table, one microphone, no wake word.** The research question is
    *when* the robot should speak, so the pipeline must tell speakers apart and detect who is
    being addressed.
-3. **Portuguese at runtime.** Players speak Brazilian Portuguese; the language is a setting
-   (`SPOKEN_LANGUAGE`), and every model used must be language-agnostic or support Portuguese.
+3. **Bilingual table.** Players switch between Brazilian Portuguese and English mid-session.
+   The robot must understand both, answer in the language it was spoken to, and use a
+   **native voice for each language**: a Brazilian voice never reads English and an American
+   voice never reads Portuguese (see "Bilingual operation" below). Every model in the chain
+   must be language-agnostic or support both languages.
 4. **Dependency conflict.** The robot SDK (`reachy-mini`) needs `numpy >= 2.2`; the best
    streaming diarizer (`diart`) needs `numpy < 2`. They cannot share a virtual environment.
 
@@ -61,6 +64,52 @@ Mac input device (default: built-in mic; a USB mic such as the HyperX QuadCast a
 - **Speech output**: ElevenLabs by default (the voice the owner already uses; good Portuguese),
   played through the robot speaker via the `reachy-mini` media API. A local TTS path is an
   optional later swap (`TTS_PROVIDER=local`).
+
+## Bilingual operation
+
+```
+utterance audio
+   |
+   v
+ mlx-whisper (WHISPER_LANGUAGE=auto) -> text + language id (pt / en) + confidence
+   |
+   v
+ language tracker: per speaker, last language; the table language switches after
+ LANGUAGE_SWITCH_THRESHOLD consecutive utterances in another supported language
+   |
+   v
+ LLM prompt (always English) + instruction "reply in <language of the utterance>"
+   |
+   v
+ TTS voice = voice_for(language):  pt-BR -> Brazilian native voice
+                                   en-US -> American native voice
+   |
+   v
+ robot speaker
+```
+
+Rules:
+
+- **Reply in the language of the utterance being answered**, not in the table's majority
+  language. A question in English gets an English answer with the American voice even if
+  the last ten minutes were in Portuguese.
+- **One native voice per language, never a multilingual voice reading a foreign language.**
+  With ElevenLabs that means two voice ids (`ELEVENLABS_VOICE_ID_PT_BR`,
+  `ELEVENLABS_VOICE_ID_EN_US`) on a multilingual model (`eleven_flash_v2_5` or
+  `eleven_multilingual_v2`); the voice's native accent decides the sound, the model decides
+  the language. With local TTS (`TTS_PROVIDER=local`) the same applies with per-language
+  voices (Piper `pt_BR-faber-medium` / `en_US-lessac-medium`, or any other engine that ships
+  native voices for both).
+- **Game vocabulary stays in English inside Portuguese speech** (investigator names, card
+  names, "Doom", "Omen") because that is how the physical components are printed; the
+  Portuguese voice pronounces them as loan words, which is what players do too.
+- **Language identification is per utterance**, from Whisper's own language head; a single
+  English word inside a Portuguese sentence does not switch anything. When confidence is
+  low, the previous language of that speaker wins.
+- `validate_config()` refuses a setup where a supported language has no native voice, so a
+  missing voice is caught at start-up instead of being heard as a bad accent at the table.
+- Speech input works the same way for both languages: Whisper, pyannote and diart are
+  language-independent; speaker voiceprints do not change with the language spoken.
 
 ## Why not the alternatives
 

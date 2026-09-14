@@ -161,7 +161,11 @@ questions right after the robot spoke) and is replaced by an LLM classifier over
 few utterances once we have logged conversations to evaluate it. Every decision to speak or
 stay silent is logged with its inputs; this log is the research dataset.
 
-Example (English for documentation; runtime language is `SPOKEN_LANGUAGE`):
+The table is bilingual (Portuguese and English). Each utterance carries its detected
+language; the robot answers in that language and speaks it with the native voice for it
+(see [SPEECH_PIPELINE.md](SPEECH_PIPELINE.md), "Bilingual operation").
+
+Example (English for documentation; runtime language follows the speaker):
 
 ```
 Alessandro: "I'll go research in Space 10."          -> other player's move: silent

@@ -8,7 +8,7 @@ Reachy Mini (Pollen Robotics / Hugging Face desktop robot) plays **Eldritch Horr
 
 ## Hard rules
 
-1. **English only in the repository.** Code, comments, docstrings, docs, tests, commit messages, example dialogues, prompts sent to the LLM. Conversation with the project owner happens in Portuguese, but nothing Portuguese is committed. The robot's spoken language is a runtime setting (`SPOKEN_LANGUAGE`), never hardcoded.
+1. **English only in the repository.** Code, comments, docstrings, docs, tests, commit messages, example dialogues, prompts sent to the LLM. Conversation with the project owner happens in Portuguese, but nothing Portuguese is committed. At runtime the robot is **bilingual** (`SPOKEN_LANGUAGES=pt-BR,en-US`): it answers in the language it was spoken to and uses one **native voice per language** (`voice_for()` in `src/config.py`); never hardcode a language or reuse one voice across languages.
 2. **Eldritch Horror 2013, base game.** Never use Arkham Horror content (Roland Banks, Joe Diamond, elder signs, terror track, Arkham locations). Use the 12 base investigators, the 4 base Ancient Ones, skills Lore / Influence / Observation / Strength / Will, Mysteries, the world map. Facts live in [docs/GAME_REFERENCE.md](docs/GAME_REFERENCE.md).
 3. **The robot is a Reachy Mini Lite**, driven from this Mac through the `reachy-mini` SDK and its daemon on `http://127.0.0.1:8000`. Not the full-size Reachy, no gRPC, no `reachy-sdk`.
 4. **The robot microphone is broken** (torn flat cable). Audio input always comes from a Mac input device; audio output still goes to the robot speaker. See [docs/SPEECH_PIPELINE.md](docs/SPEECH_PIPELINE.md).
