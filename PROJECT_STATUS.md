@@ -240,6 +240,7 @@ Measured with synthetic voices through the Mac speakers:
 | Speech input | Mac microphone; mlx-whisper; diart + pyannote 3 live in a sidecar; pyannote 4 + WhisperX offline | docs/SPEECH_PIPELINE.md |
 | Speech output | ElevenLabs by default, local TTS optional | src/config.py |
 | Conversation | ElevenLabs agent (cloud) + local client tools; local Whisper + Ollama kept as fallback | docs/SPEECH_PIPELINE.md |
+| Agent LLM | `gpt-4.1-mini` inside ElevenLabs (owner's decision, 2026-09-14): follows the prompt better than the Gemini default; billed through the ElevenLabs account, no OpenAI key | src/config.py |
 | Game setup | verbal briefing + knowledge base, no card OCR | docs/SETUP_PROTOCOL.md |
 | Vision | YOLO-World + image-embedding gallery, SAM not used | docs/DESIGN_DOCUMENT.md |
 | Prior project | read for lessons only; no code copied | CLAUDE.md |
