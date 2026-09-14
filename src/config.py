@@ -190,6 +190,8 @@ DATA_DIR = Path(os.getenv("DATA_DIR", str(BASE_DIR / "data")))
 RULEBOOK_DIR = DATA_DIR / "rulebooks"
 GAME_LOG_DIR = DATA_DIR / "game_logs"
 CAPTURE_DIR = DATA_DIR / "captures"
+# Top-down picture of the whole board (the canonical map every camera frame is registered to).
+BOARD_REFERENCE_IMAGE = Path(os.getenv("BOARD_REFERENCE_IMAGE", str(DATA_DIR / "imgs" / "World_Map.webp")))
 AUDIO_CAPTURE_DIR = CAPTURE_DIR / "audio"
 SPEAKER_DIR = DATA_DIR / "speakers"
 MODEL_DIR = DATA_DIR / "models"
@@ -286,6 +288,7 @@ __all__ = [
     "RULEBOOK_DIR",
     "GAME_LOG_DIR",
     "CAPTURE_DIR",
+    "BOARD_REFERENCE_IMAGE",
     "AUDIO_CAPTURE_DIR",
     "SPEAKER_DIR",
     "MODEL_DIR",

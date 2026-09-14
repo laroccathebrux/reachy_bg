@@ -82,6 +82,13 @@ PAGE = """<!doctype html>
   <button id="sweep">Sweep</button>
   <a href="/gallery" target="_blank" style="color:#9ad">gallery</a>
   <label><input id="grid" type="checkbox" checked> guides</label>
+  <label><input id="overlay" type="checkbox" checked> board overlay</label>
+  <a href="/rectified.jpg" target="_blank" style="color:#9ad">top-down view</a>
+  <button id="baseline">Set empty-board baseline</button>
+  <button id="detect">Find pieces</button>
+</div>
+<div id="pieces" style="padding: 0 12px 8px; display: flex; flex-wrap: wrap; gap: 10px;"></div>
+<div id="bar2" style="display:none">
   <label>board guide margin <input id="margin" type="range" min="0" max="30" value="8">%</label>
 </div>
 <div id="msg"></div>
@@ -92,6 +99,27 @@ const pitch = document.getElementById('pitch'), yaw = document.getElementById('y
 const pitchv = document.getElementById('pitchv'), yawv = document.getElementById('yawv');
 const grid = document.getElementById('grid'), margin = document.getElementById('margin');
 const body = document.getElementById('body'), bodyv = document.getElementById('bodyv');
+const overlay = document.getElementById('overlay');
+let board = null;  // last /board answer: outline and spaces in frame fractions
+let found = [];    // last /detect answer: pieces with frame boxes in fractions
+document.getElementById('baseline').onclick = async () => {
+  const j = await (await fetch('/baseline', {method: 'POST'})).json();
+  msg.textContent = j.error || `baseline captured (${j.inliers} inliers): the board is now what "empty" looks like`;
+};
+document.getElementById('detect').onclick = async () => {
+  msg.textContent = 'looking...';
+  const j = await (await fetch('/detect', {method: 'POST'})).json();
+  if (j.error) { msg.textContent = j.error; return; }
+  found = j.pieces; msg.textContent = j.text;
+  const box = document.getElementById('pieces'); box.innerHTML = '';
+  for (const p of j.pieces) {
+    const fig = document.createElement('figure'); fig.style.margin = '0';
+    fig.innerHTML = `<img src="${p.crop}" style="height:160px;border:1px solid #555;display:block;cursor:zoom-in"><figcaption style="font-size:12px;color:#ccc">${p.space || 'between spaces'}</figcaption>`;
+    fig.querySelector('img').onclick = () => { zoom.value = 3; setZoom(3, (p.box[0] + p.box[2]) / 2, (p.box[1] + p.box[3]) / 2); };
+    box.appendChild(fig);
+  }
+  draw();
+};
 const zoom = document.getElementById('zoom'), zoomv = document.getElementById('zoomv');
 let crop = {factor: 1, cx: 0.5, cy: 0.5};
 async function setZoom(factor, cx, cy) {
@@ -113,7 +141,7 @@ function draw() {
   canvas.width = w; canvas.height = h;
   const c = canvas.getContext('2d');
   c.clearRect(0, 0, w, h);
-  if (!grid.checked) return;
+  if (!grid.checked) { drawBoard(); return; }
   c.strokeStyle = 'rgba(255,255,255,0.45)'; c.lineWidth = 1;
   for (const f of [1/3, 2/3]) {
     c.beginPath(); c.moveTo(w*f, 0); c.lineTo(w*f, h); c.stroke();
@@ -122,12 +150,38 @@ function draw() {
   c.strokeStyle = 'rgba(255,80,80,0.9)'; c.lineWidth = 2;
   c.beginPath(); c.moveTo(w/2-20, h/2); c.lineTo(w/2+20, h/2); c.stroke();
   c.beginPath(); c.moveTo(w/2, h/2-20); c.lineTo(w/2, h/2+20); c.stroke();
+  drawBoard();
   const m = margin.value / 100;
   c.setLineDash([10, 8]); c.strokeStyle = 'rgba(80,220,120,0.9)';
   c.strokeRect(w*m, h*m, w*(1-2*m), h*(1-2*m));
   c.setLineDash([]);
   c.fillStyle = 'rgba(80,220,120,0.9)'; c.font = '13px system-ui';
   c.fillText('board should fill the dashed area', w*m + 6, h*m + 16);
+}
+function toView(p) {  // frame fraction -> canvas pixels, through the current zoom crop
+  const size = 1 / crop.factor;
+  const x0 = Math.min(Math.max(crop.cx - size / 2, 0), 1 - size), y0 = Math.min(Math.max(crop.cy - size / 2, 0), 1 - size);
+  return [(p[0] - x0) / size * canvas.width, (p[1] - y0) / size * canvas.height];
+}
+function drawBoard() {
+  const c = canvas.getContext('2d');
+  for (const p of found) {
+    const [x0, y0] = toView([p.box[0], p.box[1]]), [x1, y1] = toView([p.box[2], p.box[3]]);
+    c.strokeStyle = '#f44'; c.lineWidth = 3; c.strokeRect(x0, y0, x1 - x0, y1 - y0);
+    c.fillStyle = '#f44'; c.font = 'bold 14px system-ui'; c.fillText(p.space || '?', x0, y0 - 4);
+  }
+  if (!overlay.checked || !board || !board.inliers) return;
+  c.strokeStyle = 'rgba(0,220,80,0.9)'; c.lineWidth = 2; c.beginPath();
+  board.outline.forEach((p, i) => { const [x, y] = toView(p); i ? c.lineTo(x, y) : c.moveTo(x, y); });
+  c.closePath(); c.stroke();
+  c.font = '12px system-ui';
+  for (const s of board.spaces) {
+    const [x, y] = toView([s.x, s.y]);
+    c.strokeStyle = s.kind === 'sea' ? '#4af' : (s.kind === 'wilderness' ? '#6d6' : '#fd5');
+    c.beginPath(); c.arc(x, y, 7, 0, 2 * Math.PI); c.stroke();
+    c.fillStyle = 'rgba(0,0,0,0.6)'; c.fillRect(x + 9, y - 14, c.measureText(s.name).width + 6, 16);
+    c.fillStyle = '#fff'; c.fillText(s.name, x + 12, y - 2);
+  }
 }
 function labels() { pitchv.textContent = pitch.value; yawv.textContent = yaw.value; bodyv.textContent = body.value; zoomv.textContent = zoom.value; }
 async function look() {
@@ -150,7 +204,12 @@ document.getElementById('snap').onclick = async () => {
   const r = await fetch('/snapshot', {method: 'POST'}); const j = await r.json();
   msg.textContent = j.path ? 'saved ' + j.path : (j.error || 'no frame yet');
 };
-grid.onchange = draw; margin.oninput = draw;
+grid.onchange = draw; margin.oninput = draw; overlay.onchange = draw;
+async function pollBoard() {
+  try { board = await (await fetch('/board')).json(); } catch (e) { board = null; }
+  draw();
+}
+setInterval(pollBoard, 1000);
 new ResizeObserver(draw).observe(cam);
 cam.onload = draw;
 async function poll() {
@@ -159,6 +218,7 @@ async function poll() {
     info.textContent = s.frames ? `${s.width}x${s.height}  ${s.fps.toFixed(1)} fps  frame age ${s.age_s.toFixed(1)} s  head pitch ${s.pitch} yaw ${s.yaw} body ${s.body}  zoom ${s.zoom}x` : `waiting for frames (${s.waited_s.toFixed(0)} s)`;
     if (s.warning) msg.textContent = s.warning;
     if (s.sweep) msg.textContent = s.sweep;
+    if (s.board !== undefined) info.textContent += s.board ? `  board: ${s.board} inliers` : '  board: not found';
   } catch (e) { info.textContent = 'server unreachable'; }
 }
 labels();
@@ -334,11 +394,139 @@ class Preview:
         self.sweep_state = ""
         self._sweep_thread: threading.Thread | None = None
         self.zoom = (1.0, 0.5, 0.5)  # digital zoom of the stream only: factor, centre x, centre y
+        self.board: Any = None  # BoardReference, when the reference picture exists
+        self.baseline: Any = None  # Baseline of the empty board (data/board/baseline.jpg)
+        self.registration: Any = None  # latest Registration of the latest frame
+        self.registered_at = 0.0
+        self._board_thread: threading.Thread | None = None
 
     def start(self) -> Preview:
         self._thread = threading.Thread(target=self._grab_loop, name="camera-grab", daemon=True)
         self._thread.start()
+        if self.board is not None:
+            self._board_thread = threading.Thread(target=self._board_loop, name="board-locate", daemon=True)
+            self._board_thread.start()
         return self
+
+    def _board_loop(self, period_s: float = 1.0) -> None:
+        """Register the latest frame to the board picture about once a second."""
+        last_seen = 0
+        while not self._stop.is_set():
+            time.sleep(0.05)
+            with self._lock:
+                frame, seq = self.frame, self.frames
+            if frame is None or seq == last_seen:
+                continue
+            last_seen = seq
+            started = self.clock()
+            try:
+                registration = self.board.locate(frame, scale=0.5)
+            except Exception as exc:
+                log.warning("board registration failed: %s", exc)
+                registration = None
+            self.registration, self.registered_at = registration, self.clock()
+            time.sleep(max(0.0, period_s - (self.clock() - started)))
+
+    def board_json(self) -> dict[str, Any]:
+        """Outline and space centres of the last registration, as fractions of the frame."""
+        registration = self.registration
+        if registration is None:
+            return {"inliers": 0, "outline": [], "spaces": []}
+        fw, fh = registration.frame_size
+        from src.vision.spaces import BY_NAME
+
+        spaces = [
+            {"name": name, "kind": BY_NAME[name].kind, "x": x / fw, "y": y / fh}
+            for name, (x, y) in registration.space_pixels(margin=40).items()
+        ]
+        outline = [[float(x) / fw, float(y) / fh] for x, y in registration.outline()]
+        return {
+            "inliers": registration.inliers,
+            "matches": registration.matches,
+            "seconds": registration.seconds,
+            "age_s": round(self.clock() - self.registered_at, 2),
+            "outline": outline,
+            "spaces": spaces,
+        }
+
+    def baseline_path(self) -> Path:
+        return self.capture_dir.parent / "board_baseline" / "baseline.jpg"
+
+    def load_baseline(self) -> bool:
+        from src.vision.detect import Baseline
+
+        try:
+            self.baseline = Baseline.load(self.baseline_path())
+        except (FileNotFoundError, OSError):
+            return False
+        return True
+
+    def _register_now(self) -> tuple[Any, np.ndarray | None]:
+        """A fresh full-resolution registration of the latest frame (for baselines and detections)."""
+        with self._lock:
+            frame = self.frame
+        if frame is None or self.board is None:
+            return None, None
+        return self.board.locate(frame), frame
+
+    def capture_baseline(self) -> dict[str, Any]:
+        from src.vision.detect import Baseline
+
+        registration, frame = self._register_now()
+        if registration is None or frame is None:
+            return {"error": "board not registered: is the map in view?"}
+        extra: list[np.ndarray] = []
+        seq = self.frames
+        while len(extra) < 4:  # a few more frames of the same view: the median removes sensor noise
+            seq, _ = self.wait_jpeg(seq, 1.0)
+            with self._lock:
+                more = self.frame
+            if more is None or more is frame or (extra and more is extra[-1]):
+                break
+            extra.append(more)
+        self.baseline = Baseline.capture(registration, frame, extra=extra)
+        path = self.baseline.save(self.baseline_path())
+        log.info("empty-board baseline saved to %s (%d inliers)", path, registration.inliers)
+        return {"ok": True, "inliers": registration.inliers, "path": str(path)}
+
+    def detect_pieces(self) -> dict[str, Any]:
+        """Find what is on the board now; crops go to <captures>/pieces/ for the page and the gallery."""
+        from src.vision.detect import describe, find_pieces
+
+        if self.baseline is None:
+            return {"error": "no empty-board baseline yet: clear the board and press the baseline button"}
+        registration, frame = self._register_now()
+        if registration is None or frame is None:
+            return {"error": "board not registered: is the map in view?"}
+        pieces = find_pieces(registration, frame, self.baseline)
+        fw, fh = registration.frame_size
+        stamp = time.strftime("%Y%m%d_%H%M%S")
+        folder = self.capture_dir / "pieces"
+        folder.mkdir(parents=True, exist_ok=True)
+        out = []
+        for i, piece in enumerate(pieces):
+            name = f"{stamp}_{i}_{(piece.space or 'between').replace(' ', '_')}.jpg"
+            if piece.crop is not None and piece.crop.size:
+                (folder / name).write_bytes(encode_jpeg(piece.crop, quality=92))
+            x0, y0, x1, y1 = piece.frame_box
+            out.append(
+                {
+                    **piece.record(),
+                    "box": [x0 / fw, y0 / fh, x1 / fw, y1 / fh],
+                    "crop": f"/captures/pieces/{name}",
+                }
+            )
+        text = describe(pieces)
+        log.info("pieces: %s", text)
+        return {"ok": True, "inliers": registration.inliers, "pieces": out, "text": text}
+
+    def rectified_jpeg(self, width: int = 1200) -> bytes:
+        registration = self.registration
+        with self._lock:
+            frame = self.frame
+        if registration is None or frame is None:
+            return b""
+        return encode_jpeg(registration.rectify(frame, width=width), quality=85)
 
     def stop(self) -> None:
         self._stop.set()
@@ -394,6 +582,7 @@ class Preview:
                 "body": getattr(self.camera, "body", None),
                 "sweep": self.sweep_state,
                 "zoom": self.zoom[0],
+                "board": None if self.registration is None else self.registration.inliers,
                 "warning": "",
             }
         if not self.frames and status["waited_s"] > 8.0:
@@ -485,7 +674,7 @@ def make_handler(preview: Preview, table_pitch: float = TABLE_PITCH) -> type[Bas
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, fmt: str, *args: Any) -> None:  # quiet: one line per frame otherwise
-            if not self.path.startswith(("/stream", "/status", "/frame")):
+            if not self.path.startswith(("/stream", "/status", "/frame", "/board")):
                 log.info("%s %s", self.command, self.path)
 
         def _send(self, status: int, body: bytes, content_type: str) -> None:
@@ -512,6 +701,14 @@ def make_handler(preview: Preview, table_pitch: float = TABLE_PITCH) -> type[Bas
                     self._json({"error": "no frame yet"}, 503)
             elif self.path.startswith("/stream"):
                 self._stream()
+            elif self.path.startswith("/board"):
+                self._json(preview.board_json())
+            elif self.path.startswith("/rectified"):
+                jpeg = preview.rectified_jpeg()
+                if jpeg:
+                    self._send(200, jpeg, "image/jpeg")
+                else:
+                    self._json({"error": "board not registered yet"}, 503)
             elif self.path.startswith("/gallery"):
                 self._send(200, preview.gallery_html().encode("utf-8"), "text/html; charset=utf-8")
             elif self.path.startswith("/captures/"):
@@ -578,6 +775,14 @@ def make_handler(preview: Preview, table_pitch: float = TABLE_PITCH) -> type[Bas
                         "body": getattr(preview.camera, "body", None),
                     }
                 )
+            elif self.path.startswith("/baseline"):
+                self._json(preview.capture_baseline())
+            elif self.path.startswith("/detect"):
+                try:
+                    self._json(preview.detect_pieces())
+                except Exception as exc:
+                    log.warning("detection failed: %s", exc)
+                    self._json({"error": str(exc)}, 500)
             elif self.path.startswith("/zoom"):
                 try:
                     body = json.loads(raw or b"{}")
@@ -628,6 +833,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--sweep", default="", help="run one sweep at these body angles (e.g. 60,30,0,-30,-60) and exit"
     )
+    parser.add_argument("--no-board", action="store_true", help="do not register frames to the board picture")
     args = parser.parse_args(argv)
 
     if args.fake:
@@ -643,7 +849,17 @@ def main(argv: list[str] | None = None) -> int:
             camera.look(args.pitch, 0.0)
         except Exception as exc:
             log.warning("could not move the head: %s", exc)
-    preview = Preview(camera).start()
+    preview = Preview(camera)
+    if not args.no_board:
+        try:
+            from src.vision.board_map import BoardReference
+
+            preview.board = BoardReference()
+            if preview.load_baseline():
+                log.info("empty-board baseline loaded from %s", preview.baseline_path())
+        except Exception as exc:
+            log.warning("board registration off: %s", exc)
+    preview.start()
     if args.sweep:
         from src.vision.capture import sweep, yaw_views
 

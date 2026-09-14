@@ -343,6 +343,30 @@ a crop of the 1080p frame; the far edge of the board stays soft at 3x. Reading t
 would need the camera at 4K, which means capturing outside the daemon (`--no-media` and our
 own GStreamer pipeline), or a second, closer position for the robot.
 
+## Done: the robot recognises the board by its own art (2026-09-14)
+
+No markers: the printed map is the marker. `src/vision/board_map.py` keeps the SIFT features
+of a top-down picture of the board (`BOARD_REFERENCE_IMAGE`, `data/imgs/World_Map.webp`,
+1200x790, the real 2013 board) and registers every camera frame to it (Lowe ratio test,
+RANSAC homography, accepted from 25 inliers). `src/vision/spaces.py` is the table of the 36
+spaces (9 cities, 6 expedition sites, 21 numbered) in normalised map coordinates, checked by
+drawing them over the picture. A registration maps any frame pixel to a space
+(`space_at`), projects the space centres into the frame (`space_pixels`) and warps the frame
+to the top-down map (`rectify`). The preview page draws the board outline and the space
+names over the live video (`/board`, once a second, at half resolution) and serves the
+top-down view (`/rectified.jpg`).
+
+| Signal | Value |
+|---|---|
+| Centre view, full resolution | 188 ratio matches, 106 inliers, 0.2 s |
+| Views turned 45 deg left / right | 43 / 38 inliers, 0.1 s |
+| Live loop at half resolution | 73-81 inliers, 0.05 s per frame |
+| The fan "total conversion" picture tried first | 6 inliers (different continents and cities): unusable |
+| Space labels on the live frame | on the printed spaces for all 33 spaces in view |
+
+The board picture is runtime data (git-ignored, copyrighted art); the owner drops it in
+`data/imgs/`. Anything with the same art works after one rescale of the space table.
+
 ## Decisions taken
 
 | Topic | Decision | Where |
@@ -369,7 +393,7 @@ Blocked on the owner deciding where the robot sits at the table.
 - [ ] Calibration session with the checklist in docs/PHYSICAL_SETUP.md; reference photos of every token type.
 - [ ] `src/vision/capture.py`: gaze to table pose, sharpest-of-three capture, save to `data/captures/`.
 - [ ] `src/vision/detect.py`: YOLO-World with the game's prompt list; gallery matching.
-- [ ] `src/vision/board_map.py`: board corners -> canonical map -> space assignment.
+- [x] `src/vision/board_map.py`: SIFT registration to the board picture -> space assignment.
 - [ ] `src/strategy/state.py`: pydantic game state + patch application (needed by everything after).
 - [ ] Angle and lighting robustness test with recorded frames.
 
@@ -379,9 +403,9 @@ Blocked on the owner deciding where the robot sits at the table.
    with the owner speaking, and a local LLM classifier only if the rules prove insufficient
    in real sessions.
 2. **Phase 1, board vision**: the owner places the robot with the camera preview page
-   (`src/vision/preview.py`) so the camera sees the whole board (the daemon must run from
-   iTerm for the camera, see above); then calibration photos,
-   `src/vision/capture.py`, `detect.py`, `board_map.py`.
+   done up to the board map: preview page, sweeps, `board_map.py` and the space table. Next:
+   `detect.py` (YOLO-World candidates + a gallery of the real pieces photographed by this
+   camera, built in a calibration session with the owner) and the state patches.
 3. A recorded 2-3 player session (the annotated dataset) waits until players are available.
 4. ~~Small fixes: the rules tool ran twice across a language switch; the shadow label marked
    an English question as echo; start the diart sidecar by default when present~~ done.

@@ -2,10 +2,12 @@
 
 import json
 import threading
+import time
 import urllib.error
 import urllib.request
 
 import numpy as np
+import pytest
 
 from src.vision.preview import BOUNDARY, FakeCamera, Preview, crop_frame, encode_jpeg, serve
 
@@ -134,6 +136,96 @@ def test_zoom_endpoint_changes_the_stream_size(tmp_path):
         _, jpeg = preview.wait_jpeg(seq + 1, 2.0)
         assert Image.open(io.BytesIO(jpeg)).size == (80, 45)  # a 2x crop of 160x90, below the stream width
         assert json.loads(urllib.request.urlopen(base + "/status").read())["zoom"] == 2.0
+    finally:
+        server.shutdown()
+        preview.stop()
+
+
+def test_board_endpoints_with_a_synthetic_board(tmp_path):
+    pytest.importorskip("cv2")
+    from src.vision.board_map import BoardReference
+    from tests.test_board_map import perspective_frame, synthetic_board
+
+    board = synthetic_board()
+    frame, _ = perspective_frame(board)
+
+    class Still:
+        pitch = yaw = body = 0.0
+
+        def get_frame(self):
+            return frame.copy()
+
+    preview = Preview(Still(), stream_width=320, fps=10.0, capture_dir=tmp_path)
+    preview.board = BoardReference(image=board, min_inliers=20)
+    preview.start()
+    server = serve(preview, port=0)
+    port = server.server_address[1]
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    base = f"http://127.0.0.1:{port}"
+    try:
+        deadline = time.monotonic() + 10.0
+        answer = {}
+        while time.monotonic() < deadline and not answer.get("inliers"):
+            answer = json.loads(urllib.request.urlopen(base + "/board").read())
+            time.sleep(0.2)
+        assert answer["inliers"] >= 20 and len(answer["outline"]) == 4
+        assert any(s["name"] == "London" for s in answer["spaces"])
+        assert all(0 <= s["x"] <= 1 for s in answer["spaces"] if s["name"] == "London")
+        top = urllib.request.urlopen(base + "/rectified.jpg").read()
+        assert top[:2] == b"\xff\xd8"
+        assert json.loads(urllib.request.urlopen(base + "/status").read())["board"] >= 20
+    finally:
+        server.shutdown()
+        preview.stop()
+
+
+def test_baseline_and_detect_endpoints(tmp_path):
+    cv2 = pytest.importorskip("cv2")
+    from src.vision.board_map import BoardReference
+    from src.vision.spaces import BY_NAME
+    from tests.test_board_map import perspective_frame, synthetic_board
+
+    board = synthetic_board()
+    empty, true_h = perspective_frame(board)
+    with_token = board.copy()
+    rome = BY_NAME["Rome"].pixel(board.shape[1], board.shape[0])
+    cv2.circle(with_token, (int(rome[0]), int(rome[1])), 14, (30, 30, 230), -1)
+    busy = cv2.warpPerspective(with_token, true_h, (empty.shape[1], empty.shape[0]))
+    current = {"frame": empty}
+
+    class Camera:
+        pitch = yaw = body = 0.0
+
+        def get_frame(self):
+            return current["frame"].copy()
+
+    preview = Preview(Camera(), stream_width=320, fps=10.0, capture_dir=tmp_path / "board")
+    preview.board = BoardReference(image=board, min_inliers=20)
+    preview.start()
+    server = serve(preview, port=0)
+    port = server.server_address[1]
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    base = f"http://127.0.0.1:{port}"
+    try:
+        preview.wait_jpeg(0, 3.0)
+
+        def post(path):
+            return json.loads(
+                urllib.request.urlopen(urllib.request.Request(base + path, method="POST")).read()
+            )
+
+        assert "error" in post("/detect")  # no baseline yet
+        answer = post("/baseline")
+        assert answer["ok"] and preview.baseline_path().exists()
+        current["frame"] = busy
+        preview.wait_jpeg(preview.frames, 3.0)
+        time.sleep(0.3)
+        found = post("/detect")
+        assert found["ok"] and found["pieces"], found
+        assert found["pieces"][0]["space"] == "Rome" and "Rome" in found["text"]
+        crop = urllib.request.urlopen(base + found["pieces"][0]["crop"]).read()
+        assert crop[:2] == b"\xff\xd8"
+        assert preview.load_baseline()
     finally:
         server.shutdown()
         preview.stop()
