@@ -4,6 +4,23 @@
 
 ---
 
+## 📌 NOVO WORKFLOW (Atualizado)
+
+**Diretório Principal de Trabalho**: `/Users/alessandrolaroccasilveira/Documents/Documents - USSILVEIRAAXWR2/reachy_bg/` (seu Mac)
+
+**Claude Code** é usado para:
+- Gerar novos módulos
+- Criar features
+- Fazer testes
+- Sincronizar com GitHub
+
+**Seu Mac** é usado para:
+- Desenvolvimento iterativo
+- Testes locais
+- Git pull/push
+
+---
+
 ## 📋 PROMPT PARA COLAR NO CLAUDE CODE
 
 ```
@@ -11,7 +28,7 @@ Você vai montar o ambiente de desenvolvimento para o projeto Eldritch Horror + 
 
 REPOSITÓRIO: https://github.com/laroccathebrux/reachy_bg
 BRANCH: main
-DIRETÓRIO DE TRABALHO: /home/claude/eldritch-horror-reachy
+DIRETÓRIO DE TRABALHO: /home/claude/reachy_bg_dev (trabalho local no Claude Code)
 
 TAREFAS (nesta ordem):
 
@@ -111,22 +128,96 @@ Imprima estas instruções:
 🔗 BRANCH: main
 ```
 
-SE HOUVER ERROS:
+### 12. Sincronização com GitHub
+
+Imprima instruções de sincronização:
+
+```
+🔄 SINCRONIZAÇÃO COM GITHUB:
+
+ANTES DE COMEÇAR QUALQUER TAREFA:
+git pull origin main
+
+DEPOIS DE TERMINAR UMA TAREFA:
+git add .
+git commit -m "Feature/Fix: descrição clara"
+git push origin main
+
+SEU MAC RECEBE AS MUDANÇAS:
+cd ~/Documents/Documents\ -\ USSILVEIRAAXWR2/reachy_bg
+git pull origin main
+```
+
+SE HOUVER CONFLITOS:
 - Mostre o erro completo
-- Sugira solução (ex: versão Python incompatível, falta de espaço, etc)
+- Sugira solução (ex: merge conflict, versão Python incompatível, falta de espaço)
 - Tente resolver automaticamente se possível
+```
+
+---
+
+## 🔄 WORKFLOW DIÁRIO
+
+### SEU MAC (Desenvolvimento Principal)
+```bash
+cd ~/Documents/Documents\ -\ USSILVEIRAAXWR2/reachy_bg
+source venv/bin/activate
+
+# Faça mudanças
+code src/
+
+# Teste localmente
+pytest
+
+# Commit
+git add .
+git commit -m "Feature: descrição"
+git push origin main
+```
+
+### CLAUDE CODE (Geração e Sincronização)
+```bash
+cd /home/claude/reachy_bg_dev
+git pull origin main  # Sincroniza com seu Mac
+
+# Cria novos módulos/features conforme solicitado
+# Testa no Claude Code
+# Commit e push
+
+git push origin main
+```
+
+**Depois no seu Mac:**
+```bash
+git pull origin main  # Recebe mudanças do Claude Code
 ```
 
 ---
 
 ## 🎯 Como Usar Este Arquivo
 
+### Primeira Vez (Setup Inicial)
+
 1. **Abra Claude Code**
 2. **Crie uma nova conversa**
-3. **Cole todo o conteúdo acima** (entre os ```triple backticks```)
+3. **Cole todo o conteúdo abaixo** (entre os ```triple backticks```)
 4. **Envie a mensagem**
 
-Claude Code vai executar automaticamente todos os passos e montar o ambiente completo.
+Claude Code vai executar automaticamente todos os passos e montar o ambiente.
+
+### Próximas Vezes (Desenvolvimento)
+
+Não precisa rodar o prompt completo. Apenas peça ao Claude Code:
+
+```
+Sincroniza o repositório:
+git pull origin main
+
+Depois execute:
+[descrição da tarefa]
+```
+
+Isso mantém tudo sincronizado entre seu Mac e Claude Code.
 
 ---
 
@@ -154,11 +245,26 @@ qdrant-client==2.7.0
 
 ✅ AMBIENTE CONFIGURADO COM SUCESSO!
 
+📍 DIRETÓRIO DE TRABALHO PRINCIPAL: /home/claude/reachy_bg_dev
+📍 SEU MAC: ~/Documents/Documents - USSILVEIRAAXWR2/reachy_bg
+🔗 REPOSITÓRIO: https://github.com/laroccathebrux/reachy_bg
+📌 BRANCH: main
+
 PRÓXIMOS PASSOS:
-1. Edite .env com suas credenciais
-2. Inicie Ollama: ollama serve
-3. Inicie Qdrant: docker run -p 6333:6333 qdrant/qdrant
-4. Solicite Phase 1: Vision Module
+
+1. NO SEU MAC:
+   - Edite .env com suas credenciais
+   - Inicie Ollama: ollama serve
+   - Inicie Qdrant: docker run -p 6333:6333 qdrant/qdrant
+   - Teste: pytest
+
+2. NO CLAUDE CODE:
+   - Peça: "Cria Phase 1.1: Board Capture Module"
+   - Faça: git push origin main
+
+3. SINCRONIZE:
+   - No seu Mac: git pull origin main
+   - No Claude Code: git pull origin main (antes de nova tarefa)
 ```
 
 ---
@@ -177,9 +283,35 @@ Ele vai diagnosticar e corrigir automaticamente.
 
 ## 📂 Arquivo Gerado
 
-Este arquivo está em: `/home/claude/eldritch-horror-reachy/CLAUDE_CODE_SETUP_PROMPT.md`
+Este arquivo está em:
+- **Claude Code**: `/home/claude/eldritch-horror-reachy/CLAUDE_CODE_SETUP_PROMPT.md`
+- **GitHub**: https://github.com/laroccathebrux/reachy_bg/blob/main/CLAUDE_CODE_SETUP_PROMPT.md
+- **Seu Mac**: `~/Documents/Documents - USSILVEIRAAXWR2/reachy_bg/CLAUDE_CODE_SETUP_PROMPT.md`
 
 Você pode:
-- Copiar o prompt deste arquivo
+- Copiar o prompt deste arquivo para setup inicial
 - Usar em qualquer momento
 - Compartilhar com outros desenvolvedores
+
+---
+
+## 🔗 Sincronização Recomendada
+
+**Fluxo Padrão:**
+
+1. No seu Mac: `git pull origin main` (começa o dia)
+2. No Claude Code: Peça uma tarefa
+3. Claude Code: `git push origin main` (termina tarefa)
+4. No seu Mac: `git pull origin main` (recebe mudanças)
+5. No seu Mac: Desenvolva/teste localmente
+6. No seu Mac: `git push origin main`
+7. Repita
+
+---
+
+## 💾 Histórico de Atualizações
+
+- **v1.0**: Prompt inicial para setup
+- **v1.1**: Atualizado para novo workflow com Mac como workspace principal
+- Diretório de trabalho: `/Users/alessandrolaroccasilveira/Documents/Documents - USSILVEIRAAXWR2/reachy_bg/`
+- Claude Code sincroniza via GitHub
