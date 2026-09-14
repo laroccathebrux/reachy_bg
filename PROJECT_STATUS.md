@@ -259,6 +259,19 @@ Blocked on the owner deciding where the robot sits at the table.
 - [ ] `src/strategy/state.py`: pydantic game state + patch application (needed by everything after).
 - [ ] Angle and lighting robustness test with recorded frames.
 
+### Immediate next steps (decided 2026-09-14 with the owner)
+
+1. **Local "stay quiet" gate, no LLM tokens** (`talk.py`): when the local addressee rules say
+   the utterance is not for the robot, hold the audio back from the agent (same mechanism as
+   the echo gate) instead of only logging a shadow decision. Rules first (name, solo mode,
+   follow-up, game question); a small local LLM only if the rules prove insufficient, so no
+   cloud tokens are spent before the robot decides to speak.
+2. **Phase 1, board vision**: the owner will place the robot so the camera sees the whole
+   board; then camera permission, calibration photos, `src/vision/`.
+3. A recorded 2-3 player session (the annotated dataset) waits until players are available.
+4. Small fixes pending: the rules tool runs twice across a language switch; the shadow
+   label marked an English question as echo; start the diart sidecar by default when present.
+
 ### Phase 2: speech and turn-taking (weeks 2-3)
 
 - [x] Mac microphone capture (`sounddevice`) with device selection from `AUDIO_INPUT_DEVICE`.
