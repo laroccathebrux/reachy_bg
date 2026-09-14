@@ -75,6 +75,24 @@ REACHY_MEDIA_BACKEND = os.getenv("REACHY_MEDIA_BACKEND", "default")
 # input device. Empty string = the system default input device (sounddevice semantics).
 AUDIO_INPUT_DEVICE = os.getenv("AUDIO_INPUT_DEVICE", "")
 AUDIO_SAMPLE_RATE = _env_int("AUDIO_SAMPLE_RATE", 16000)
+# Energy-based voice activity detection on the Mac input (src/speech/microphone.py). A frame
+# counts as speech when its level exceeds both the absolute floor and the adaptive noise
+# floor plus a margin; an utterance ends after VAD_SILENCE_MS of silence.
+VAD_FRAME_MS = _env_int("VAD_FRAME_MS", 30)
+VAD_SILENCE_MS = _env_int("VAD_SILENCE_MS", 700)
+VAD_MIN_SPEECH_MS = _env_int("VAD_MIN_SPEECH_MS", 300)
+VAD_PRE_ROLL_MS = _env_int("VAD_PRE_ROLL_MS", 300)
+VAD_MAX_UTTERANCE_S = float(os.getenv("VAD_MAX_UTTERANCE_S", "20"))
+VAD_THRESHOLD_DBFS = float(os.getenv("VAD_THRESHOLD_DBFS", "-50"))
+VAD_NOISE_MARGIN_DB = float(os.getenv("VAD_NOISE_MARGIN_DB", "8"))
+# While the robot speaks its own voice reaches the Mac microphone, so interrupting it
+# (barge-in) needs a louder, longer voice than a normal utterance start.
+# Measured on 2026-09-14 with the MacBook microphone: room floor -48 dBFS, robot voice peaks
+# at -25 dBFS, so the bar sits at floor + 8 + 16 = -24 dBFS (a close, raised voice).
+BARGE_IN_MARGIN_DB = float(os.getenv("BARGE_IN_MARGIN_DB", "16"))
+BARGE_IN_MIN_MS = _env_int("BARGE_IN_MIN_MS", 500)
+# Keep every captured utterance as a WAV file for debugging and for the research dataset.
+SAVE_CAPTURES = _env_bool("SAVE_CAPTURES", True)
 
 # --------------------------------------------------------------------------- speech
 # Whisper checkpoint for mlx-whisper (Metal). "large-v3-turbo" balances Portuguese and
@@ -82,6 +100,11 @@ AUDIO_SAMPLE_RATE = _env_int("AUDIO_SAMPLE_RATE", 16000)
 # ("auto"); set a BCP-47 code to pin it.
 WHISPER_MODEL = os.getenv("WHISPER_MODEL", "mlx-community/whisper-large-v3-turbo")
 WHISPER_LANGUAGE = os.getenv("WHISPER_LANGUAGE", "auto")
+# Optional vocabulary hint for Whisper (game terms it would otherwise misspell).
+WHISPER_PROMPT = os.getenv(
+    "WHISPER_PROMPT",
+    "Eldritch Horror, Ancient One, Doom, Omen, Mythos, Clue, Gate, Action Phase, Encounter Phase.",
+)
 # Live diarizer sidecar (diart in its own venv) publishes speaker events here.
 DIARIZER_URL = os.getenv("DIARIZER_URL", "ws://127.0.0.1:8765")
 # Hugging Face token: required once to download the gated pyannote models.
@@ -125,6 +148,7 @@ DATA_DIR = Path(os.getenv("DATA_DIR", str(BASE_DIR / "data")))
 RULEBOOK_DIR = DATA_DIR / "rulebooks"
 GAME_LOG_DIR = DATA_DIR / "game_logs"
 CAPTURE_DIR = DATA_DIR / "captures"
+AUDIO_CAPTURE_DIR = CAPTURE_DIR / "audio"
 MODEL_DIR = DATA_DIR / "models"
 
 
@@ -176,8 +200,19 @@ __all__ = [
     "REACHY_MEDIA_BACKEND",
     "AUDIO_INPUT_DEVICE",
     "AUDIO_SAMPLE_RATE",
+    "VAD_FRAME_MS",
+    "VAD_SILENCE_MS",
+    "VAD_MIN_SPEECH_MS",
+    "VAD_PRE_ROLL_MS",
+    "VAD_MAX_UTTERANCE_S",
+    "VAD_THRESHOLD_DBFS",
+    "VAD_NOISE_MARGIN_DB",
+    "BARGE_IN_MARGIN_DB",
+    "BARGE_IN_MIN_MS",
+    "SAVE_CAPTURES",
     "WHISPER_MODEL",
     "WHISPER_LANGUAGE",
+    "WHISPER_PROMPT",
     "DIARIZER_URL",
     "HF_TOKEN",
     "TTS_PROVIDER",
@@ -193,6 +228,7 @@ __all__ = [
     "RULEBOOK_DIR",
     "GAME_LOG_DIR",
     "CAPTURE_DIR",
+    "AUDIO_CAPTURE_DIR",
     "MODEL_DIR",
     "ensure_data_dirs",
     "LOG_LEVEL",

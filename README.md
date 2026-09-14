@@ -11,14 +11,16 @@ many games a world model needs before it becomes useful.
 
 ## Status
 
-Phase 0 is done: environment, configuration, the retrieval layer and the knowledge base.
+Phase 0 (retrieval and knowledge base) and Phase 2a (listening) are done: the robot hears a
+question at the table in Portuguese or English, looks it up, and answers with a native voice.
 
 | Piece | State |
 |---|---|
 | `bg_rules` | official English rulebook + reference guide, 216 chunks, searchable |
 | `bg_knowledge` | 12 investigators, 4 Ancient Ones, monsters, gates, 142 FAQ entries |
 | `bg_sessions` | created, fills up as games are played |
-| Vision, speech, strategy, learning | designed, not built (Phases 1-5) |
+| Speech | Mac microphone + VAD, mlx-whisper, ElevenLabs native voices, interruptible playback |
+| Vision, who-is-speaking, strategy, learning | designed, not built (Phases 1, 2b, 3-5) |
 
 See [PROJECT_STATUS.md](PROJECT_STATUS.md) for the roadmap.
 
@@ -54,6 +56,16 @@ With Docker (Qdrant) and Ollama running:
 ```bash
 uv run python -m src.rag.ingest_rules    # embed data/rulebooks/*.pdf into bg_rules
 uv run python -m src.rag.migrate_knowledge
+```
+
+With the robot daemon on `:8000` and the ElevenLabs key in `.env`:
+
+```bash
+uv sync --extra speech --extra tts-cloud
+uv run python scripts/venv_postinstall.py       # macOS: make the venv's .pth files visible
+uv run python -m src.integration.smoke          # typed question -> spoken answer
+uv run python -m src.integration.listen         # spoken question -> spoken answer (Ctrl+C to stop)
+uv run python -m src.integration.listen --list-devices
 ```
 
 Full setup, services and the robot daemon: [GETTING_STARTED.md](GETTING_STARTED.md).

@@ -1,6 +1,6 @@
 # Project Status
 
-Updated 2026-09-14.
+Updated 2026-09-14 (Phase 2a).
 
 ## Done: Phase 0, foundation
 
@@ -56,6 +56,52 @@ Findings:
 - Language detection and voice selection behaved correctly in both languages; game terms
   stay in English inside Portuguese answers as agreed.
 
+## Done: Phase 2a, listening and transcribing on the physical robot (2026-09-14)
+
+`uv run python -m src.integration.listen` runs Mac microphone -> energy VAD -> mlx-whisper ->
+retrieval -> Qwen 3.6 -> ElevenLabs native voice -> robot speaker, in a loop, with an
+interruptible `Robot.say`. New modules: `src/speech/microphone.py` (device selection,
+`Segmenter` VAD, capture thread, WAV captures in `data/captures/audio/`), `src/speech/asr.py`
+(`Transcriber`: language identification restricted to `SPOKEN_LANGUAGES`, then decoding with
+the language pinned), `src/integration/answering.py` (retrieval + LLM + TTS shared with the
+smoke test), `src/integration/listen.py`. 58 tests; the Whisper test runs only when the model
+is in the Hugging Face cache and uses macOS `say` to make its clip.
+
+Validated with the owner speaking freely at the MacBook (three questions in Portuguese and
+English, all transcribed verbatim, language identified with confidence 0.99 or better) and
+with clips played through the Mac speakers. Measured on the work Mac, mostly under heavy
+load:
+
+| Stage | Best (quiet Mac) | Typical (loaded Mac) |
+|---|---|---|
+| VAD tail (silence that ends the utterance) | 0.72 s | 0.72 s |
+| Whisper large-v3-turbo, 2-4 s utterance (language id + decode) | 1.35 s | 2.9-3.1 s |
+| Whisper warm-up at start (weights cached on disk) | 2.8 s | 5.8 s |
+| Embedding + retrieval | 0.1-0.25 s | 0.7-2 s (cold) |
+| LLM answer, 3 sentences | 1.5 s at 28.6 tok/s | 7-16 s at 2.6-8.6 tok/s; 31 s when the model reloads |
+| ElevenLabs TTS | 1.1 s | 1.7 s |
+| Ear to mouth (person stops talking -> robot starts) | 4.9 s | 10-21 s |
+
+Findings:
+- The HyperX QuadCast, the Mac's default input, delivered digital silence (-96 dBFS) in every
+  test: it is muted on its touch sensor or its gain is at zero. The MacBook microphone works
+  and is what `--device "MacBook Pro Microphone"` used. Set `AUDIO_INPUT_DEVICE` accordingly.
+- Without echo cancellation the robot's own voice reaches the MacBook microphone at
+  -21 to -31 dBFS peak, the same level as a person talking normally at the table (-28 to
+  -31 dBFS). Energy-only barge-in therefore needs a raised voice next to the Mac; the
+  owner's "para, para, para" at normal volume did not cross the bar. Whisper transcribes the
+  robot's own voice perfectly, which suggests a cheap fix: compare each transcript with the
+  last spoken answer and drop the echo, then lower `BARGE_IN_MARGIN_DB`. A reference-based
+  echo canceller (the played clip is known) is the proper fix. See docs/SPEECH_PIPELINE.md.
+- Whisper likes to hear "Rich" for "Reachy"; the addressee rules in Phase 2b must accept
+  the common misspellings.
+- Utterances captured while the robot thinks are currently discarded before it speaks; a
+  queue with a "still relevant?" check belongs to the conversation state machine.
+- The Portuguese answers translated "Action Phase" once ("fase de ação") despite the prompt;
+  worth a few-shot example in the prompt.
+- Background runs must be stopped with SIGTERM (a `&` job ignores SIGINT); `listen.py` now
+  treats SIGTERM like Ctrl+C. Two instances left running answered each other for a minute.
+
 ## Decisions taken
 
 | Topic | Decision | Where |
@@ -85,8 +131,11 @@ Blocked on the owner deciding where the robot sits at the table.
 
 ### Phase 2: speech and turn-taking (weeks 2-3)
 
-- [ ] Mac microphone capture (`sounddevice`) with device selection from `AUDIO_INPUT_DEVICE`.
-- [ ] mlx-whisper streaming transcription in Portuguese.
+- [x] Mac microphone capture (`sounddevice`) with device selection from `AUDIO_INPUT_DEVICE`.
+- [x] mlx-whisper transcription per utterance, Portuguese and English, language id per utterance.
+- [x] Listening loop with interruptible speech (`src/integration/listen.py`).
+- [ ] Echo handling so barge-in works at normal voice level (transcript match, then a
+      reference-based canceller).
 - [ ] `tools/live-diarizer/`: diart sidecar publishing speaker turns over WebSocket.
 - [ ] Speaker enrolment and voiceprint matching.
 - [ ] Rule-based addressee classifier + speak/silence log; annotate a recorded session.

@@ -24,6 +24,7 @@ from __future__ import annotations
 import subprocess
 import threading
 import time
+from collections.abc import Callable
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
@@ -166,26 +167,44 @@ class Robot:
         self._move_thread = None
 
     # ------------------------------------------------------------------ speech
-    def say(self, clip: Any) -> None:
+    def say(self, clip: Any, *, interrupt: Callable[[], bool] | None = None, poll_s: float = 0.05) -> bool:
         """Play a WAV clip (``src.speech.tts.Clip``) on the robot speaker and block until it finishes.
 
         Playback goes through the daemon's REST endpoint rather than the SDK client's own
         GStreamer pipeline: on macOS the client-side ``playbin`` reports success but stays
         silent, while the daemon (which owns the audio device) plays reliably. The daemon's
         head wobbler animates the head from the audio for the duration of the clip.
+
+        ``interrupt`` is polled every ``poll_s``; when it returns True the clip is cut short
+        (barge-in) and the method returns False. It returns True when the clip played fully.
         """
         path = Path(clip.path).resolve()
-        if self.simulated:
-            subprocess.run(["afplay", str(path)], check=False)
-            return
-        self._wait_for_move()
         duration = float(clip.duration_s)
+        if self.simulated:
+            player = subprocess.Popen(["afplay", str(path)])
+            try:
+                while player.poll() is None:
+                    if interrupt is not None and interrupt():
+                        player.terminate()
+                        return False
+                    time.sleep(poll_s)
+            finally:
+                if player.poll() is None:
+                    player.terminate()
+            return True
+        self._wait_for_move()
         self._post("media/wobbling/enable")
         try:
             if not self._post("media/play_sound", json={"file": str(path)}):
                 log.warning("daemon play_sound failed; falling back to the SDK client")
                 self._mini.media.play_sound(str(path))
-            time.sleep(duration + 0.3)
+            deadline = time.monotonic() + duration + 0.3
+            while time.monotonic() < deadline:
+                if interrupt is not None and interrupt():
+                    self.stop_speaking()
+                    return False
+                time.sleep(poll_s)
+            return True
         finally:
             self._post("media/wobbling/disable")
 

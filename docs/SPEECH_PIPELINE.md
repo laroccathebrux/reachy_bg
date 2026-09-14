@@ -111,6 +111,54 @@ Rules:
 - Speech input works the same way for both languages: Whisper, pyannote and diart are
   language-independent; speaker voiceprints do not change with the language spoken.
 
+## Phase 2a as built (2026-09-14)
+
+```
+Mac input device (AUDIO_INPUT_DEVICE; opened at 16 kHz when the device allows it, else resampled)
+   |  30 ms int16 frames, capture thread
+   v
+Segmenter (src/speech/microphone.py): RMS level per frame in dBFS
+   speech  = level > max(VAD_THRESHOLD_DBFS, noise floor + VAD_NOISE_MARGIN_DB [+ barge-in margin])
+   start   = 3 consecutive speech frames, with VAD_PRE_ROLL_MS of audio kept from before
+   end     = VAD_SILENCE_MS of silence (or VAD_MAX_UTTERANCE_S); < VAD_MIN_SPEECH_MS is dropped
+   noise floor = exponential average that drops fast and rises 25x slower; frozen while the robot speaks
+   |  Utterance (int16 audio, timestamps, peak level, WAV in data/captures/audio/)
+   v
+Transcriber (src/speech/asr.py): mlx-whisper large-v3-turbo, fp16, temperature 0
+   1. language id on the mel spectrogram, argmax restricted to SPOKEN_LANGUAGES (pt / en)
+   2. decode with that language pinned, WHISPER_PROMPT as vocabulary hint
+   3. Whisper's no-speech / log-prob gate plus a short list of known hallucinations
+   |  Transcript (text, pt-BR / en-US, confidence, latency)
+   v
+think() + voice() (src/integration/answering.py) -> Robot.say(clip, interrupt=...)
+```
+
+Barge-in: while the robot speaks, the segmenter runs with `BARGE_IN_MARGIN_DB` added to the
+threshold and `Robot.say` polls `Microphone.voice_ms`; a voice above the bar for
+`BARGE_IN_MIN_MS` stops the clip and the head wobbler, and that voice is transcribed as the
+next utterance. When the clip ends normally, everything the microphone caught meanwhile is
+discarded as echo.
+
+Measured levels at the MacBook microphone (robot 60 cm away, owner at the keyboard):
+
+| Signal | Level (RMS per 30 ms frame) |
+|---|---|
+| Room floor | -45 to -52 dBFS |
+| Owner talking normally | peaks -28 to -31 dBFS |
+| Robot's own voice (echo) | median -44, p90 -35, peaks -21 to -31 dBFS |
+| `say` clip through the Mac speakers | peaks -31 dBFS |
+
+So the echo peaks at the same level as a person talking: energy alone cannot separate the
+two, and the default `BARGE_IN_MARGIN_DB=16` only lets a raised voice through. Two fixes,
+in order of effort: (1) transcribe what was heard during playback and drop it when it
+matches the answer being spoken (Whisper transcribes the robot's voice verbatim), which
+allows a much lower margin; (2) a reference-based acoustic echo canceller, since the clip
+being played is known sample by sample (NLMS in numpy, or the daemon's own audio path if it
+ever exposes one). The HyperX QuadCast has a cardioid pattern and would also reject the
+robot better than the MacBook's array, once it is unmuted.
+
+Latencies measured on this Mac are in [PROJECT_STATUS.md](../PROJECT_STATUS.md).
+
 ## Why not the alternatives
 
 | Option | Why not (for now) |
@@ -139,7 +187,7 @@ sounddevice>=0.4.6
 Both need a Hugging Face token once (`HF_TOKEN`) to download the gated pyannote models, after
 accepting their terms on the model pages.
 
-## Expected latencies on the M1 Max (to be measured)
+## Expected latencies on the M1 Max (targets; measured values are in PROJECT_STATUS.md)
 
 | Signal | Target |
 |---|---|

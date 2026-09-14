@@ -30,11 +30,12 @@ uv run reachy-mini-daemon          # keep it running in its own terminal; takes 
 from reachy_mini import ReachyMini
 from reachy_mini.utils import create_head_pose
 
-with ReachyMini(media_backend="default") as mini:   # localhost first, then network
-    mini.enable_motors(); mini.wake_up()
+with ReachyMini(media_backend="default") as mini:  # localhost first, then network
+    mini.enable_motors()
+    mini.wake_up()
     mini.goto_target(head=create_head_pose(pitch=35, degrees=True), duration=1.0)
-    frame = mini.media.get_frame()                    # BGR ndarray or None while warming up
-    mini.media.play_sound("/abs/path/line.wav")       # speaker on the robot
+    frame = mini.media.get_frame()  # BGR ndarray or None while warming up
+    mini.media.play_sound("/abs/path/line.wav")  # speaker on the robot
 ```
 
 Gotchas learned from the SDK docs: after the daemon starts, the robot may be asleep with

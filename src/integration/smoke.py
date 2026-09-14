@@ -13,52 +13,28 @@ from __future__ import annotations
 import argparse
 import random
 import sys
-import time
 
 from src.config import OLLAMA_MODEL, validate_config
-from src.llm.ollama_client import LLMError, chat
-from src.llm.prompts import rules_question_messages
+from src.integration.answering import think, voice
+from src.llm.ollama_client import LLMError
 from src.logger import get_logger
-from src.rag.retrieve import retrieve
 from src.robot.reachy import GREETING_MOVES, THINKING_MOVES, Robot
 from src.speech.language import detect_language
-from src.speech.tts import TTSError, synthesize
+from src.speech.tts import TTSError
 
 log = get_logger(__name__)
 
 
 def answer(question: str, robot: Robot, *, speak: bool = True) -> dict[str, float | str]:
     """Run one question through the whole chain; return timings and the answer text."""
-    timings: dict[str, float | str] = {"question": question}
     language = detect_language(question)
-    timings["language"] = language
     log.info("question (%s): %s", language, question)
     # A recorded "thinking" move runs while retrieval and the LLM work.
     robot.emotion(random.choice(THINKING_MOVES), sound=False, block=False)
-
-    t0 = time.perf_counter()
-    passages = retrieve(question)
-    timings["retrieve_s"] = round(time.perf_counter() - t0, 2)
-    timings["passages"] = len(passages)
-    for p in passages[:3]:
-        log.info(
-            "  %.3f %s :: %s", p["score"], p.get("path") or p.get("name"), p["text"][:80].replace("\n", " ")
-        )
-
-    messages = rules_question_messages(question, passages, language)
-    reply = chat(messages)
-    timings["llm_s"] = round(reply.seconds, 2)
-    timings["llm_tokens_per_s"] = round(reply.tokens_per_second, 1)
-    timings["answer"] = reply.text
-    log.info("answer (%s): %s", language, reply.text)
-
+    thought = think(question, language)
     if speak:
-        t0 = time.perf_counter()
-        clip = synthesize(reply.text, language)
-        timings["tts_s"] = round(time.perf_counter() - t0, 2)
-        timings["audio_s"] = round(clip.duration_s, 2)
-        robot.say(clip)
-    return timings
+        robot.say(voice(thought))
+    return {"question": question, "language": language, "answer": thought.answer, **thought.timings}
 
 
 def main(argv: list[str] | None = None) -> int:
