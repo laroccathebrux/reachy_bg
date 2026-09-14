@@ -134,8 +134,26 @@ def _adjacent(previous: tuple[float, ...], current: tuple[float, ...], rules: He
     )
 
 
+_SENTENCE_END_CHARS = ".!?:;\"')]"
+
+
+def _merge_continuations(paragraphs: list[str]) -> list[str]:
+    """Join a block that merely continues the previous one (PyMuPDF splits the reference
+    guide's bullets into 'restricted to resolving each action only once per' / 'round.')."""
+    merged: list[str] = []
+    for paragraph in (p.strip() for p in paragraphs if p and p.strip()):
+        if merged:
+            previous = merged[-1]
+            continues = paragraph[0].islower() or previous[-1] not in _SENTENCE_END_CHARS
+            if continues and not paragraph[0].isdigit():
+                merged[-1] = f"{previous} {paragraph}"
+                continue
+        merged.append(paragraph)
+    return merged
+
+
 def _finish_paragraphs(paragraphs: list[str]) -> str:
-    text = "\n\n".join(p for p in paragraphs if p)
+    text = "\n\n".join(_merge_continuations(paragraphs))
     return _HYPHEN_BREAK.sub(r"\1\2", text).strip()
 
 

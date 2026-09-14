@@ -113,14 +113,25 @@ class Robot:
         if self.simulated:
             subprocess.run(["afplay", str(path)], check=False)
             return
-        url = f"http://{REACHY_HOST}:{REACHY_PORT}/api/media/play_sound"
+        base = f"http://{REACHY_HOST}:{REACHY_PORT}/api/media"
+        # The daemon's head wobbler makes the head move with the audio it plays: the robot
+        # visibly "talks" instead of freezing while the speaker runs.
+        self._post(f"{base}/wobbling/enable")
         try:
-            response = httpx.post(url, json={"file": str(path)}, timeout=10.0)
+            response = httpx.post(f"{base}/play_sound", json={"file": str(path)}, timeout=10.0)
             response.raise_for_status()
         except httpx.HTTPError as exc:
             log.warning("daemon play_sound failed (%s); falling back to the SDK client", exc)
             self._mini.media.play_sound(str(path))
         time.sleep(float(clip.duration_s) + 0.3)
+        self._post(f"{base}/wobbling/disable")
+
+    @staticmethod
+    def _post(url: str) -> None:
+        try:
+            httpx.post(url, timeout=5.0).raise_for_status()
+        except httpx.HTTPError as exc:
+            log.warning("%s failed: %s", url.rsplit("/api/", 1)[-1], exc)
 
     def stop_speaking(self) -> None:
         """Interrupt the current clip."""

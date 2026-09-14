@@ -43,7 +43,8 @@ def test_prompt_carries_language_and_passages():
     assert "American English" in messages[0]["content"]
     assert "[1] (rulebook: Phase 1: Action Phase, page 7)" in messages[1]["content"]
     assert "[2] (investigator: Lily Chen)" in messages[1]["content"]
-    assert messages[1]["content"].endswith("Question from a player: How many actions?")
+    assert "Question from a player: How many actions?" in messages[1]["content"]
+    assert messages[1]["content"].endswith("Reply in American English.")
 
 
 def test_format_passages_handles_empty_list():
@@ -65,3 +66,15 @@ def test_pcm16_to_wav_reports_duration(tmp_path):
         assert wav.getnchannels() == 1
         assert wav.getframerate() == SAMPLE_RATE
         assert wav.getnframes() == SAMPLE_RATE
+
+
+def test_english_game_terms_inside_portuguese_stay_portuguese():
+    assert detect_language("Posso viajar duas vezes na mesma Action Phase?") == "pt-BR"
+    assert detect_language("Posso fazer Travel duas vezes no mesmo round?") == "pt-BR"
+    assert detect_language("Quantos Mysteries precisamos resolver para vencer?") == "pt-BR"
+    assert detect_language("Can I do the Travel action twice in the same round?") == "en-US"
+
+
+def test_prompt_ends_with_language_reminder():
+    messages = rules_question_messages("Posso descansar?", [], "pt-BR")
+    assert messages[1]["content"].endswith("Reply in Brazilian Portuguese.")

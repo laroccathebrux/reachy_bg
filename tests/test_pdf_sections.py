@@ -83,3 +83,22 @@ def test_running_heads_footers_and_tiny_labels_are_ignored(pdf: Path):
     assert "Con-El" not in all_text
     assert "tiny label" not in all_text
     assert "\n7" not in all_text and not all_text.endswith("7")
+
+
+def test_continuation_blocks_are_merged_into_one_paragraph():
+    from src.rag.pdf_sections import _finish_paragraphs
+
+    text = _finish_paragraphs(
+        [
+            "Each investigator is restricted to resolving each action only once per",
+            "round.",
+            "If an investigator cannot or does not wish to perform an action, he",
+            "may choose not to.",
+            "Related Topics: Acquire Assets Action",
+        ]
+    )
+    assert text == (
+        "Each investigator is restricted to resolving each action only once per round.\n\n"
+        "If an investigator cannot or does not wish to perform an action, he may choose not to.\n\n"
+        "Related Topics: Acquire Assets Action"
+    )

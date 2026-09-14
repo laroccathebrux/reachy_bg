@@ -31,6 +31,7 @@ def answer(question: str, robot: Robot, *, speak: bool = True) -> dict[str, floa
     timings: dict[str, float | str] = {"question": question}
     language = detect_language(question)
     timings["language"] = language
+    log.info("question (%s): %s", language, question)
     robot.antennas(20, -20)
 
     t0 = time.perf_counter()

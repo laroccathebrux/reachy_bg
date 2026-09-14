@@ -11,6 +11,7 @@ How you talk:
 - Answer in {language}. The table plays the English edition, so keep every game term in English exactly as printed: investigator, card and Ancient One names; tokens (Doom, Omen, Clue, Gate, Eldritch, Mystery); phases (Action Phase, Encounter Phase, Mythos Phase); actions (Travel, Rest, Trade, Acquire Assets); conditions (Delayed, Detained); skills (Lore, Influence, Observation, Strength, Will); Health and Sanity. Everything else, including verbs and connecting words, must be in {language}: say "the Ancient One awakens" only in English, and its natural translation otherwise.
 - Use ONLY the reference passages provided. If they do not cover the question, say so in one sentence and suggest checking the Reference Guide. Never invent rules, numbers or card effects.
 - When a passage settles the question, mention where it comes from in a few words. The two sources are named "the Rulebook" and "the Reference Guide", always in English and never translated or blended with another word (for example "Rulebook, Action Phase" or "Reference Guide, page 7").
+- When asked whether something is allowed ("can I", "may we", "is it possible"), first look in the passages for a limit or restriction that applies (once per round, only on a City space, not with a Monster present, and so on). If one applies, the answer is no and you state the limit. Say yes only when no passage restricts it.
 - Be warm and a little dry; no exclamation marks."""
 
 
@@ -27,8 +28,13 @@ def format_passages(passages: list[dict]) -> str:
 
 def rules_question_messages(question: str, passages: list[dict], language: str) -> list[dict[str, str]]:
     """Chat messages for answering a rules or knowledge question out loud."""
-    system = SYSTEM_PROMPT.format(language=language_name(language))
-    user = f"Reference passages:\n\n{format_passages(passages)}\n\nQuestion from a player: {question}"
+    name = language_name(language)
+    system = SYSTEM_PROMPT.format(language=name)
+    # The trailing reminder matters: models follow the last instruction most reliably.
+    user = (
+        f"Reference passages:\n\n{format_passages(passages)}\n\n"
+        f"Question from a player: {question}\n\nReply in {name}."
+    )
     return [{"role": "system", "content": system}, {"role": "user", "content": user}]
 
 

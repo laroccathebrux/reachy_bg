@@ -14,21 +14,26 @@ from src.config import DEFAULT_LANGUAGE, SPOKEN_LANGUAGES
 
 _WORD = re.compile(r"[a-zà-ú]+", re.IGNORECASE)
 
-# Frequent function words that rarely appear in the other language.
+# Frequent function words that rarely appear in the other language. Game vocabulary (Action
+# Phase, Travel, Doom, Gate...) is deliberately absent: the table plays the English edition,
+# so those words appear inside Portuguese sentences too and must not count as English.
 _MARKERS: dict[str, frozenset[str]] = {
     "pt-BR": frozenset(
-        "o a os as um uma de do da dos das em no na nos nas por para com sem que não sim é são "
-        "eu você voce ele ela nós nos eles elas meu minha seu sua isso isto aqui ali como quando "
-        "onde qual quais quanto quantos pode posso podemos vou vai vamos tem tenho temos está "
-        "estou estamos foi ser ter fazer faz jogar jogo rodada fase ação acao turno regra regras "
-        "porque porquê então entao também tambem mas ou já ja ainda muito pouco bem mal".split()
+        "o a os as um uma de do da dos das em no na nos nas por para com sem que não nao sim é são "
+        "sao eu você voce ele ela nós eles elas meu minha seu sua isso isto esse essa este esta aqui "
+        "ali como quando onde qual quais quanto quantos quanta quantas pode posso podemos consigo "
+        "dá da vou vai vamos tem tenho temos está estou estamos foi ser ter fazer faz feito jogar "
+        "jogo rodada fase ação acao turno vez vezes duas dois mesma mesmo mesmas outra outro regra "
+        "regras porque porquê então entao também tambem mas ou já ja ainda muito pouco bem mal "
+        "precisa preciso precisamos devo deve devemos quero queremos viajar viajo mover descansar "
+        "comprar lutar ganhar perder".split()
     ),
     "en-US": frozenset(
-        "the a an of to in on at for with without that this these those is are was were be been "
+        "the an of to in at for with without that this these those is are was were be been am "
         "i you he she we they it my your his her our their me him them what which who whom when "
         "where why how can could may might should would will do does did have has had not no yes "
         "and or but so if then than there here about into from as by up down out over under "
-        "round phase action turn rule rules game play".split()
+        "twice again same once during each every any many much more".split()
     ),
 }
 
