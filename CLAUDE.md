@@ -20,7 +20,7 @@ Reachy Mini (Pollen Robotics / Hugging Face desktop robot) plays **Eldritch Horr
 ```bash
 cd "/Users/alessandrolaroccasilveira/Documents/Documents - USSILVEIRAAXWR2/reachy_bg"
 git pull origin main
-uv sync                      # creates/updates .venv (Python 3.12)
+uv sync --all-extras         # creates/updates .venv (Python 3.12); a single --extra evicts the others
 uv run python scripts/venv_postinstall.py   # macOS: GStreamer bindings (hidden .pth workaround)
 # ... do the work ...
 uv run pytest

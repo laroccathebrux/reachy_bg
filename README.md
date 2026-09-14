@@ -62,7 +62,7 @@ uv run python -m src.rag.migrate_knowledge
 With the robot daemon on `:8000` and the ElevenLabs key in `.env`:
 
 ```bash
-uv sync --extra speech --extra tts-cloud
+uv sync --all-extras                     # speech, tts-cloud and vision together (a single --extra evicts the others)
 uv run python scripts/venv_postinstall.py       # macOS: make the venv's .pth files visible
 uv run python -m src.integration.smoke          # typed question -> spoken answer
 uv run python -m src.integration.talk           # table conversation on the ElevenLabs agent (Ctrl+C to stop)
