@@ -21,6 +21,7 @@ The SDK is imported lazily so the rest of the project (tests, ingestion) never n
 
 from __future__ import annotations
 
+import math
 import subprocess
 import threading
 import time
@@ -100,15 +101,28 @@ class Robot:
             log.warning("could not return to neutral: %s", exc)
 
     # ------------------------------------------------------------------ basic poses
-    def look(self, *, pitch: float = 0.0, yaw: float = 0.0, roll: float = 0.0, duration: float = 0.8) -> None:
-        """Move the head to (pitch, yaw, roll) in degrees; positive pitch looks down."""
+    def look(
+        self,
+        *,
+        pitch: float = 0.0,
+        yaw: float = 0.0,
+        roll: float = 0.0,
+        body_yaw: float | None = None,
+        duration: float = 0.8,
+    ) -> None:
+        """Move the head to (pitch, yaw, roll) in degrees; positive pitch looks down.
+
+        ``body_yaw`` (degrees, positive to the left) also turns the body on its base; None
+        keeps the current body angle. The head yaw is relative to the body.
+        """
         if self.simulated:
-            log.info("[sim] look pitch=%.0f yaw=%.0f roll=%.0f", pitch, yaw, roll)
+            log.info("[sim] look pitch=%.0f yaw=%.0f roll=%.0f body=%s", pitch, yaw, roll, body_yaw)
             return
         from reachy_mini.utils import create_head_pose
 
         pose = create_head_pose(roll=roll, pitch=pitch, yaw=yaw, degrees=True)
-        self._mini.goto_target(head=pose, duration=duration, body_yaw=None)
+        body = None if body_yaw is None else math.radians(body_yaw)
+        self._mini.goto_target(head=pose, duration=duration, body_yaw=body)
         time.sleep(duration)
 
     def look_at_table(self) -> None:

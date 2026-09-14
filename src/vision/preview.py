@@ -44,6 +44,8 @@ STREAM_FPS = 10.0
 BOUNDARY = "reachyframe"
 BOARD_CAPTURE_DIR = CAPTURE_DIR / "board"
 TABLE_PITCH = 35.0
+BODY_YAW_MAX = 90.0  # degrees either way; the base turns further but the table is in front
+BODY_YAW_SPEED = 60.0  # deg/s asked of the base when turning between views
 
 PAGE = """<!doctype html>
 <html lang="en">
@@ -71,8 +73,14 @@ PAGE = """<!doctype html>
   <span id="info">connecting...</span>
   <label>pitch <input id="pitch" type="range" min="-10" max="60" value="__PITCH__"> <span id="pitchv"></span>&deg;</label>
   <label>yaw <input id="yaw" type="range" min="-45" max="45" value="0"> <span id="yawv"></span>&deg;</label>
+  <label>body <input id="body" type="range" min="-90" max="90" value="0"> <span id="bodyv"></span>&deg;</label>
   <button id="table">Look at the table</button>
   <button id="snap">Snapshot</button>
+  <label>zoom <input id="zoom" type="range" min="1" max="4" step="0.5" value="1"> <span id="zoomv"></span>x (click the image to centre)</label>
+  <button id="unzoom">Reset zoom</button>
+  <label>sweep body angles <input id="angles" type="text" value="60,30,0,-30,-60" size="16"></label>
+  <button id="sweep">Sweep</button>
+  <a href="/gallery" target="_blank" style="color:#9ad">gallery</a>
   <label><input id="grid" type="checkbox" checked> guides</label>
   <label>board guide margin <input id="margin" type="range" min="0" max="30" value="8">%</label>
 </div>
@@ -83,6 +91,22 @@ const info = document.getElementById('info'), msg = document.getElementById('msg
 const pitch = document.getElementById('pitch'), yaw = document.getElementById('yaw');
 const pitchv = document.getElementById('pitchv'), yawv = document.getElementById('yawv');
 const grid = document.getElementById('grid'), margin = document.getElementById('margin');
+const body = document.getElementById('body'), bodyv = document.getElementById('bodyv');
+const zoom = document.getElementById('zoom'), zoomv = document.getElementById('zoomv');
+let crop = {factor: 1, cx: 0.5, cy: 0.5};
+async function setZoom(factor, cx, cy) {
+  crop = {factor, cx, cy}; zoomv.textContent = factor;
+  await fetch('/zoom', {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify(crop)});
+}
+zoom.oninput = () => setZoom(+zoom.value, crop.cx, crop.cy);
+document.getElementById('unzoom').onclick = () => { zoom.value = 1; setZoom(1, 0.5, 0.5); };
+cam.onclick = (e) => {
+  const r = cam.getBoundingClientRect();
+  const fx = (e.clientX - r.left) / r.width, fy = (e.clientY - r.top) / r.height;
+  const size = 1 / crop.factor;  // the visible crop as a fraction of the frame
+  const x0 = Math.min(Math.max(crop.cx - size / 2, 0), 1 - size), y0 = Math.min(Math.max(crop.cy - size / 2, 0), 1 - size);
+  setZoom(+zoom.value, x0 + fx * size, y0 + fy * size);
+};
 function draw() {
   const w = cam.clientWidth, h = cam.clientHeight;
   if (!w || !h) return;
@@ -105,15 +129,23 @@ function draw() {
   c.fillStyle = 'rgba(80,220,120,0.9)'; c.font = '13px system-ui';
   c.fillText('board should fill the dashed area', w*m + 6, h*m + 16);
 }
+function labels() { pitchv.textContent = pitch.value; yawv.textContent = yaw.value; bodyv.textContent = body.value; zoomv.textContent = zoom.value; }
 async function look() {
-  pitchv.textContent = pitch.value; yawv.textContent = yaw.value;
+  labels();
   await fetch('/look', {method: 'POST', headers: {'content-type': 'application/json'},
-                        body: JSON.stringify({pitch: +pitch.value, yaw: +yaw.value})});
+                        body: JSON.stringify({pitch: +pitch.value, yaw: +yaw.value, body: +body.value})});
 }
 let lookTimer = null;
-function lookSoon() { clearTimeout(lookTimer); pitchv.textContent = pitch.value; yawv.textContent = yaw.value; lookTimer = setTimeout(look, 150); }
-pitch.oninput = lookSoon; yaw.oninput = lookSoon;
-document.getElementById('table').onclick = () => { pitch.value = __PITCH__; yaw.value = 0; look(); };
+function lookSoon() { clearTimeout(lookTimer); labels(); lookTimer = setTimeout(look, 150); }
+pitch.oninput = lookSoon; yaw.oninput = lookSoon; body.oninput = lookSoon;
+document.getElementById('table').onclick = () => { pitch.value = __PITCH__; yaw.value = 0; body.value = 0; look(); };
+document.getElementById('sweep').onclick = async () => {
+  const angles = document.getElementById('angles').value.split(',').map(Number).filter(n => !isNaN(n));
+  const r = await fetch('/sweep', {method: 'POST', headers: {'content-type': 'application/json'},
+                                  body: JSON.stringify({body_yaws: angles, pitch: +pitch.value})});
+  const j = await r.json();
+  msg.textContent = j.error || ('sweep started: ' + angles.join(', ') + ' (see gallery when done)');
+};
 document.getElementById('snap').onclick = async () => {
   const r = await fetch('/snapshot', {method: 'POST'}); const j = await r.json();
   msg.textContent = j.path ? 'saved ' + j.path : (j.error || 'no frame yet');
@@ -124,16 +156,32 @@ cam.onload = draw;
 async function poll() {
   try {
     const s = await (await fetch('/status')).json();
-    info.textContent = s.frames ? `${s.width}x${s.height}  ${s.fps.toFixed(1)} fps  frame age ${s.age_s.toFixed(1)} s  head pitch ${s.pitch} yaw ${s.yaw}` : `waiting for frames (${s.waited_s.toFixed(0)} s)`;
-    msg.textContent = s.warning || msg.textContent;
+    info.textContent = s.frames ? `${s.width}x${s.height}  ${s.fps.toFixed(1)} fps  frame age ${s.age_s.toFixed(1)} s  head pitch ${s.pitch} yaw ${s.yaw} body ${s.body}  zoom ${s.zoom}x` : `waiting for frames (${s.waited_s.toFixed(0)} s)`;
     if (s.warning) msg.textContent = s.warning;
+    if (s.sweep) msg.textContent = s.sweep;
   } catch (e) { info.textContent = 'server unreachable'; }
 }
-pitchv.textContent = pitch.value; yawv.textContent = yaw.value;
+labels();
 setInterval(poll, 1000); poll(); draw();
 </script>
 </body>
 </html>
+"""
+
+GALLERY = """<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Reachy sweeps</title>
+<style>
+  body { margin: 0; padding: 12px; background: #111; color: #ddd; font: 14px system-ui, sans-serif; }
+  h2 { margin: 18px 0 6px; font-size: 16px; color: #9ad; }
+  .row { display: flex; flex-wrap: wrap; gap: 10px; }
+  figure { margin: 0; }
+  figure img { width: 440px; max-width: 95vw; display: block; border: 1px solid #444; }
+  figcaption { font-size: 12px; color: #aaa; padding: 3px 0; }
+  a { color: #ddd; }
+</style></head><body>
+<p><a href="/">back to the camera</a></p>
+__SWEEPS__
+</body></html>
 """
 
 NO_FRAMES_HINT = (
@@ -141,6 +189,18 @@ NO_FRAMES_HINT = (
     "'video access permission has been denied', restart reachy-mini-daemon from a terminal "
     "application that has the camera permission (iTerm or Terminal), not from a Claude Code session."
 )
+
+
+def crop_frame(frame: np.ndarray, factor: float, cx: float, cy: float) -> np.ndarray:
+    """The ``1/factor`` window of ``frame`` centred at (``cx``, ``cy``) in [0, 1], kept inside the frame."""
+    factor = max(1.0, float(factor))
+    if factor == 1.0:
+        return frame
+    h, w = frame.shape[:2]
+    cw, ch = max(16, int(round(w / factor))), max(9, int(round(h / factor)))
+    x0 = int(round(min(max(cx * w - cw / 2, 0), w - cw)))
+    y0 = int(round(min(max(cy * h - ch / 2, 0), h - ch)))
+    return frame[y0 : y0 + ch, x0 : x0 + cw]
 
 
 def encode_jpeg(frame_bgr: np.ndarray, *, max_width: int | None = None, quality: int = 80) -> bytes:
@@ -160,9 +220,9 @@ class FakeCamera:
 
     def __init__(self, width: int = 640, height: int = 360):
         self.width, self.height = width, height
-        self.pitch, self.yaw = TABLE_PITCH, 0.0
+        self.pitch, self.yaw, self.body = TABLE_PITCH, 0.0, 0.0
         self.started = time.monotonic()
-        self.looks: list[tuple[float, float]] = []
+        self.looks: list[tuple[float, float, float | None]] = []
 
     def get_frame(self) -> np.ndarray | None:
         t = time.monotonic() - self.started
@@ -174,9 +234,11 @@ class FakeCamera:
         frame[:, :, 2] = (y * 255 // max(1, self.height)).astype(np.uint8)
         return frame
 
-    def look(self, pitch: float, yaw: float) -> None:
+    def look(self, pitch: float, yaw: float, body_yaw: float | None = None) -> None:
         self.pitch, self.yaw = pitch, yaw
-        self.looks.append((pitch, yaw))
+        if body_yaw is not None:
+            self.body = body_yaw
+        self.looks.append((pitch, yaw, body_yaw))
 
     def close(self) -> None:
         pass
@@ -196,14 +258,44 @@ class RobotCamera:
         self._mini.__enter__()
         self.robot = Robot(self._mini)
         self.robot.wake()
-        self.pitch, self.yaw = 0.0, 0.0
+        self.pitch, self.yaw, self.body = 0.0, 0.0, 0.0
 
     def get_frame(self) -> np.ndarray | None:
         return self._mini.media.get_frame()
 
-    def look(self, pitch: float, yaw: float) -> None:
-        self.robot.look(pitch=pitch, yaw=yaw, duration=0.6)
+    def look(self, pitch: float, yaw: float, body_yaw: float | None = None) -> None:
+        """Move, giving the base about 60 deg/s, then wait until the body has actually arrived.
+
+        ``goto_target`` returns when its interpolation ends, not when the motors got there;
+        a capture taken right away is smeared by the base still turning.
+        """
+        delta = 0.0 if body_yaw is None else abs(body_yaw - self.body)
+        duration = max(0.8, delta / BODY_YAW_SPEED)
+        self.robot.look(pitch=pitch, yaw=yaw, body_yaw=body_yaw, duration=duration)
         self.pitch, self.yaw = pitch, yaw
+        if body_yaw is not None:
+            self.body = body_yaw
+            self.wait_for_body(body_yaw)
+
+    def body_angle(self) -> float | None:
+        """Measured body yaw in degrees (the first head joint), None when unavailable."""
+        try:
+            joints, _ = self._mini.get_current_joint_positions()
+            return math.degrees(float(joints[0]))
+        except Exception:
+            return None
+
+    def wait_for_body(self, target: float, tolerance: float = 2.0, timeout: float = 4.0) -> bool:
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            measured = self.body_angle()
+            if measured is None:
+                return False
+            if abs(measured - target) <= tolerance:
+                return True
+            time.sleep(0.05)
+        log.warning("body yaw did not reach %.0f (at %s)", target, self.body_angle())
+        return False
 
     def close(self) -> None:
         try:
@@ -239,6 +331,9 @@ class Preview:
         self._changed = threading.Condition(self._lock)
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
+        self.sweep_state = ""
+        self._sweep_thread: threading.Thread | None = None
+        self.zoom = (1.0, 0.5, 0.5)  # digital zoom of the stream only: factor, centre x, centre y
 
     def start(self) -> Preview:
         self._thread = threading.Thread(target=self._grab_loop, name="camera-grab", daemon=True)
@@ -266,7 +361,8 @@ class Preview:
             time.sleep(max(0.0, period - (self.clock() - started)))
 
     def publish(self, frame: np.ndarray) -> None:
-        jpeg = encode_jpeg(frame, max_width=self.stream_width)
+        factor, cx, cy = self.zoom
+        jpeg = encode_jpeg(crop_frame(frame, factor, cx, cy), max_width=self.stream_width)
         now = self.clock()
         with self._changed:
             self.frame, self.jpeg, self.frame_at = frame, jpeg, now
@@ -295,6 +391,9 @@ class Preview:
                 "height": 0 if frame is None else int(frame.shape[0]),
                 "pitch": getattr(self.camera, "pitch", None),
                 "yaw": getattr(self.camera, "yaw", None),
+                "body": getattr(self.camera, "body", None),
+                "sweep": self.sweep_state,
+                "zoom": self.zoom[0],
                 "warning": "",
             }
         if not self.frames and status["waited_s"] > 8.0:
@@ -312,12 +411,73 @@ class Preview:
         log.info("snapshot %s (%dx%d)", path, frame.shape[1], frame.shape[0])
         return path
 
-    def look(self, pitch: float, yaw: float) -> None:
+    def look(self, pitch: float, yaw: float, body: float | None = None) -> None:
         pitch = max(-10.0, min(60.0, float(pitch)))
         yaw = max(-45.0, min(45.0, float(yaw)))
-        if any(math.isnan(v) for v in (pitch, yaw)):
-            raise ValueError("pitch and yaw must be numbers")
-        self.camera.look(pitch, yaw)
+        body = None if body is None else max(-BODY_YAW_MAX, min(BODY_YAW_MAX, float(body)))
+        if any(math.isnan(v) for v in (pitch, yaw, body if body is not None else 0.0)):
+            raise ValueError("pitch, yaw and body must be numbers")
+        self.camera.look(pitch, yaw, body)
+
+    def set_zoom(self, factor: float, cx: float = 0.5, cy: float = 0.5) -> None:
+        values = (
+            max(1.0, min(8.0, float(factor))),
+            min(max(float(cx), 0.0), 1.0),
+            min(max(float(cy), 0.0), 1.0),
+        )
+        if any(math.isnan(v) for v in values):
+            raise ValueError("zoom values must be numbers")
+        self.zoom = values
+
+    def start_sweep(self, body_yaws: list[float], pitch: float) -> bool:
+        """Run a sweep on its own thread; False when one is already running."""
+        from src.vision.capture import sweep, yaw_views
+
+        if self._sweep_thread is not None and self._sweep_thread.is_alive():
+            return False
+        angles = [max(-BODY_YAW_MAX, min(BODY_YAW_MAX, float(a))) for a in body_yaws]
+        views = yaw_views(angles, pitch=max(-10.0, min(60.0, float(pitch))))
+
+        def run() -> None:
+            self.sweep_state = f"sweep running: {len(views)} views"
+            try:
+                captures = sweep(
+                    self.camera,
+                    views,
+                    out_dir=self.capture_dir,
+                    on_view=lambda c: setattr(
+                        self, "sweep_state", f"sweep: {c.view.name} done ({c.sharpness:.0f})"
+                    ),
+                )
+                self.sweep_state = f"sweep done: {len(captures)} views saved, see the gallery"
+            except Exception as exc:
+                log.warning("sweep failed: %s", exc)
+                self.sweep_state = f"sweep failed: {exc}"
+
+        self._sweep_thread = threading.Thread(target=run, name="sweep", daemon=True)
+        self._sweep_thread.start()
+        return True
+
+    def gallery_html(self) -> str:
+        """The saved sweeps, newest first, with their views side by side."""
+        sections = []
+        folders = sorted((d for d in self.capture_dir.glob("sweep_*") if d.is_dir()), reverse=True)
+        for folder in folders[:10]:
+            index = folder / "views.json"
+            views: list[dict[str, Any]] = []
+            if index.exists():
+                try:
+                    views = json.loads(index.read_text(encoding="utf-8")).get("views", [])
+                except (OSError, ValueError):
+                    views = []
+            figures = "".join(
+                f'<figure><img src="/captures/{folder.name}/{Path(v["path"]).name}">'
+                f"<figcaption>{v['name']}: body {v['body_yaw']:.0f}, pitch {v['pitch']:.0f}, "
+                f"sharpness {v['sharpness']:.0f}, {v['width']}x{v['height']}</figcaption></figure>"
+                for v in views
+            )
+            sections.append(f"<h2>{folder.name}</h2><div class='row'>{figures or '(no views)'}</div>")
+        return GALLERY.replace("__SWEEPS__", "\n".join(sections) or "<p>no sweep yet</p>")
 
 
 def make_handler(preview: Preview, table_pitch: float = TABLE_PITCH) -> type[BaseHTTPRequestHandler]:
@@ -352,7 +512,22 @@ def make_handler(preview: Preview, table_pitch: float = TABLE_PITCH) -> type[Bas
                     self._json({"error": "no frame yet"}, 503)
             elif self.path.startswith("/stream"):
                 self._stream()
+            elif self.path.startswith("/gallery"):
+                self._send(200, preview.gallery_html().encode("utf-8"), "text/html; charset=utf-8")
+            elif self.path.startswith("/captures/"):
+                self._capture_file(self.path[len("/captures/") :])
             else:
+                self._send(404, b"not found", "text/plain")
+
+        def _capture_file(self, relative: str) -> None:
+            target = (preview.capture_dir / relative.split("?")[0]).resolve()
+            root = preview.capture_dir.resolve()
+            if root not in target.parents or target.suffix.lower() not in (".jpg", ".jpeg", ".png"):
+                self._send(404, b"not found", "text/plain")
+                return
+            try:
+                self._send(200, target.read_bytes(), "image/jpeg")
+            except OSError:
                 self._send(404, b"not found", "text/plain")
 
         def _stream(self) -> None:
@@ -382,7 +557,12 @@ def make_handler(preview: Preview, table_pitch: float = TABLE_PITCH) -> type[Bas
             if self.path.startswith("/look"):
                 try:
                     body = json.loads(raw or b"{}")
-                    preview.look(float(body.get("pitch", 0.0)), float(body.get("yaw", 0.0)))
+                    turn = body.get("body")
+                    preview.look(
+                        float(body.get("pitch", 0.0)),
+                        float(body.get("yaw", 0.0)),
+                        None if turn is None else float(turn),
+                    )
                 except (ValueError, TypeError) as exc:
                     self._json({"error": str(exc)}, 400)
                     return
@@ -390,7 +570,36 @@ def make_handler(preview: Preview, table_pitch: float = TABLE_PITCH) -> type[Bas
                     log.warning("look failed: %s", exc)
                     self._json({"error": str(exc)}, 500)
                     return
-                self._json({"ok": True, "pitch": preview.camera.pitch, "yaw": preview.camera.yaw})
+                self._json(
+                    {
+                        "ok": True,
+                        "pitch": preview.camera.pitch,
+                        "yaw": preview.camera.yaw,
+                        "body": getattr(preview.camera, "body", None),
+                    }
+                )
+            elif self.path.startswith("/zoom"):
+                try:
+                    body = json.loads(raw or b"{}")
+                    preview.set_zoom(body.get("factor", 1.0), body.get("cx", 0.5), body.get("cy", 0.5))
+                except (ValueError, TypeError) as exc:
+                    self._json({"error": str(exc)}, 400)
+                    return
+                self._json({"ok": True, "zoom": preview.zoom})
+            elif self.path.startswith("/sweep"):
+                try:
+                    body = json.loads(raw or b"{}")
+                    angles = [float(a) for a in body.get("body_yaws", [])]
+                    pitch = float(body.get("pitch", TABLE_PITCH))
+                except (ValueError, TypeError) as exc:
+                    self._json({"error": str(exc)}, 400)
+                    return
+                if not angles:
+                    self._json({"error": "no body angles"}, 400)
+                elif preview.start_sweep(angles, pitch):
+                    self._json({"ok": True, "views": len(angles)})
+                else:
+                    self._json({"error": "a sweep is already running"}, 409)
             elif self.path.startswith("/snapshot"):
                 path = preview.snapshot()
                 self._json({"path": str(path)} if path else {"error": "no frame yet"})
@@ -416,6 +625,9 @@ def main(argv: list[str] | None = None) -> int:
         "--pitch", type=float, default=TABLE_PITCH, help="initial head pitch (down is positive)"
     )
     parser.add_argument("--no-look", action="store_true", help="do not move the head at start")
+    parser.add_argument(
+        "--sweep", default="", help="run one sweep at these body angles (e.g. 60,30,0,-30,-60) and exit"
+    )
     args = parser.parse_args(argv)
 
     if args.fake:
@@ -432,6 +644,17 @@ def main(argv: list[str] | None = None) -> int:
         except Exception as exc:
             log.warning("could not move the head: %s", exc)
     preview = Preview(camera).start()
+    if args.sweep:
+        from src.vision.capture import sweep, yaw_views
+
+        angles = [float(a) for a in args.sweep.split(",") if a.strip()]
+        time.sleep(3.0)  # first frames
+        captures = sweep(camera, yaw_views(angles, pitch=args.pitch), out_dir=preview.capture_dir)
+        for c in captures:
+            print(f"{c.view.name:10s} body {c.view.body_yaw:5.0f}  sharpness {c.sharpness:7.0f}  {c.path}")
+        preview.stop()
+        camera.close()
+        return 0
     server = serve(preview, port=args.port, table_pitch=args.pitch)
     log.info("camera preview at http://127.0.0.1:%d  (Ctrl+C to stop)", args.port)
     try:
@@ -445,7 +668,16 @@ def main(argv: list[str] | None = None) -> int:
     return 0
 
 
-__all__ = ["Preview", "FakeCamera", "RobotCamera", "encode_jpeg", "make_handler", "serve", "NO_FRAMES_HINT"]
+__all__ = [
+    "Preview",
+    "FakeCamera",
+    "RobotCamera",
+    "encode_jpeg",
+    "crop_frame",
+    "make_handler",
+    "serve",
+    "NO_FRAMES_HINT",
+]
 
 
 if __name__ == "__main__":

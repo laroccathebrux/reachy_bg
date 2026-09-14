@@ -315,6 +315,34 @@ Two things found while wiring it, both outside the code:
   connects that way explicitly with `media_backend="local"`. The owner is moving that
   container to port 8005.
 
+## Done: the board in pieces, sweeps with the body (2026-09-14)
+
+The board does not fit one view at a distance that keeps card text readable, so the robot
+looks at it in pieces: `src/vision/capture.py` defines views (body yaw, head pitch, head yaw),
+takes the sharpest of three frames per view (variance of the Laplacian) and writes each sweep
+to `data/captures/board/sweep_<stamp>/` with a `views.json` index. The preview page got a
+body slider, a "Sweep" button (list of body angles), a gallery of the saved sweeps, and a
+digital zoom (1-4x, click to centre) to judge legibility; `--sweep 60,30,0,-30,-60` runs one
+sweep from the command line. `Robot.look()` takes `body_yaw` (degrees, positive left).
+
+Measured on the robot:
+
+| Signal | Value |
+|---|---|
+| Base turn, head at pitch 35 | 60 deg in 1.3 s, 120 deg in 1.5 s, settles within 1.6 deg |
+| Base turn, head at pitch 40-50 | unreliable beyond about 45 deg: stopped at 33-49 for 60, at -32..-54 for -60 |
+| Five-view sweep (60, 30, 0, -30, -60) | 14 s, 2.8 s per view |
+| The four Reserve cards | all visible in the "left60" view at pitch 35, small and slanted |
+| Camera capture resolution | fixed by the daemon at 1920x1080 (the module offers 3840x2592, no daemon option) |
+
+Consequences: keep the head near pitch 35 and let the base do the turning (the owner will
+tilt the whole robot a few degrees instead of pitching the head further); the sweep waits
+until the measured body angle is within 2 deg of the target before capturing, because
+`goto_target` returns when its interpolation ends, not when the base has arrived. "Zoom" is
+a crop of the 1080p frame; the far edge of the board stays soft at 3x. Reading text there
+would need the camera at 4K, which means capturing outside the daemon (`--no-media` and our
+own GStreamer pipeline), or a second, closer position for the robot.
+
 ## Decisions taken
 
 | Topic | Decision | Where |
