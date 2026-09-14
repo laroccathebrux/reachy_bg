@@ -53,12 +53,14 @@ uv run python -m src.vision.preview          # then open http://127.0.0.1:8090
 
 The page streams the camera with guides (thirds, centre cross, a dashed rectangle the board
 should fill), moves the head with pitch/yaw sliders and saves full-resolution snapshots to
-`data/captures/board/`. Two macOS details: the daemon must be allowed to use the camera
-(System Settings > Privacy & Security > Camera, for the application that launched
-`reachy-mini-daemon`; when it is not, `data/daemon.log` shows `Device video access
-permission has been denied` and no frames ever arrive); and nothing else may listen on
-port 8000 over IPv6, because the SDK dials `localhost` (`::1` first) and another service
-there answers instead of the daemon.
+`data/captures/board/`. Two macOS details. First, start `reachy-mini-daemon` from a terminal
+application that has the camera permission (iTerm or Terminal, listed in System Settings >
+Privacy & Security > Camera); a daemon started from a Claude Code session is attributed to
+the Claude Code helper binary, which cannot ask for the camera, and `data/daemon.log` then
+shows `Device video access permission has been denied` and no frames ever arrive (motors and
+audio still work, so the problem is easy to miss). Second, nothing else may listen on port
+8000 over IPv6, because the SDK dials `localhost` (`::1` first) and another service there
+answers instead of the daemon.
 
 ## Table layout
 

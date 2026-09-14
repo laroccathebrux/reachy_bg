@@ -7,9 +7,9 @@
 The page shows the camera as an MJPEG stream with framing guides (centre cross, thirds, a
 dashed board guide), lets you move the head (pitch and yaw sliders) and save full-resolution
 snapshots to ``data/captures/board/``. Frames come from the daemon through the SDK's local
-IPC backend; the daemon must be allowed to use the camera (macOS: System Settings > Privacy
-& Security > Camera for the app that launched it; its log says "video access permission has
-been denied" otherwise).
+IPC backend; on macOS the daemon must have been started from a terminal application that is
+allowed to use the camera (iTerm, Terminal). A daemon started from a Claude Code session gets
+"video access permission has been denied" in its log and never delivers a frame.
 
 Connection note: the SDK's "auto" and "localhost_only" modes dial ``localhost``, which
 resolves to ``::1`` first; when another service publishes port 8000 on IPv6 (a Docker
@@ -138,8 +138,8 @@ setInterval(poll, 1000); poll(); draw();
 
 NO_FRAMES_HINT = (
     "No frames from the daemon after {seconds:.0f} s. If its log (data/daemon.log) says "
-    "'video access permission has been denied', allow the camera for the app that launched the "
-    "daemon (System Settings > Privacy & Security > Camera) and restart the daemon."
+    "'video access permission has been denied', restart reachy-mini-daemon from a terminal "
+    "application that has the camera permission (iTerm or Terminal), not from a Claude Code session."
 )
 
 
