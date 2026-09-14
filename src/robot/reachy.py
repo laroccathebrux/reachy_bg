@@ -1,10 +1,20 @@
 """Thin wrapper around the ``reachy-mini`` SDK with a speaker-only fallback.
 
     with Robot.connect() as robot:      # real robot through the daemon on REACHY_HOST:REACHY_PORT
-        robot.nod()
+        robot.emotion("curious1")       # a move from Pollen's recorded emotions library
         robot.say(clip)                 # a Clip from src.speech.tts
 
     with Robot.connect(simulated=True) as robot:   # no daemon: gestures are logged, audio -> afplay
+
+Motion rules learned the hard way:
+
+* Expressive motion comes from the **recorded emotions library** (85 moves animated by
+  Pollen, each with an optional sound), never from hand-written pose sequences.
+* While the robot speaks, the **daemon's head wobbler** turns the audio into head motion.
+  Nothing else sends motion commands during speech; concurrent commands fight the wobbler
+  and look mechanical.
+* The wobbler is always disabled on the way out (also on Ctrl+C), otherwise the head keeps
+  swaying wherever it was left.
 
 The SDK is imported lazily so the rest of the project (tests, ingestion) never needs it.
 """
@@ -25,6 +35,14 @@ from src.logger import get_logger
 
 log = get_logger(__name__)
 
+EMOTIONS_DATASET = "pollen-robotics/reachy-mini-emotions-library"
+
+# A few library moves with a meaning in our conversation states.
+THINKING_MOVES = ("thoughtful1", "inquiring1", "curious1")
+GREETING_MOVES = ("welcoming1", "welcoming2")
+AGREE_MOVES = ("yes1", "understanding1")
+OOPS_MOVES = ("oops1", "uncertain1")
+
 
 class Robot:
     """Gestures and speech on a Reachy Mini, or on the Mac speaker when simulated."""
@@ -32,6 +50,9 @@ class Robot:
     def __init__(self, mini: Any | None):
         self._mini = mini
         self.simulated = mini is None
+        self._library: Any | None = None
+        self._move_thread: threading.Thread | None = None
+        self._daemon = f"http://{REACHY_HOST}:{REACHY_PORT}/api"
 
     # ------------------------------------------------------------------ lifecycle
     @classmethod
@@ -66,14 +87,18 @@ class Robot:
         time.sleep(0.5)
 
     def rest(self) -> None:
+        """Stop everything that could keep moving and return to a neutral pose."""
         if self.simulated:
             return
+        self.stop_speaking()
+        self._wait_for_move()
         try:
             self.look(pitch=0, yaw=0, duration=0.8)
+            self.antennas(0, 0, duration=0.5)
         except Exception as exc:  # never fail on the way out
-            log.warning("could not return the head to neutral: %s", exc)
+            log.warning("could not return to neutral: %s", exc)
 
-    # ------------------------------------------------------------------ gestures
+    # ------------------------------------------------------------------ basic poses
     def look(self, *, pitch: float = 0.0, yaw: float = 0.0, roll: float = 0.0, duration: float = 0.8) -> None:
         """Move the head to (pitch, yaw, roll) in degrees; positive pitch looks down."""
         if self.simulated:
@@ -82,101 +107,107 @@ class Robot:
         from reachy_mini.utils import create_head_pose
 
         pose = create_head_pose(roll=roll, pitch=pitch, yaw=yaw, degrees=True)
-        self._mini.goto_target(head=pose, duration=duration)
+        self._mini.goto_target(head=pose, duration=duration, body_yaw=None)
         time.sleep(duration)
-
-    def nod(self) -> None:
-        """A small "yes": down, up."""
-        self.look(pitch=12, duration=0.4)
-        self.look(pitch=0, duration=0.4)
 
     def look_at_table(self) -> None:
         self.look(pitch=35, duration=1.0)
 
-    def antennas(
-        self, left_deg: float, right_deg: float, duration: float = 0.4, *, wait: bool = True
-    ) -> None:
-        """Move the antennas (degrees). ``body_yaw=None`` keeps the body where it is."""
+    def antennas(self, left_deg: float, right_deg: float, duration: float = 0.4) -> None:
+        """Move the antennas (degrees); the body stays where it is."""
         if self.simulated:
             log.info("[sim] antennas %.0f/%.0f", left_deg, right_deg)
             return
         import numpy as np
 
         self._mini.goto_target(antennas=np.deg2rad([left_deg, right_deg]), duration=duration, body_yaw=None)
-        if wait:
-            time.sleep(duration)
+        time.sleep(duration)
 
-    def thinking(self) -> None:
-        """Antennas up and slightly apart: "give me a second"."""
-        self.antennas(35, -35, duration=0.5)
+    # ------------------------------------------------------------------ emotions
+    def available_emotions(self) -> list[str]:
+        return [] if self.simulated else sorted(self._moves().list_moves())
 
-    def neutral(self) -> None:
-        self.antennas(0, 0, duration=0.5)
+    def emotion(self, name: str, *, sound: bool = True, block: bool = True) -> None:
+        """Play a recorded emotion by name (see ``available_emotions``).
 
-    def _wiggle_antennas(self, seconds: float, stop: threading.Event) -> None:
-        """Alternate the antennas while the robot talks (runs in a background thread)."""
-        import numpy as np
+        The move's sidecar sound, when present, is played through the daemon (the SDK
+        client's own audio path is silent on macOS). ``block=False`` returns immediately and
+        the next ``say``/``rest`` waits for the move to finish.
+        """
+        if self.simulated:
+            log.info("[sim] emotion %s", name)
+            return
+        self._wait_for_move()
+        move = self._moves().get(name)
+        if sound and move.sound_path is not None:
+            self._post("media/play_sound", json={"file": str(move.sound_path)})
 
-        poses = [(25.0, -10.0), (10.0, -25.0), (30.0, -30.0), (15.0, -15.0)]
-        deadline = time.monotonic() + seconds
-        i = 0
-        while time.monotonic() < deadline and not stop.is_set():
-            left, right = poses[i % len(poses)]
+        def run() -> None:
             try:
-                self._mini.goto_target(antennas=np.deg2rad([left, right]), duration=0.45, body_yaw=None)
-            except Exception as exc:  # a failed wiggle must never interrupt speech
-                log.debug("antenna wiggle skipped: %s", exc)
-                return
-            stop.wait(0.55)
-            i += 1
+                self._mini.play_move(move, initial_goto_duration=0.4, sound=False)
+            except Exception as exc:
+                log.warning("emotion %s failed: %s", name, exc)
 
-    # ------------------------------------------------------------------ audio
+        self._move_thread = threading.Thread(target=run, name=f"emotion-{name}", daemon=True)
+        self._move_thread.start()
+        if block:
+            self._wait_for_move()
+
+    def _moves(self) -> Any:
+        if self._library is None:
+            from reachy_mini.motion.recorded_move import RecordedMoves
+
+            self._library = RecordedMoves(EMOTIONS_DATASET)
+        return self._library
+
+    def _wait_for_move(self, timeout: float = 15.0) -> None:
+        if self._move_thread is not None and self._move_thread.is_alive():
+            self._move_thread.join(timeout=timeout)
+        self._move_thread = None
+
+    # ------------------------------------------------------------------ speech
     def say(self, clip: Any) -> None:
         """Play a WAV clip (``src.speech.tts.Clip``) on the robot speaker and block until it finishes.
 
         Playback goes through the daemon's REST endpoint rather than the SDK client's own
         GStreamer pipeline: on macOS the client-side ``playbin`` reports success but stays
-        silent, while the daemon (which owns the audio device) plays reliably.
+        silent, while the daemon (which owns the audio device) plays reliably. The daemon's
+        head wobbler animates the head from the audio for the duration of the clip.
         """
         path = Path(clip.path).resolve()
         if self.simulated:
             subprocess.run(["afplay", str(path)], check=False)
             return
-        base = f"http://{REACHY_HOST}:{REACHY_PORT}/api/media"
+        self._wait_for_move()
         duration = float(clip.duration_s)
-        # The daemon's head wobbler makes the head move with the audio it plays, and a
-        # background thread keeps the antennas alive: the robot visibly "talks".
-        self._post(f"{base}/wobbling/enable")
-        stop = threading.Event()
-        wiggler = threading.Thread(target=self._wiggle_antennas, args=(duration, stop), daemon=True)
-        wiggler.start()
+        self._post("media/wobbling/enable")
         try:
-            response = httpx.post(f"{base}/play_sound", json={"file": str(path)}, timeout=10.0)
-            response.raise_for_status()
-        except httpx.HTTPError as exc:
-            log.warning("daemon play_sound failed (%s); falling back to the SDK client", exc)
-            self._mini.media.play_sound(str(path))
-        time.sleep(duration + 0.3)
-        stop.set()
-        wiggler.join(timeout=1.0)
-        self._post(f"{base}/wobbling/disable")
-        self.neutral()
-
-    @staticmethod
-    def _post(url: str) -> None:
-        try:
-            httpx.post(url, timeout=5.0).raise_for_status()
-        except httpx.HTTPError as exc:
-            log.warning("%s failed: %s", url.rsplit("/api/", 1)[-1], exc)
+            if not self._post("media/play_sound", json={"file": str(path)}):
+                log.warning("daemon play_sound failed; falling back to the SDK client")
+                self._mini.media.play_sound(str(path))
+            time.sleep(duration + 0.3)
+        finally:
+            self._post("media/wobbling/disable")
 
     def stop_speaking(self) -> None:
-        """Interrupt the current clip."""
+        """Interrupt the current clip and stop the head wobbler."""
         if self.simulated:
             return
+        self._post("media/stop_sound")
+        self._post("media/wobbling/disable")
         try:
-            httpx.post(f"http://{REACHY_HOST}:{REACHY_PORT}/api/media/stop_sound", timeout=5.0)
+            self._mini.cancel_move()
+        except Exception:
+            pass
+
+    # ------------------------------------------------------------------ daemon REST
+    def _post(self, endpoint: str, *, json: dict | None = None, timeout: float = 10.0) -> bool:
+        try:
+            httpx.post(f"{self._daemon}/{endpoint}", json=json, timeout=timeout).raise_for_status()
+            return True
         except httpx.HTTPError as exc:
-            log.warning("daemon stop_sound failed: %s", exc)
+            log.warning("daemon %s failed: %s", endpoint, exc)
+            return False
 
 
-__all__ = ["Robot"]
+__all__ = ["Robot", "THINKING_MOVES", "GREETING_MOVES", "AGREE_MOVES", "OOPS_MOVES"]

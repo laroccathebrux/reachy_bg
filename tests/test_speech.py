@@ -44,7 +44,7 @@ def test_prompt_carries_language_and_passages():
     assert "[1] (rulebook: Phase 1: Action Phase, page 7)" in messages[1]["content"]
     assert "[2] (investigator: Lily Chen)" in messages[1]["content"]
     assert "Question from a player: How many actions?" in messages[1]["content"]
-    assert messages[1]["content"].endswith("Reply in American English.")
+    assert "Reply in American English, keeping the game terms in English" in messages[1]["content"]
 
 
 def test_format_passages_handles_empty_list():
@@ -77,4 +77,4 @@ def test_english_game_terms_inside_portuguese_stay_portuguese():
 
 def test_prompt_ends_with_language_reminder():
     messages = rules_question_messages("Posso descansar?", [], "pt-BR")
-    assert messages[1]["content"].endswith("Reply in Brazilian Portuguese.")
+    assert "Reply in Brazilian Portuguese, keeping the game terms in English" in messages[1]["content"]

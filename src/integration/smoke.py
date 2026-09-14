@@ -11,6 +11,7 @@ tokens per second, TTS, playback) come out of the same run.
 from __future__ import annotations
 
 import argparse
+import random
 import sys
 import time
 
@@ -19,7 +20,7 @@ from src.llm.ollama_client import LLMError, chat
 from src.llm.prompts import rules_question_messages
 from src.logger import get_logger
 from src.rag.retrieve import retrieve
-from src.robot.reachy import Robot
+from src.robot.reachy import GREETING_MOVES, THINKING_MOVES, Robot
 from src.speech.language import detect_language
 from src.speech.tts import TTSError, synthesize
 
@@ -32,7 +33,8 @@ def answer(question: str, robot: Robot, *, speak: bool = True) -> dict[str, floa
     language = detect_language(question)
     timings["language"] = language
     log.info("question (%s): %s", language, question)
-    robot.thinking()
+    # A recorded "thinking" move runs while retrieval and the LLM work.
+    robot.emotion(random.choice(THINKING_MOVES), sound=False, block=False)
 
     t0 = time.perf_counter()
     passages = retrieve(question)
@@ -55,9 +57,7 @@ def answer(question: str, robot: Robot, *, speak: bool = True) -> dict[str, floa
         clip = synthesize(reply.text, language)
         timings["tts_s"] = round(time.perf_counter() - t0, 2)
         timings["audio_s"] = round(clip.duration_s, 2)
-        robot.nod()
         robot.say(clip)
-    robot.neutral()
     return timings
 
 
@@ -84,20 +84,24 @@ def main(argv: list[str] | None = None) -> int:
 
     questions = args.question or []
     with Robot.connect(simulated=args.no_robot) as robot:
-        robot.nod()
-        if questions:
-            for q in questions:
-                _run(q, robot, speak=not args.no_speech)
-        else:
-            print("Type a question in Portuguese or English (empty line to quit).")
-            while True:
-                try:
-                    q = input("> ").strip()
-                except (EOFError, KeyboardInterrupt):
-                    break
-                if not q:
-                    break
-                _run(q, robot, speak=not args.no_speech)
+        robot.emotion(random.choice(GREETING_MOVES))
+        try:
+            if questions:
+                for q in questions:
+                    _run(q, robot, speak=not args.no_speech)
+            else:
+                print("Type a question in Portuguese or English (empty line to quit).")
+                while True:
+                    try:
+                        q = input("> ").strip()
+                    except EOFError:
+                        break
+                    if not q:
+                        break
+                    _run(q, robot, speak=not args.no_speech)
+        except KeyboardInterrupt:
+            log.info("interrupted; stopping speech and returning to neutral")
+            robot.stop_speaking()
     return 0
 
 

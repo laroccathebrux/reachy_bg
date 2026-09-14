@@ -33,7 +33,8 @@ def rules_question_messages(question: str, passages: list[dict], language: str) 
     # The trailing reminder matters: models follow the last instruction most reliably.
     user = (
         f"Reference passages:\n\n{format_passages(passages)}\n\n"
-        f"Question from a player: {question}\n\nReply in {name}."
+        f"Question from a player: {question}\n\n"
+        f"Reply in {name}, keeping the game terms in English as printed on the components."
     )
     return [{"role": "system", "content": system}, {"role": "user", "content": user}]
 
