@@ -32,7 +32,7 @@ def answer(question: str, robot: Robot, *, speak: bool = True) -> dict[str, floa
     language = detect_language(question)
     timings["language"] = language
     log.info("question (%s): %s", language, question)
-    robot.antennas(20, -20)
+    robot.thinking()
 
     t0 = time.perf_counter()
     passages = retrieve(question)
@@ -57,7 +57,7 @@ def answer(question: str, robot: Robot, *, speak: bool = True) -> dict[str, floa
         timings["audio_s"] = round(clip.duration_s, 2)
         robot.nod()
         robot.say(clip)
-    robot.antennas(0, 0)
+    robot.neutral()
     return timings
 
 

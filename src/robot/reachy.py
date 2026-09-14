@@ -12,6 +12,7 @@ The SDK is imported lazily so the rest of the project (tests, ingestion) never n
 from __future__ import annotations
 
 import subprocess
+import threading
 import time
 from contextlib import contextmanager
 from pathlib import Path
@@ -92,14 +93,42 @@ class Robot:
     def look_at_table(self) -> None:
         self.look(pitch=35, duration=1.0)
 
-    def antennas(self, left_deg: float, right_deg: float, duration: float = 0.4) -> None:
+    def antennas(
+        self, left_deg: float, right_deg: float, duration: float = 0.4, *, wait: bool = True
+    ) -> None:
+        """Move the antennas (degrees). ``body_yaw=None`` keeps the body where it is."""
         if self.simulated:
             log.info("[sim] antennas %.0f/%.0f", left_deg, right_deg)
             return
         import numpy as np
 
-        self._mini.goto_target(antennas=np.deg2rad([left_deg, right_deg]), duration=duration)
-        time.sleep(duration)
+        self._mini.goto_target(antennas=np.deg2rad([left_deg, right_deg]), duration=duration, body_yaw=None)
+        if wait:
+            time.sleep(duration)
+
+    def thinking(self) -> None:
+        """Antennas up and slightly apart: "give me a second"."""
+        self.antennas(35, -35, duration=0.5)
+
+    def neutral(self) -> None:
+        self.antennas(0, 0, duration=0.5)
+
+    def _wiggle_antennas(self, seconds: float, stop: threading.Event) -> None:
+        """Alternate the antennas while the robot talks (runs in a background thread)."""
+        import numpy as np
+
+        poses = [(25.0, -10.0), (10.0, -25.0), (30.0, -30.0), (15.0, -15.0)]
+        deadline = time.monotonic() + seconds
+        i = 0
+        while time.monotonic() < deadline and not stop.is_set():
+            left, right = poses[i % len(poses)]
+            try:
+                self._mini.goto_target(antennas=np.deg2rad([left, right]), duration=0.45, body_yaw=None)
+            except Exception as exc:  # a failed wiggle must never interrupt speech
+                log.debug("antenna wiggle skipped: %s", exc)
+                return
+            stop.wait(0.55)
+            i += 1
 
     # ------------------------------------------------------------------ audio
     def say(self, clip: Any) -> None:
@@ -114,17 +143,24 @@ class Robot:
             subprocess.run(["afplay", str(path)], check=False)
             return
         base = f"http://{REACHY_HOST}:{REACHY_PORT}/api/media"
-        # The daemon's head wobbler makes the head move with the audio it plays: the robot
-        # visibly "talks" instead of freezing while the speaker runs.
+        duration = float(clip.duration_s)
+        # The daemon's head wobbler makes the head move with the audio it plays, and a
+        # background thread keeps the antennas alive: the robot visibly "talks".
         self._post(f"{base}/wobbling/enable")
+        stop = threading.Event()
+        wiggler = threading.Thread(target=self._wiggle_antennas, args=(duration, stop), daemon=True)
+        wiggler.start()
         try:
             response = httpx.post(f"{base}/play_sound", json={"file": str(path)}, timeout=10.0)
             response.raise_for_status()
         except httpx.HTTPError as exc:
             log.warning("daemon play_sound failed (%s); falling back to the SDK client", exc)
             self._mini.media.play_sound(str(path))
-        time.sleep(float(clip.duration_s) + 0.3)
+        time.sleep(duration + 0.3)
+        stop.set()
+        wiggler.join(timeout=1.0)
         self._post(f"{base}/wobbling/disable")
+        self.neutral()
 
     @staticmethod
     def _post(url: str) -> None:
