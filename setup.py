@@ -16,9 +16,9 @@ setup(
     package_dir={"": "src"},
     python_requires=">=3.9",
     install_requires=[
-        "reachy-sdk>=1.0.0",
+        "reachy-sdk>=0.7.0",
         "ollama>=0.1.0",
-        "qdrant-client>=2.7.0",
+        "qdrant-client>=1.7.0",
         "torch>=2.1.0",
         "torchvision>=0.16.0",
         "segment-anything>=1.0",
