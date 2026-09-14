@@ -45,6 +45,21 @@ buffer-overrun warnings (use `media_backend="no_media"` for motion-only scripts)
 GStreamer Python plugin can crash with a non-python.org Python build (see the SDK
 troubleshooting page). SDK version pinned in `pyproject.toml`.
 
+## Camera preview (placing the robot and the board)
+
+```bash
+uv run python -m src.vision.preview          # then open http://127.0.0.1:8090
+```
+
+The page streams the camera with guides (thirds, centre cross, a dashed rectangle the board
+should fill), moves the head with pitch/yaw sliders and saves full-resolution snapshots to
+`data/captures/board/`. Two macOS details: the daemon must be allowed to use the camera
+(System Settings > Privacy & Security > Camera, for the application that launched
+`reachy-mini-daemon`; when it is not, `data/daemon.log` shows `Device video access
+permission has been denied` and no frames ever arrive); and nothing else may listen on
+port 8000 over IPv6, because the SDK dials `localhost` (`::1` first) and another service
+there answers instead of the daemon.
+
 ## Table layout
 
 ```

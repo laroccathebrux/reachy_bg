@@ -286,6 +286,31 @@ sentence without it, one rules question), checking in `conversation.jsonl` that 
 table sentence produced no `heard`/`said` turn. Run it with `--humans 2` (one enrolled voice
 otherwise means solo mode, where everything is for the robot).
 
+## Done: camera preview page for placing the robot and the board (2026-09-14)
+
+`uv run python -m src.vision.preview` serves http://127.0.0.1:8090: the robot camera as an
+MJPEG stream (960 px wide, ~10 fps) with framing guides (thirds, centre cross, a dashed
+"the board should fill this" rectangle with adjustable margin), pitch/yaw sliders that move
+the head, a "look at the table" button (pitch 35) and full-resolution snapshots to
+`data/captures/board/`. `--fake` runs it on synthetic frames. Frames come through the SDK's
+local IPC camera backend (`src/vision/preview.py`); 3 tests cover the page, the stream, the
+status, the head control and the no-frames warning.
+
+Two things found while wiring it, both outside the code:
+
+- **The daemon has no camera permission on macOS.** Its log (`data/daemon.log`, at start-up)
+  says `Device video access permission has been denied` from `avfvideosrc`, so neither the IPC
+  frames nor the WebRTC producer exist and `get_frame()` stays `None` (the page says so after
+  8 s). The owner must allow the camera for the app that launched the daemon (System
+  Settings > Privacy & Security > Camera) and restart the daemon. Head control, motors and
+  audio are unaffected.
+- **`localhost` was not the daemon.** A Docker container of another project published port
+  8000 on IPv6 too; `localhost` resolves to `::1` first, so the SDK's "auto" and
+  "localhost_only" modes got a 403 from the container. "auto" then falls back to
+  `REACHY_HOST` (127.0.0.1) in network mode, which is why `talk.py` kept working; the preview
+  connects that way explicitly with `media_backend="local"`. The owner is moving that
+  container to port 8005.
+
 ## Decisions taken
 
 | Topic | Decision | Where |
@@ -321,8 +346,10 @@ Blocked on the owner deciding where the robot sits at the table.
 1. ~~Local "stay quiet" gate, no LLM tokens~~ done (section above); pending its live test
    with the owner speaking, and a local LLM classifier only if the rules prove insufficient
    in real sessions.
-2. **Phase 1, board vision**: the owner will place the robot so the camera sees the whole
-   board; then camera permission, calibration photos, `src/vision/`.
+2. **Phase 1, board vision**: the owner places the robot with the camera preview page
+   (`src/vision/preview.py`) so the camera sees the whole board; before that the daemon needs
+   the macOS camera permission (denied today, see above); then calibration photos,
+   `src/vision/capture.py`, `detect.py`, `board_map.py`.
 3. A recorded 2-3 player session (the annotated dataset) waits until players are available.
 4. ~~Small fixes: the rules tool ran twice across a language switch; the shadow label marked
    an English question as echo; start the diart sidecar by default when present~~ done.

@@ -70,6 +70,7 @@ uv run python -m src.integration.talk --players "Ana,Bruno"     # enrol voices f
 uv run python -m src.integration.talk --humans 2                 # the gate: only what is for the robot reaches the agent
 uv run python -m src.integration.talk --always-answer            # no gate: the agent hears everything
 uv run python scripts/gate_replay.py data/captures/audio/*.wav --humans 2   # replay captures through the gate, offline
+uv run python -m src.vision.preview                              # camera preview at http://127.0.0.1:8090 to place the board
 uv run python -m src.integration.listen         # fully local pipeline (Whisper + Ollama), slower
 uv run python -m src.integration.listen --list-devices
 ```
