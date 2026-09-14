@@ -179,14 +179,16 @@ def test_adaptive_floor_rejects_a_louder_but_steady_background():
     assert len(feed(seg, clock, np.concatenate([tone(800), noise(1000, amplitude=0.05, seed=3)]))) == 1
 
 
-def test_noise_floor_drops_fast_and_rises_slowly():
+def test_noise_floor_is_a_rolling_minimum():
     clock = FakeClock()
-    seg = make_segmenter(clock)
+    seg = make_segmenter(clock, noise_window_s=10)
     feed(seg, clock, noise(300, amplitude=0.05))  # starts loud (-26 dBFS)
     feed(seg, clock, noise(2000))  # then quiet (-54 dBFS): the floor follows within seconds
     assert seg.noise_floor_db < -50
-    feed(seg, clock, tone(3000))  # a 3 s sentence barely moves it
-    assert seg.noise_floor_db < -44
+    feed(seg, clock, tone(4000))  # a 4 s sentence does not move it
+    assert seg.noise_floor_db < -50
+    feed(seg, clock, noise(12000, amplitude=0.05, seed=4))  # a fan running longer than the window
+    assert seg.noise_floor_db > -30
 
 
 # --------------------------------------------------------------------------- devices

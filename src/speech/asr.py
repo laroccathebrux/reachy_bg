@@ -35,6 +35,8 @@ SAMPLE_RATE = 16_000
 # AND a low average log-probability is silence or noise, not words.
 NO_SPEECH_THRESHOLD = 0.6
 LOGPROB_THRESHOLD = -1.0
+# Below this probability the language head is guessing; the speaker's last language wins.
+LANGUAGE_MIN_CONFIDENCE = 0.5
 
 # Phrases Whisper produces from silence, breathing or music; matched after normalisation.
 _HALLUCINATIONS = frozenset(
@@ -116,9 +118,17 @@ def normalise(text: str) -> str:
     return " ".join(_NORMALISE.sub(" ", text.lower()).split())
 
 
+_NOISE_WORDS = frozenset(
+    "cough coughs coughing hmm hm mm mmm ah uh um eh oh laughs laughter music applause".split()
+)
+
+
 def is_hallucination(text: str, avg_logprob: float, no_speech_prob: float) -> bool:
-    """True for output that Whisper typically invents on silence or noise."""
-    if normalise(text) in _HALLUCINATIONS:
+    """True for output that Whisper typically invents on silence, noise, coughs or laughter."""
+    normalised = normalise(text)
+    if normalised in _HALLUCINATIONS:
+        return True
+    if normalised and all(word in _NOISE_WORDS for word in normalised.split()):
         return True
     return no_speech_prob > NO_SPEECH_THRESHOLD and avg_logprob < LOGPROB_THRESHOLD
 
@@ -195,7 +205,20 @@ class Transcriber:
         code = whisper_code(tag) if tag else max(distribution, key=distribution.get)
         return tag, code, prob
 
-    def transcribe(self, audio: np.ndarray, sample_rate: int = SAMPLE_RATE) -> Transcript:
+    def transcribe(
+        self,
+        audio: np.ndarray,
+        sample_rate: int = SAMPLE_RATE,
+        *,
+        fallback_language: str = "",
+        min_language_confidence: float = LANGUAGE_MIN_CONFIDENCE,
+    ) -> Transcript:
+        """Recognize ``audio``; when the language head is unsure, decode in ``fallback_language``.
+
+        Short or cut utterances often get a low-probability wrong language (English at 0.25
+        for a Portuguese fragment) and then decode as nonsense; the speaker's previous
+        language is the better bet in that case.
+        """
         if sample_rate != SAMPLE_RATE:
             from src.speech.microphone import resample
 
@@ -210,6 +233,10 @@ class Transcriber:
             tag, code, confidence = map_language(self.pinned, self.supported), self.pinned, 1.0
         else:
             tag, code, confidence = self.identify_language(samples)
+            fallback = map_language(fallback_language, self.supported)
+            if fallback and confidence < min_language_confidence and tag != fallback:
+                log.info("language %s at %.2f is unsure; decoding as %s", tag or code, confidence, fallback)
+                tag, code = fallback, whisper_code(fallback)
         try:
             result = whisper_transcribe(
                 samples,
@@ -251,6 +278,7 @@ class Transcriber:
 
 __all__ = [
     "ASRError",
+    "LANGUAGE_MIN_CONFIDENCE",
     "Transcript",
     "Transcriber",
     "choose_language",

@@ -59,8 +59,8 @@ log = get_logger(__name__)
 STAGES = ("vad_tail_s", "asr_s", "who_s", "retrieve_s", "llm_s", "tts_s", "ear_to_mouth_s", "audio_s")
 
 ENROL_PROMPTS = {
-    "pt-BR": "{name}, diga uma frase inteira para eu aprender a sua voz.",
-    "en-US": "{name}, say a full sentence so I can learn your voice.",
+    "pt-BR": "{name}, diga uma frase longa, de uns cinco segundos, para eu aprender a sua voz.",
+    "en-US": "{name}, say a long sentence, about five seconds, so I can learn your voice.",
 }
 ENROL_THANKS = {"pt-BR": "Obrigado, {name}.", "en-US": "Thank you, {name}."}
 
@@ -80,6 +80,8 @@ class Session:
     barge_in: bool = True
     always_answer: bool = False
     last_answer: str = ""
+    last_addressed_speaker: str = ""
+    last_language: dict[str, str] = field(default_factory=dict)  # per speaker name ("" = unknown)
     robot_spoke_at: float | None = None  # monotonic
     robot_turn: bool = False
     turns: list[dict] = field(default_factory=list)
@@ -120,15 +122,19 @@ def handle(session: Session, utterance: Utterance) -> dict | None:
         "vad_tail_s": round(utterance.ended_at - utterance.speech_ended_at, 2),
     }
     t0 = time.monotonic()
-    result = session.transcriber.transcribe(utterance.audio, utterance.sample_rate)
+    who = who_spoke(session, utterance)
+    timings.update(who)
+    fallback = session.last_language.get(str(who["speaker"]), DEFAULT_LANGUAGE)
+    result = session.transcriber.transcribe(
+        utterance.audio, utterance.sample_rate, fallback_language=fallback
+    )
     timings["asr_s"] = result.seconds
     if result.empty:
         log.info("heard nothing usable (no_speech %.2f)", result.no_speech_prob)
         return None
     language = result.language or detect_language(result.text)
+    session.last_language[str(who["speaker"])] = language
     timings.update(language=language, language_confidence=result.language_confidence, text=result.text)
-    who = who_spoke(session, utterance)
-    timings.update(who)
     log.info(
         "heard [%s] (%s %.2f): %s", who["speaker"] or "?", language, result.language_confidence, result.text
     )
@@ -142,8 +148,16 @@ def handle(session: Session, utterance: Utterance) -> dict | None:
     elif session.always_answer:
         decision = Decision(True, "always_answer", 1.0)
     else:
+        humans = (
+            len(session.registry.names) if session.registry is not None and session.registry.names else None
+        )
         decision = decide(
-            result.text, language, seconds_since_robot_spoke=since_robot, robot_turn=session.robot_turn
+            result.text,
+            language,
+            seconds_since_robot_spoke=since_robot,
+            robot_turn=session.robot_turn,
+            humans_present=humans,
+            follow_up_ok=bool(who["speaker"]) and who["speaker"] == session.last_addressed_speaker,
         )
     timings.update(addressed=decision.addressed, reason=decision.reason)
     # The sidecar labels audio ~1.5 s after hearing it; wait for it only when staying quiet,
@@ -166,6 +180,7 @@ def handle(session: Session, utterance: Utterance) -> dict | None:
         log.info("staying quiet (%s)", decision.reason)
         return timings
 
+    session.last_addressed_speaker = str(who["speaker"])
     session.robot.emotion(random.choice(THINKING_MOVES), sound=False, block=False)
     thought = think(result.text, language)
     timings.update(thought.timings)
@@ -241,11 +256,10 @@ def _speak_line(session: Session, text: str, language: str) -> None:
     if not session.speak:
         return
     try:
-        session.robot.say(synthesize(text, language))
+        say(session, synthesize(text, language), {})
+        session.robot_spoke_at = time.monotonic()
     except TTSError as exc:
         log.warning("%s", exc)
-    if session.mic is not None:
-        session.mic.discard()
 
 
 def summarise(turns: list[dict]) -> str:

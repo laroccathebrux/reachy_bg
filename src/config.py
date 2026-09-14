@@ -118,7 +118,7 @@ ROBOT_NAME_ALIASES = tuple(
     a.strip().lower()
     for a in os.getenv(
         "ROBOT_NAME_ALIASES",
-        "reachy,reachie,reachi,reaxi,richie,richy,rich,ritchie,ritchy,reach,richi,ricci,rishi,ricky,rachi",
+        "reachy,reachie,reachi,reaxi,richie,richy,rich,ritch,ritchie,ritchy,reach,richi,ricci,rishi,ricky,rachi",
     ).split(",")
     if a.strip()
 )

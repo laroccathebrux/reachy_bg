@@ -10,7 +10,9 @@ The rules, in order of confidence:
 3. A question about the rules or the game while it is the robot's turn: probably for it.
 4. A rules question to the table: answered when ``ANSWER_GAME_QUESTIONS`` is on (a
    knowledgeable player would), logged either way.
-5. Everything else: stay quiet (people talk to each other most of the time).
+5. With a single person at the table (``humans_present=1``), anything in the second person
+   ("você", "tu", "you") can only be for the robot.
+6. Everything else: stay quiet (people talk to each other most of the time).
 
 Every decision is appended to ``data/game_logs/addressee.jsonl`` by :class:`TurnLogger`;
 that file is the dataset for the learned classifier later.
@@ -40,6 +42,11 @@ _RULES_WORDS = {
     "en-US": "rule rules action actions round phase turn card cards play allowed legal can".split(),
 }
 _SHORT_REPLY_MAX_WORDS = 3
+# Second-person forms: with a single known player at the table, "you" can only be the robot.
+_SECOND_PERSON = {
+    "pt-BR": frozenset("voce tu te ti contigo teu tua seu sua consegue sabe pode quer".split()),
+    "en-US": frozenset("you your yours yourself".split()),
+}
 _INTERJECTIONS = frozenset("hey hi ei oi ola e ok entao ta then so".split())
 
 
@@ -77,6 +84,11 @@ def is_question(text: str, language: str) -> bool:
     return bool(words) and words[0] in _INTERROGATIVES.get(language, ())
 
 
+def second_person(text: str, language: str) -> bool:
+    words = set(_words(text))
+    return bool(words & _SECOND_PERSON.get(language, frozenset()))
+
+
 def about_the_game(text: str, language: str) -> bool:
     words = set(_words(text))
     return any(w in words for w in _RULES_WORDS.get(language, ()))
@@ -107,11 +119,25 @@ def decide(
     robot_turn: bool = False,
     follow_up_window_s: float = FOLLOW_UP_WINDOW_S,
     answer_game_questions: bool = ANSWER_GAME_QUESTIONS,
+    humans_present: int | None = None,
+    follow_up_ok: bool = True,
 ) -> Decision:
+    """Decide whether the utterance is for the robot.
+
+    ``humans_present`` is how many people can be talked to besides the robot (None =
+    unknown); ``follow_up_ok`` says whether the speaker is the one the robot was talking to
+    (a stranger's cough right after an answer is not a follow-up).
+    """
     if mentions_robot(text):
         return Decision(True, "name", 0.95)
+    if humans_present == 1 and second_person(text, language):
+        return Decision(True, "second_person_solo", 0.6)
     question = is_question(text, language)
-    recent = seconds_since_robot_spoke is not None and seconds_since_robot_spoke <= follow_up_window_s
+    recent = (
+        follow_up_ok
+        and seconds_since_robot_spoke is not None
+        and seconds_since_robot_spoke <= follow_up_window_s
+    )
     if recent and question:
         return Decision(True, "follow_up_question", 0.8)
     if recent and len(_words(text)) <= _SHORT_REPLY_MAX_WORDS:

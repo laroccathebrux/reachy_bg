@@ -75,3 +75,24 @@ def test_looks_like_echo():
     assert not looks_like_echo("Can I travel twice in a round?", answer)
     assert not looks_like_echo("two actions", answer)  # too short to judge
     assert not looks_like_echo("anything", "")
+
+
+def test_second_person_counts_only_with_a_single_human():
+    assert (
+        decide("Você não parece disposta a conversar.", "pt-BR", humans_present=1).reason
+        == "second_person_solo"
+    )
+    assert decide("Tu não me responde?", "pt-BR", humans_present=1).addressed
+    assert decide("Can you hear me?", "en-US", humans_present=1).addressed
+    assert not decide("Você não parece disposta a conversar.", "pt-BR", humans_present=2).addressed
+    assert not decide("Você não parece disposta a conversar.", "pt-BR").addressed
+    assert not decide("Eu vou viajar para Londres.", "pt-BR", humans_present=1).addressed
+
+
+def test_follow_up_needs_the_same_speaker():
+    assert (
+        decide("E depois?", "pt-BR", seconds_since_robot_spoke=3.0, follow_up_ok=True).reason
+        == "follow_up_question"
+    )
+    assert not decide("E depois?", "pt-BR", seconds_since_robot_spoke=3.0, follow_up_ok=False).addressed
+    assert not decide("Cough, cough.", "en-US", seconds_since_robot_spoke=2.0, follow_up_ok=False).addressed

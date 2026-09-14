@@ -191,7 +191,7 @@ class Segmenter:
         threshold_dbfs: float = VAD_THRESHOLD_DBFS,
         noise_margin_db: float = VAD_NOISE_MARGIN_DB,
         start_frames: int = 3,
-        noise_alpha: float = 0.05,
+        noise_window_s: float = 10.0,
         clock: Callable[[], float] = time.monotonic,
     ):
         self.sample_rate = sample_rate
@@ -203,10 +203,13 @@ class Segmenter:
         self.threshold_dbfs = threshold_dbfs
         self.noise_margin_db = noise_margin_db
         self.start_frames = start_frames
-        self.noise_alpha = noise_alpha
         self.clock = clock
         self.extra_margin_db = 0.0
         self.noise_floor_db: float | None = None
+        # Levels of the last ``noise_window_s`` seconds; the floor is their 10th percentile, so
+        # speech (never the whole window) cannot drag it up, while a fan that starts is
+        # learned within the window.
+        self._levels: deque[float] = deque(maxlen=max(10, int(noise_window_s * 1000 / frame_ms)))
         self.level_db = _SILENCE_DB  # last frame
         self.max_level_db = _SILENCE_DB  # since the last reset (e.g. the robot's echo peak)
         self._pre_roll: deque[np.ndarray] = deque(maxlen=max(1, pre_roll_ms // frame_ms))
@@ -251,15 +254,12 @@ class Segmenter:
         level = rms_dbfs(frame)
         self.level_db = level
         self.max_level_db = max(self.max_level_db, level)
-        if self.noise_floor_db is None:
-            self.noise_floor_db = level  # the stream starts in silence (or the floor decays fast)
+        # The floor freezes while a barge-in margin is active (the robot's own voice would
+        # otherwise be learned as "noise").
+        if self.extra_margin_db == 0.0 or self.noise_floor_db is None:
+            self._levels.append(level)
+            self.noise_floor_db = float(np.percentile(self._levels, 10))
         is_speech = level > self.threshold_db
-        # The noise floor drops quickly and rises slowly (a fan that starts is learned in a
-        # minute or so; a sentence barely moves it), and freezes while a barge-in margin is
-        # active (the robot's voice would otherwise be learned as "noise").
-        if self.extra_margin_db == 0.0:
-            alpha = self.noise_alpha if level < self.noise_floor_db else self.noise_alpha / 25
-            self.noise_floor_db += alpha * (level - self.noise_floor_db)
 
         if not self.in_speech:
             self._pre_roll.append(frame)
