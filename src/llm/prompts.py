@@ -49,25 +49,46 @@ def conversation_messages(
     ``recent`` is the last few (speaker_text, robot_text) exchanges for continuity.
     """
     name = language_name(language)
-    messages: list[dict[str, str]] = [{"role": "system", "content": CHAT_PROMPT.format(language=name)}]
-    for heard, said in (recent or [])[-3:]:
-        messages.append({"role": "user", "content": heard})
-        messages.append({"role": "assistant", "content": said})
+    messages = [{"role": "system", "content": CHAT_PROMPT.format(language=name)}, *history_messages(recent)]
     messages.append({"role": "user", "content": f"{text}\n\nReply in {name}."})
     return messages
 
 
-def rules_question_messages(question: str, passages: list[dict], language: str) -> list[dict[str, str]]:
-    """Chat messages for answering a rules or knowledge question out loud."""
+MAX_HISTORY_TURNS = 4
+MAX_HISTORY_CHARS = 300
+
+
+def history_messages(recent: list[tuple[str, str]] | None) -> list[dict[str, str]]:
+    """The last exchanges as chat turns (answers shortened), so follow-ups keep their context."""
+    messages: list[dict[str, str]] = []
+    for heard, said in (recent or [])[-MAX_HISTORY_TURNS:]:
+        said = said if len(said) <= MAX_HISTORY_CHARS else said[:MAX_HISTORY_CHARS].rsplit(" ", 1)[0] + " ..."
+        messages.append({"role": "user", "content": heard})
+        messages.append({"role": "assistant", "content": said})
+    return messages
+
+
+def rules_question_messages(
+    question: str, passages: list[dict], language: str, recent: list[tuple[str, str]] | None = None
+) -> list[dict[str, str]]:
+    """Chat messages for answering a rules or knowledge question out loud.
+
+    ``recent`` carries the previous exchanges so "and do I need to replace those cards?"
+    is understood after a question about acquiring cards.
+    """
     name = language_name(language)
     system = SYSTEM_PROMPT.format(language=name)
     # The trailing reminder matters: models follow the last instruction most reliably.
     user = (
         f"Reference passages:\n\n{format_passages(passages)}\n\n"
-        f"Question from a player: {question}\n\n"
+        f"Question from a player (it may continue the conversation above): {question}\n\n"
         f"Reply in {name}, keeping the game terms in English as printed on the components."
     )
-    return [{"role": "system", "content": system}, {"role": "user", "content": user}]
+    return [
+        {"role": "system", "content": system},
+        *history_messages(recent),
+        {"role": "user", "content": user},
+    ]
 
 
 __all__ = [
@@ -76,5 +97,7 @@ __all__ = [
     "MAX_PASSAGE_CHARS",
     "conversation_messages",
     "format_passages",
+    "history_messages",
+    "MAX_HISTORY_TURNS",
     "rules_question_messages",
 ]

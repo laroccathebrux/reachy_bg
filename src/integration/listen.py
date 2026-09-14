@@ -248,7 +248,7 @@ def answer_streaming(
     timings.update(thought.timings)
     session.last_answer = thought.answer or " ".join(spoken)
     session.recent.append((question, " ".join(spoken) or session.last_answer))
-    session.recent = session.recent[-3:]
+    session.recent = session.recent[-6:]
     session.speaking_text = ""
     session.robot_spoke_at = time.monotonic()
     timings["interrupted"] = interrupted

@@ -43,7 +43,10 @@ def test_prompt_carries_language_and_passages():
     assert "American English" in messages[0]["content"]
     assert "[1] (rulebook: Phase 1: Action Phase, page 7)" in messages[1]["content"]
     assert "[2] (investigator: Lily Chen)" in messages[1]["content"]
-    assert "Question from a player: How many actions?" in messages[1]["content"]
+    assert (
+        "Question from a player (it may continue the conversation above): How many actions?"
+        in messages[1]["content"]
+    )
     assert "Reply in American English, keeping the game terms in English" in messages[1]["content"]
 
 
@@ -94,3 +97,12 @@ def test_conversation_messages_carry_recent_exchanges():
     assert [m["role"] for m in messages[1:]] == ["user", "assistant", "user", "assistant", "user"]
     assert messages[-1]["content"].startswith("E aí?")
     assert "Reply in Brazilian Portuguese" in messages[-1]["content"]
+
+
+def test_rules_messages_carry_history_before_the_question():
+    recent = [("Se eu comprar duas cartas?", "Não, " + "x" * 400)]
+    messages = rules_question_messages("E preciso repor?", [], "pt-BR", recent)
+    assert [m["role"] for m in messages] == ["system", "user", "assistant", "user"]
+    assert messages[1]["content"] == "Se eu comprar duas cartas?"
+    assert messages[2]["content"].endswith(" ...") and len(messages[2]["content"]) < 320
+    assert "E preciso repor?" in messages[3]["content"]

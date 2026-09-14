@@ -57,6 +57,25 @@ def think(question: str, language: str) -> Thought:
 
 SPOKEN_RULES_PASSAGES = 3
 SPOKEN_KNOWLEDGE_PASSAGES = 2
+_CONNECTIVES = ("e ", "então ", "entao ", "mas ", "ou ", "and ", "so ", "but ", "or ", "what about ", "e se ")
+_SHORT_FOLLOW_UP_WORDS = 8
+
+
+def retrieval_query(question: str, recent: list[tuple[str, str]] | None) -> str:
+    """The text to embed: a short or connective-led follow-up borrows the previous question.
+
+    "E eu preciso repor essas cartas?" retrieves nothing useful alone; together with
+    "Se eu comprar duas cartas da reserva..." it lands on the Acquire Assets rules.
+    """
+    if not recent:
+        return question
+    lowered = question.strip().lower()
+    short = len(lowered.split()) < _SHORT_FOLLOW_UP_WORDS
+    if short or lowered.startswith(_CONNECTIVES):
+        return f"{recent[-1][0]} {question}"
+    return question
+
+
 _SENTENCE_END = re.compile(r"(?<=[.!?…])\s+")
 _MIN_SENTENCE_CHARS = 12
 
@@ -106,7 +125,9 @@ def think_sentences(
         # Fewer passages than the typed smoke test: prompt processing is the biggest share of
         # the time to the first spoken sentence on a busy Mac (about 5 ms per prompt token).
         passages = retrieve(
-            question, rules_limit=SPOKEN_RULES_PASSAGES, knowledge_limit=SPOKEN_KNOWLEDGE_PASSAGES
+            retrieval_query(question, recent),
+            rules_limit=SPOKEN_RULES_PASSAGES,
+            knowledge_limit=SPOKEN_KNOWLEDGE_PASSAGES,
         )
         thought.passages = passages
         thought.timings["retrieve_s"] = round(time.perf_counter() - t0, 2)
@@ -118,7 +139,7 @@ def think_sentences(
                 p.get("path") or p.get("name"),
                 p["text"][:80].replace("\n", " "),
             )
-        messages = rules_question_messages(question, passages, language)
+        messages = rules_question_messages(question, passages, language, recent)
     else:
         thought.timings["passages"] = 0
         messages = conversation_messages(question, language, recent)
@@ -154,4 +175,4 @@ def voice(thought: Thought) -> Clip:
     return clip
 
 
-__all__ = ["Thought", "split_sentences", "think", "think_sentences", "voice"]
+__all__ = ["Thought", "retrieval_query", "split_sentences", "think", "think_sentences", "voice"]
