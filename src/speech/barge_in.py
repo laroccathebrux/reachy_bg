@@ -21,7 +21,7 @@ from src.speech.addressee import looks_like_echo
 
 log = get_logger(__name__)
 
-MIN_WORDS = 2
+MIN_WORDS = 2  # fewer words cannot be judged; the echo check handles short fragments
 
 
 class EchoAwareBargeIn:
@@ -33,7 +33,7 @@ class EchoAwareBargeIn:
         *,
         min_ms: int = 600,
         recheck_ms: int = 1200,
-        fallback_language: str = "",
+        fallback_language: str | Callable[[], str] = "",
         clock: Callable[[], float] = time.monotonic,
     ):
         self.mic = mic
@@ -61,7 +61,8 @@ class EchoAwareBargeIn:
         self._checked_ms = voice_ms
         self.checks += 1
         started = self.clock()
-        result = self.transcriber.transcribe(audio, fallback_language=self.fallback_language)
+        fallback = self.fallback_language() if callable(self.fallback_language) else self.fallback_language
+        result = self.transcriber.transcribe(audio, fallback_language=fallback)
         text = result.text
         echo = looks_like_echo(text, self.spoken_text()) if text else True
         log.info(

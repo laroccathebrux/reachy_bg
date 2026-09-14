@@ -143,6 +143,30 @@ class LocalEar:
         return None
 
 
+class TableConversation:
+    """SDK conversation that also reports the raw events the SDK ignores (system tool responses)."""
+
+    def __init__(self, *args: Any, on_raw: Any = None, **kwargs: Any):
+        from elevenlabs.conversational_ai.conversation import Conversation
+
+        self._impl = Conversation(*args, **kwargs)
+        self._on_raw = on_raw
+        original = self._impl._handle_message
+
+        def handle(message: dict, ws: Any) -> None:
+            if self._on_raw is not None:
+                try:
+                    self._on_raw(message)
+                except Exception as exc:
+                    log.warning("raw event hook failed: %s", exc)
+            original(message, ws)
+
+        self._impl._handle_message = handle  # type: ignore[method-assign]
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._impl, name)
+
+
 class Table:
     """Callbacks of the agent conversation, wired to the local ear, the diary and the body."""
 
@@ -162,7 +186,8 @@ class Table:
         self.responses: list[str] = []  # last few agent lines: a filler and its answer overlap in time
         self.barge_ins = 0
         self.transcriber: Transcriber | None = None
-        self.agent_language = DEFAULT_LANGUAGE  # inferred from what the agent says
+        self.voice_language = DEFAULT_LANGUAGE  # what the agent's language_detection tool last set
+        self._voice_switched = False
 
     def on_user_transcript(self, text: str) -> None:
         heard = self.ear.last_utterance()
@@ -211,7 +236,11 @@ class Table:
             reason=decision.reason,
         )
         self.last_addressed = name
-        if heard is not None and self.transcriber is not None:
+        # Cheap, immediate hint from the transcript text; the Whisper check below catches the
+        # cases where the agent's ASR (pinned to the current language) mangled the words.
+        if language != self.voice_language:
+            self._ask_to_switch(language, "transcript")
+        elif heard is not None and self.transcriber is not None:
             threading.Thread(
                 target=self._check_language, args=(heard[0],), name="language-watch", daemon=True
             ).start()
@@ -232,23 +261,41 @@ class Table:
         except Exception as exc:
             log.warning("language check failed: %s", exc)
             return
-        if not result.language or result.language_confidence < 0.8 or result.language == self.agent_language:
+        if not result.language or result.language_confidence < 0.8 or result.language == self.voice_language:
             return
-        code = result.language.split("-")[0]
-        name = language_name(result.language)
+        self._ask_to_switch(result.language, f"whisper {result.language_confidence:.2f}")
+
+    def _ask_to_switch(self, language: str, source: str) -> None:
+        code = language.split("-")[0]
+        name = language_name(language)
         log.info(
-            "player speaks %s (%.2f) but the agent is in %s; asking it to switch",
+            "player speaks %s (%s) but the voice is %s; asking the agent to switch",
             name,
-            result.language_confidence,
-            self.agent_language,
+            source,
+            self.voice_language,
         )
-        self.diary.write("language_hint", language=result.language, confidence=result.language_confidence)
+        self.diary.write("language_hint", language=language, source=source)
         try:
             self.conversation.send_contextual_update(
-                f"The player is speaking {name}. Call language_detection with '{code}' and answer in {name}."
+                f"The player is speaking {name}. Call language_detection with '{code}' now and answer in {name}."
             )
         except Exception as exc:
             log.warning("could not send the language hint: %s", exc)
+
+    def on_raw_event(self, message: dict) -> None:
+        """System tool responses are not surfaced by the SDK; the language switch is read from them."""
+        if message.get("type") != "agent_tool_response":
+            return
+        event = message.get("agent_tool_response_event", {})
+        self.diary.write(
+            "agent_tool",
+            name=event.get("tool_name"),
+            tool_type=event.get("tool_type"),
+            is_error=event.get("is_error"),
+        )
+        if event.get("tool_name") == "language_detection" and not event.get("is_error"):
+            self._voice_switched = True
+            log.info("agent switched language (tool response)")
 
     @property
     def spoken_recently(self) -> str:
@@ -258,7 +305,11 @@ class Table:
         self.turns += 1
         self.robot_spoke_at = time.monotonic()
         self.responses = (self.responses + [text])[-3:]
-        self.agent_language = detect_language(text)
+        if self._voice_switched:
+            # The voice follows the tool switch; the text language of this line tells which one.
+            self.voice_language = detect_language(text)
+            self._voice_switched = False
+            log.info("voice is now %s", self.voice_language)
         self.diary.write("said", text=text)
         log.info("robot: %s", text)
 
@@ -360,7 +411,6 @@ def main(argv: list[str] | None = None) -> int:
     signal.signal(signal.SIGTERM, _terminate)
 
     from elevenlabs import ElevenLabs
-    from elevenlabs.conversational_ai.conversation import Conversation
 
     from src.config import AUDIO_CAPTURE_DIR, AUDIO_INPUT_DEVICE, AUDIO_OUTPUT_DEVICE, SAVE_CAPTURES
 
@@ -388,7 +438,7 @@ def main(argv: list[str] | None = None) -> int:
             table = Table(robot, ear, diary, TurnLogger(), audio)
             table.transcriber = transcriber
             tools = client_tools(on_call=table.on_tool)
-            conversation = Conversation(
+            conversation = TableConversation(
                 client,
                 agent_id,
                 requires_auth=True,
@@ -398,6 +448,7 @@ def main(argv: list[str] | None = None) -> int:
                 callback_agent_response_correction=table.on_agent_correction,
                 callback_user_transcript=table.on_user_transcript,
                 callback_latency_measurement=table.on_latency,
+                on_raw=table.on_raw_event,
             )
             table.conversation = conversation
             robot.emotion(random.choice(GREETING_MOVES))

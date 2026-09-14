@@ -74,13 +74,21 @@ def test_looks_like_echo():
         "Isso se aplica ao número de Monstros", "Isso se aplica tanto ao número de Monstros gerados"
     )
     assert not looks_like_echo("Can I travel twice in a round?", answer)
+    assert not looks_like_echo("anything", "")
     assert looks_like_echo(
         "Deixa eu verificar o vídeo.", "Deixe-me verificar o Guia de Referência."
     )  # misheard echo
+    assert looks_like_echo(
+        "Você deve...", "nessa fase você deve resolver um encontro"
+    )  # short echo, every word spoken
     assert not looks_like_echo("Então eu posso pegar mais de um?", "Deixe-me verificar o Guia de Referência.")
     assert not looks_like_echo("wait, what about Rest?", answer)
-    assert not looks_like_echo("two actions", answer)  # too short to judge
-    assert not looks_like_echo("anything", "")
+    # A player's real sentence shares only function words with the robot's speech.
+    robot = "Durante a Encounter Phase você deve resolver um encontro, não é possível descansar nessa fase."
+    assert not looks_like_echo("Não, eu não falei. Eu não te interrompi, por que que tu parou?", robot)
+    assert not looks_like_echo(
+        "A minha pergunta foi se eu posso descansar durante a fase de encontros.", robot
+    )
 
 
 def test_second_person_counts_only_with_a_single_human():

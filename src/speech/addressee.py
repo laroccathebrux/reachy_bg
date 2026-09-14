@@ -114,26 +114,38 @@ def about_the_game(text: str, language: str) -> bool:
     return any(_strip_accents(w) in words for w in _RULES_WORDS.get(language, ()))
 
 
-def _same_word(heard: str, spoken: set[str], stems: set[str]) -> bool:
-    """Exact match, or the same first four letters for longer words ("deixa" ~ "deixe", misheard echo)."""
+def _same_word(heard: str, spoken: set[str], stems: dict[str, set[int]]) -> bool:
+    """Exact match, or the same first four letters and about the same length ("deixa" ~ "deixe").
+
+    The length check keeps "posso" from matching "possível" through the shared stem.
+    """
     if heard in spoken:
         return True
-    return len(heard) >= 4 and heard[:4] in stems
+    lengths = stems.get(heard[:4], set()) if len(heard) >= 5 else set()
+    return any(abs(n - len(heard)) <= 1 for n in lengths)
 
 
-def looks_like_echo(text: str, last_answer: str, *, min_shared: float = 0.5) -> bool:
-    """True when most of the heard words are in the robot's recent speech (its own voice).
+def looks_like_echo(text: str, last_answer: str, *, min_shared: float = 0.6) -> bool:
+    """True when the heard words are mostly the robot's own recent words (its echo at the mic).
 
-    Echo reaches the microphone distorted, so words are matched on their first four letters
-    as well; short function words count like any other.
+    Only content words (four letters or more) count: function words ("eu", "não", "que") are
+    shared by any two sentences in the same language. Echo arrives distorted, so longer words
+    also match on their first four letters. With fewer than two content words the text is
+    echo only when every word was spoken.
     """
     heard = _words(text)
-    if len(heard) < 3 or not last_answer:
+    if not heard or not last_answer:
         return False
     spoken = set(_words(last_answer))
-    stems = {w[:4] for w in spoken if len(w) >= 4}
-    shared = sum(1 for w in heard if _same_word(w, spoken, stems))
-    return shared / len(heard) >= min_shared
+    stems: dict[str, set[int]] = {}
+    for w in spoken:
+        if len(w) >= 5:
+            stems.setdefault(w[:4], set()).add(len(w))
+    content = [w for w in heard if len(w) >= 4]
+    if len(content) < 2:
+        return all(_same_word(w, spoken, stems) for w in heard)
+    shared = sum(1 for w in content if _same_word(w, spoken, stems))
+    return shared / len(content) >= min_shared
 
 
 @dataclass(frozen=True)
