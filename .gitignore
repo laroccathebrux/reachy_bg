@@ -40,11 +40,8 @@ MANIFEST
 config/local_*.yaml
 .env
 .env.local
-data/captures/*.png
-data/captures/*.jpg
-data/game_logs/*.json
-data/models/*.pth
-data/models/*.pt
+# Runtime data is never committed (rulebook PDFs, captures, logs, TTS clips, models)
+data/
 qdrant_storage/
 
 # Git
@@ -60,5 +57,4 @@ qdrant_storage/
 *.ipynb
 .ipynb_checkpoints/
 experiments/*/results/
-data/rulebooks/
 .pytest_cache/
