@@ -1,211 +1,86 @@
-# Project Status & Summary
+# Project Status
 
-## ✅ Completed (Phase 0)
+Updated 2026-09-14.
 
-### Project Initialization
-- [x] Directory structure created
-- [x] Git repository initialized
-- [x] Documentation organized
-- [x] Configuration system set up
-- [x] Logging infrastructure implemented
-- [x] Base modules created
+## Done: Phase 0, foundation
 
-### Documentation
-- [x] README.md — Project overview
-- [x] GETTING_STARTED.md — Quick start guide
-- [x] TRANSFER_TO_MAC.md — Mac setup instructions
-- [x] DESIGN_DOCUMENT.md — Architecture (from previous session)
-- [x] PHYSICAL_SETUP.md — Table setup (from previous session)
-- [x] FULL_CONTEXT_LEARNING.md — Learning strategy (from previous session)
-- [x] SETUP_PROTOCOL.md — Game initialization (from previous session)
+- Repository restarted from scratch in English with correct facts: Eldritch Horror 2013 base
+  game, Reachy Mini Lite, broken robot microphone, shared work Mac. `CLAUDE.md` carries the
+  rules for every coding session.
+- Python 3.12 environment managed by `uv` (`pyproject.toml`, `uv.lock`); `reachy-mini` 1.10
+  installs and imports on the Mac.
+- Configuration (`src/config.py`) and logging (`src/logger.py`) with tests.
+- Retrieval layer `src/rag/`:
+  - `embeddings.py` (bge-m3 via Ollama), `store.py` (Qdrant lifecycle, upsert, search),
+    `collections.py` (payload contracts).
+  - `pdf_sections.py` + `chunking.py`: typography- and layout-aware splitter for the FFG PDFs
+    (two-column reading order, running heads removed, wrapped headings joined, icon fonts
+    mapped).
+  - `ingest_rules.py`: official English rulebook + reference guide -> `bg_rules`
+    (71 + 80 sections, 216 chunks).
+  - `migrate_knowledge.py`: legacy Portuguese-labelled knowledge -> `bg_knowledge` in English
+    with structured investigator sheets and verified Ancient One records (322 points).
+  - `sessions.py`: `bg_sessions` round memory with `record_round` / `recall`.
+- Documentation rewritten: design, game reference, setup protocol, physical setup, speech
+  pipeline, model sizing, learning, getting started, workflow.
+- 21 unit tests passing; none require external services.
 
-### Code Base
-- [x] `src/config.py` — Environment management
-- [x] `src/logger.py` — Logging utilities
-- [x] `src/__init__.py` — Package exports
-- [x] Module structure for all phases
-  - `src/vision/` — Phase 1
-  - `src/speech/` — Phase 2
-  - `src/strategy/` — Phase 3
-  - `src/integration/` — Phase 4
-  - `src/learning/` — Phase 5
+## Decisions taken
 
-### Configuration Files
-- [x] `.env.example` — Environment template
-- [x] `.gitignore` — Git ignore rules
-- [x] `requirements.txt` — Python dependencies
-- [x] `setup.py` — Package setup
+| Topic | Decision | Where |
+|---|---|---|
+| Reasoning model | Qwen 3.6 35B-A3B (`qwen3.6:35b-mlx`), not Qwen 2.5 72B | docs/MODEL_SIZING.md |
+| Embeddings | bge-m3 through Ollama, 1024-d | src/rag/collections.py |
+| Vector store | Qdrant in the existing Docker container; collections `bg_rules`, `bg_knowledge`, `bg_sessions` | docs/DESIGN_DOCUMENT.md |
+| Speech input | Mac microphone; mlx-whisper; diart + pyannote 3 live in a sidecar; pyannote 4 + WhisperX offline | docs/SPEECH_PIPELINE.md |
+| Speech output | ElevenLabs by default, local TTS optional | src/config.py |
+| Game setup | verbal briefing + knowledge base, no card OCR | docs/SETUP_PROTOCOL.md |
+| Vision | YOLO-World + image-embedding gallery, SAM not used | docs/DESIGN_DOCUMENT.md |
+| Prior project | read for lessons only; no code copied | CLAUDE.md |
 
-### Repository
-- [x] Git initialized
-- [x] 3 initial commits
-  1. Initial project setup: structure, docs, config, and base modules
-  2. Add getting started guide
-  3. Add Mac transfer instructions
+## Next
 
----
+### Phase 1: vision and board state (weeks 1-2)
 
-## 📊 File Count
+- [ ] Calibration session with the checklist in docs/PHYSICAL_SETUP.md; reference photos of every token type.
+- [ ] `src/vision/capture.py`: gaze to table pose, sharpest-of-three capture, save to `data/captures/`.
+- [ ] `src/vision/detect.py`: YOLO-World with the game's prompt list; gallery matching.
+- [ ] `src/vision/board_map.py`: board corners -> canonical map -> space assignment.
+- [ ] `src/strategy/state.py`: pydantic game state + patch application (needed by everything after).
+- [ ] Angle and lighting robustness test with recorded frames.
 
-```
-Total Files: 19
-├── Python modules: 9
-├── Documentation: 7
-├── Configuration: 3
-└── Git metadata: tracked
-```
+### Phase 2: speech and turn-taking (weeks 2-3)
 
----
+- [ ] Mac microphone capture (`sounddevice`) with device selection from `AUDIO_INPUT_DEVICE`.
+- [ ] mlx-whisper streaming transcription in Portuguese.
+- [ ] `tools/live-diarizer/`: diart sidecar publishing speaker turns over WebSocket.
+- [ ] Speaker enrolment and voiceprint matching.
+- [ ] Rule-based addressee classifier + speak/silence log; annotate a recorded session.
 
-## 📋 Next Steps
+### Phase 3: strategic reasoning (weeks 3-4)
 
-### Immediate (This week)
+- [ ] Ollama client with JSON-schema outputs; prompt templates in English.
+- [ ] Candidate generation, legality checks against `bg_rules` and the board map, evaluation, justification.
+- [ ] Rules Q&A tool returning section and page.
 
-1. **Transfer to Your Mac**
-   - Follow TRANSFER_TO_MAC.md
-   - Option 1: Create GitHub repo and push (recommended)
-   - Option 2: Download tar archive manually
+### Phase 4: end-to-end (weeks 4-5)
 
-2. **Verify Environment**
-   - Test Python environment: `python --version`
-   - Test Ollama: `ollama list`
-   - Test Qdrant: `curl http://localhost:6333/health`
+- [ ] Conversation state machine, gaze states, TTS through the robot.
+- [ ] Setup protocol implemented; first full 2-player game logged.
+- [ ] Human feedback captured into the trajectory.
 
-3. **Initialize Qdrant**
-   - Create collections for Eldritch Horror data
-   - Load game rules, investigator profiles, creatures
-   - Populate embeddings
+### Phase 5: world models (weeks 5-6)
 
-### Phase 1: Vision (Weeks 1-2)
+- [ ] Trajectory dataset builder; baseline next-state model; Dreamer-style model.
+- [ ] Rollouts in the decision pipeline; evaluation on held-out rounds.
 
-1. **Board Capture**
-   - Reachy camera setup
-   - Head-lock mechanism
-   - Image capture pipeline
+### Phase 6: research (week 6+)
 
-2. **SAM Integration**
-   - Segment anything model setup
-   - Board element detection
-   - Angle robustness
+- [ ] Multi-player sessions, annotation study of turn-taking, paper draft.
 
-3. **Game State Parser**
-   - Image → JSON conversion
-   - Board element tracking
-   - Position mapping
+## Open items
 
-### Phase 2: Speech (Weeks 2-3)
-
-1. **Continuous STT**
-   - Whisper integration
-   - Audio capture from Reachy
-   - Real-time transcription
-
-2. **Conversational Pragmatics**
-   - Speaker diarization
-   - Addressee detection (embedding-based)
-   - Turn-taking without wake words
-
-### Phase 3-5
-
-See GETTING_STARTED.md for full roadmap
-
----
-
-## 🛠 Technology Stack
-
-| Layer | Technology | Status |
-|-------|-----------|--------|
-| **Reasoning** | Qwen 2.5 (Ollama) | Local, configured |
-| **Vision** | SAM + OpenCV | Ready to integrate |
-| **Speech** | Whisper + ElevenLabs | Ready to integrate |
-| **Vector DB** | Qdrant | Waiting for data |
-| **Robot** | Reachy Mini SDK | Configured |
-| **Learning** | Open Dreamer | Phase 5 |
-
----
-
-## 📂 Repository
-
-**Status**: Not yet on GitHub  
-**Location**: `/home/claude/eldritch-horror-reachy`
-
-**To Push to GitHub**:
-1. Create repo at https://github.com/new
-2. In Claude Code: `git remote add origin <url>`
-3. `git push -u origin main`
-
----
-
-## 🎯 Research Focus
-
-1. **Multi-party Conversational Pragmatics**
-   - Turn-taking without wake words
-   - Context-aware addressee detection
-   - Embodied communication patterns
-
-2. **Cooperative Multi-Agent Gameplay**
-   - Human-AI alignment in cooperative games
-   - Emergent strategy through learning
-   - Communication efficiency
-
-3. **World Models in Games**
-   - Learning game dynamics
-   - Predicting action consequences
-   - Strategy optimization
-
----
-
-## 📖 Reading Order
-
-1. **README.md** — Start here (overview)
-2. **GETTING_STARTED.md** — Setup and workflow
-3. **DESIGN_DOCUMENT.md** — Architecture details
-4. **TRANSFER_TO_MAC.md** — If moving to your Mac
-5. **PHYSICAL_SETUP.md** — Hardware configuration
-6. **SETUP_PROTOCOL.md** — Game initialization
-7. **FULL_CONTEXT_LEARNING.md** — Learning strategy
-
----
-
-## 💾 Git Commits
-
-```
-1b72314 Add Mac transfer instructions
-91aa8b5 Add getting started guide
-5b274e5 Initial project setup: structure, docs, config, and base modules
-```
-
----
-
-## ✨ What's Ready
-
-- ✅ Project structure
-- ✅ Configuration system
-- ✅ Logging infrastructure
-- ✅ Documentation framework
-- ✅ Git repository
-- ✅ Dependency management
-- ✅ Base module imports
-
-## ❌ What's Pending
-
-- ❌ Phase 1: Vision module implementation
-- ❌ Phase 2: Speech module implementation
-- ❌ Phase 3: Strategy module implementation
-- ❌ Phase 4: Integration module
-- ❌ Phase 5: World models
-- ❌ Qdrant data population
-- ❌ Testing suite
-
----
-
-## 🚀 You're Ready To Start!
-
-**Next action**: Follow TRANSFER_TO_MAC.md to get the project on your Mac, then read DESIGN_DOCUMENT.md to understand the architecture.
-
-**Questions?** Check the relevant documentation file or ask in Claude Code.
-
----
-
-*Project created: September 14, 2026*  
-*Next milestone: Phase 1 Vision Module*
+- Calibration numbers (riser height, head pitch, exposure) are placeholders until measured.
+- Latency figures in docs/SPEECH_PIPELINE.md come from published benchmarks, not this Mac.
+- The two unverified facts in docs/GAME_REFERENCE.md (Doom track maximum, token counts).
+- Repairing the robot microphone cable would add direction-of-arrival to addressee detection.

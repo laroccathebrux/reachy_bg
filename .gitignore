@@ -60,3 +60,5 @@ qdrant_storage/
 *.ipynb
 .ipynb_checkpoints/
 experiments/*/results/
+data/rulebooks/
+.pytest_cache/

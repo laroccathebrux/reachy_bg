@@ -1,0 +1,79 @@
+[project]
+name = "reachy-bg"
+version = "0.2.0"
+description = "Reachy Mini plays Eldritch Horror (2013): an embodied, cooperative, learning board-game agent"
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+license = { text = "MIT" }
+authors = [{ name = "Alessandro La Rocca Silveira" }]
+
+dependencies = [
+    # Robot
+    "reachy-mini>=1.10,<2",
+    # Local LLM + embeddings (Ollama) and vector store
+    "ollama>=0.5",
+    "qdrant-client>=1.12,<2",
+    "httpx>=0.27",
+    # PDF ingestion (rulebook, reference guide)
+    "pymupdf>=1.24",
+    # Data & config
+    "python-dotenv>=1.0",
+    "pydantic>=2.0",
+    "pyyaml>=6.0",
+    "numpy>=2.2.5",
+]
+
+[project.optional-dependencies]
+# Phase 1 - board vision (YOLO-World open-vocabulary detection, CLIP matching)
+vision = [
+    "opencv-python>=4.10",
+    "pillow>=10.0",
+    "torch>=2.5",
+    "torchvision>=0.20",
+    "ultralytics>=8.3",
+]
+# Phase 2 - speech, in-process part: Mac microphone capture, Whisper on Metal (mlx-whisper),
+# offline diarization for post-game processing. The LIVE diarizer (diart, numpy<2) conflicts
+# with reachy-mini (numpy>=2.2) and therefore runs as a sidecar process with its own venv.
+# See docs/SPEECH_PIPELINE.md.
+speech = [
+    "sounddevice>=0.5",
+    "mlx-whisper>=0.4.3",
+    "torch>=2.8",
+    "torchaudio>=2.8",
+    "pyannote.audio>=4.0.7",
+]
+# Cloud TTS fallback (the default voice path is documented in docs/SPEECH_PIPELINE.md)
+tts-cloud = [
+    "elevenlabs>=1.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.24",
+    "pytest-cov>=5.0",
+    "ruff>=0.6",
+]
+
+[tool.uv]
+# Not a distributable package (yet): modules are run from the repository root as
+# `uv run python -m src.<module>` and tests add the root to sys.path.
+package = false
+# This project only ever runs on the owner's Mac; skipping Linux/Windows resolution avoids
+# building reachy-mini's Linux-only PyGObject dependency during `uv lock`.
+environments = ["sys_platform == 'darwin'"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 110
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+# Line width is enforced by `ruff format`; long prose strings (regexes, rule texts) are allowed.
+ignore = ["E501"]

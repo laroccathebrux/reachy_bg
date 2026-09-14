@@ -1,82 +1,35 @@
-"""
-Logging configuration for Eldritch Horror Reachy Agent
+"""Logging helpers: one call to configure, ``get_logger`` everywhere else."""
 
-Provides structured logging across modules.
-"""
+from __future__ import annotations
 
 import logging
 import sys
-from pathlib import Path
-from .config import LOG_LEVEL, LOG_FILE
 
-# Configure root logger
-logging.basicConfig(
-    level=LOG_LEVEL,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.StreamHandler(sys.stdout),
-        logging.FileHandler(LOG_FILE),
-    ]
-)
+from src.config import LOG_FILE, LOG_LEVEL
+
+_FORMAT = "%(asctime)s %(levelname)s %(name)s | %(message)s"
+_configured = False
+
+
+def configure_logging(level: str = LOG_LEVEL, *, to_file: bool = True) -> None:
+    """Configure the root logger once (stdout, optionally the app log file)."""
+    global _configured
+    if _configured:
+        return
+    handlers: list[logging.Handler] = [logging.StreamHandler(sys.stdout)]
+    if to_file:
+        handlers.append(logging.FileHandler(LOG_FILE, encoding="utf-8"))
+    logging.basicConfig(level=level, format=_FORMAT, handlers=handlers)
+    # Third-party HTTP clients log every request at INFO; keep them quiet unless debugging.
+    for noisy in ("httpx", "httpcore", "urllib3"):
+        logging.getLogger(noisy).setLevel(logging.WARNING)
+    _configured = True
 
 
 def get_logger(name: str) -> logging.Logger:
-    """
-    Get a logger instance for a module.
-    
-    Args:
-        name: Module name (typically __name__)
-    
-    Returns:
-        Configured logger instance
-    """
-    logger = logging.getLogger(name)
-    logger.setLevel(LOG_LEVEL)
-    return logger
+    """Logger for a module; configures logging on first use."""
+    configure_logging()
+    return logging.getLogger(name)
 
 
-class StructuredLogger:
-    """Wrapper for structured logging with context"""
-    
-    def __init__(self, name: str, context: dict = None):
-        self.logger = get_logger(name)
-        self.context = context or {}
-    
-    def set_context(self, **kwargs):
-        """Update logging context"""
-        self.context.update(kwargs)
-    
-    def _format_message(self, msg: str) -> str:
-        """Add context to message"""
-        if self.context:
-            context_str = " | ".join(f"{k}={v}" for k, v in self.context.items())
-            return f"{msg} | {context_str}"
-        return msg
-    
-    def info(self, msg: str, **kwargs):
-        """Log info level"""
-        self.set_context(**kwargs)
-        self.logger.info(self._format_message(msg))
-    
-    def debug(self, msg: str, **kwargs):
-        """Log debug level"""
-        self.set_context(**kwargs)
-        self.logger.debug(self._format_message(msg))
-    
-    def warning(self, msg: str, **kwargs):
-        """Log warning level"""
-        self.set_context(**kwargs)
-        self.logger.warning(self._format_message(msg))
-    
-    def error(self, msg: str, **kwargs):
-        """Log error level"""
-        self.set_context(**kwargs)
-        self.logger.error(self._format_message(msg))
-    
-    def critical(self, msg: str, **kwargs):
-        """Log critical level"""
-        self.set_context(**kwargs)
-        self.logger.critical(self._format_message(msg))
-
-
-__all__ = ["get_logger", "StructuredLogger"]
+__all__ = ["configure_logging", "get_logger"]

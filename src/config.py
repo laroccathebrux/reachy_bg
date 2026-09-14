@@ -1,147 +1,148 @@
-"""
-Configuration management for Eldritch Horror Reachy Agent
+"""Runtime configuration for the Reachy Mini Eldritch Horror agent.
 
-Load environment variables and provide configuration to application modules.
+Every setting comes from the environment (or a ``.env`` file at the repository root) with a
+sensible local default. Nothing here touches the network or the filesystem at import time,
+except reading ``.env``; call :func:`ensure_data_dirs` explicitly when a module needs the
+runtime data folders.
 """
+
+from __future__ import annotations
 
 import os
 from pathlib import Path
+
 from dotenv import load_dotenv
 
-# Load .env file if it exists
-env_path = Path(__file__).parent.parent / ".env"
-load_dotenv(env_path)
+BASE_DIR = Path(__file__).resolve().parent.parent
+load_dotenv(BASE_DIR / ".env")
 
-# ============================================================================
-# QDRANT CONFIGURATION
-# ============================================================================
 
-QDRANT_HOST = os.getenv("QDRANT_HOST", "localhost")
-QDRANT_PORT = int(os.getenv("QDRANT_PORT", "6333"))
+def _env_int(name: str, default: int) -> int:
+    try:
+        return int(os.getenv(name, str(default)))
+    except ValueError:
+        return default
+
+
+def _env_bool(name: str, default: bool = False) -> bool:
+    return os.getenv(name, str(default)).strip().lower() in {"1", "true", "yes", "on"}
+
+
+# --------------------------------------------------------------------------- game
+GAME_ID = os.getenv("GAME_ID", "eldritch-horror")
+# Language the robot listens to and speaks (BCP-47). Code and data stay in English regardless.
+SPOKEN_LANGUAGE = os.getenv("SPOKEN_LANGUAGE", "pt-BR")
+
+# --------------------------------------------------------------------------- Qdrant
+QDRANT_URL = os.getenv("QDRANT_URL", "http://127.0.0.1:6333")
 QDRANT_API_KEY = os.getenv("QDRANT_API_KEY", "")
 
-QDRANT_CONFIG = {
-    "host": QDRANT_HOST,
-    "port": QDRANT_PORT,
-    "api_key": QDRANT_API_KEY,
-}
+# --------------------------------------------------------------------------- Ollama
+OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434")
+# Reasoning model: Qwen 3.6 35B-A3B (MoE, ~3B active parameters, ~22 GB on disk).
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen3.6:35b-mlx")
+# Embedding model shared by every Qdrant collection (1024-d).
+EMBED_MODEL = os.getenv("EMBED_MODEL", "bge-m3")
 
-# ============================================================================
-# OLLAMA CONFIGURATION
-# ============================================================================
+# --------------------------------------------------------------------------- Reachy Mini
+# The reachy-mini daemon exposes REST + WebSocket on this host/port (Lite = same machine).
+REACHY_HOST = os.getenv("REACHY_HOST", "127.0.0.1")
+REACHY_PORT = _env_int("REACHY_PORT", 8000)
+# "auto" tries localhost first, then the network host (Wireless model).
+REACHY_CONNECTION_MODE = os.getenv("REACHY_CONNECTION_MODE", "auto")
+# "default" | "local" | "webrtc" | "no_media". Camera and speaker come from the robot;
+# the microphone never does (see AUDIO_INPUT_DEVICE).
+REACHY_MEDIA_BACKEND = os.getenv("REACHY_MEDIA_BACKEND", "default")
 
-OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen2.5:72b")
-OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+# --------------------------------------------------------------------------- audio
+# The robot's microphone flat cable is broken, so speech input always comes from a Mac
+# input device. Empty string = the system default input device (sounddevice semantics).
+AUDIO_INPUT_DEVICE = os.getenv("AUDIO_INPUT_DEVICE", "")
+AUDIO_SAMPLE_RATE = _env_int("AUDIO_SAMPLE_RATE", 16000)
 
-OLLAMA_CONFIG = {
-    "model": OLLAMA_MODEL,
-    "base_url": OLLAMA_BASE_URL,
-}
+# --------------------------------------------------------------------------- speech
+# Whisper checkpoint for mlx-whisper (Metal). "large-v3-turbo" balances Portuguese quality
+# and latency on an M1 Max.
+WHISPER_MODEL = os.getenv("WHISPER_MODEL", "mlx-community/whisper-large-v3-turbo")
+# Live diarizer sidecar (diart in its own venv) publishes speaker events here.
+DIARIZER_URL = os.getenv("DIARIZER_URL", "ws://127.0.0.1:8765")
+# Hugging Face token: required once to download the gated pyannote models.
+HF_TOKEN = os.getenv("HF_TOKEN", "")
 
-# ============================================================================
-# ELEVENLABS CONFIGURATION
-# ============================================================================
-
+# --------------------------------------------------------------------------- voice output
+TTS_PROVIDER = os.getenv("TTS_PROVIDER", "elevenlabs")  # "elevenlabs" | "local"
 ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY", "")
-ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "default")
+ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "")
 
-ELEVENLABS_CONFIG = {
-    "api_key": ELEVENLABS_API_KEY,
-    "voice_id": ELEVENLABS_VOICE_ID,
-}
+# --------------------------------------------------------------------------- vision
+VISION_URL = os.getenv("VISION_URL", "http://127.0.0.1:8090")
+VISION_MODEL = os.getenv("VISION_MODEL", "yolov8s-worldv2.pt")
+VISION_MIN_CONFIDENCE = float(os.getenv("VISION_MIN_CONFIDENCE", "0.35"))
 
-# ============================================================================
-# REACHY ROBOT CONFIGURATION
-# ============================================================================
+# --------------------------------------------------------------------------- directories
+DATA_DIR = Path(os.getenv("DATA_DIR", str(BASE_DIR / "data")))
+RULEBOOK_DIR = DATA_DIR / "rulebooks"
+GAME_LOG_DIR = DATA_DIR / "game_logs"
+CAPTURE_DIR = DATA_DIR / "captures"
+MODEL_DIR = DATA_DIR / "models"
 
-REACHY_HOST = os.getenv("REACHY_HOST", "localhost")
-REACHY_PORT = int(os.getenv("REACHY_PORT", "50051"))
-REACHY_CAMERA_PORT = os.getenv("REACHY_CAMERA_PORT", "/dev/ttyUSB0")
 
-REACHY_CONFIG = {
-    "host": REACHY_HOST,
-    "port": REACHY_PORT,
-    "camera_port": REACHY_CAMERA_PORT,
-}
+def ensure_data_dirs() -> None:
+    """Create the runtime data folders (idempotent)."""
+    for directory in (RULEBOOK_DIR, GAME_LOG_DIR, CAPTURE_DIR, MODEL_DIR):
+        directory.mkdir(parents=True, exist_ok=True)
 
-# ============================================================================
-# APPLICATION DIRECTORIES
-# ============================================================================
 
-BASE_DIR = Path(__file__).parent.parent
-DATA_DIR = BASE_DIR / "data"
-GAME_LOG_DIR = Path(os.getenv("GAME_LOG_DIR", str(DATA_DIR / "game_logs")))
-CAPTURE_DIR = Path(os.getenv("CAPTURE_DIR", str(DATA_DIR / "captures")))
-MODEL_DIR = Path(os.getenv("MODEL_DIR", str(DATA_DIR / "models")))
-
-# Create directories if they don't exist
-for directory in [GAME_LOG_DIR, CAPTURE_DIR, MODEL_DIR]:
-    directory.mkdir(parents=True, exist_ok=True)
-
-# ============================================================================
-# LOGGING CONFIGURATION
-# ============================================================================
-
+# --------------------------------------------------------------------------- logging / env
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
 LOG_FILE = Path(os.getenv("LOG_FILE", str(BASE_DIR / "app.log")))
+ENVIRONMENT = os.getenv("ENVIRONMENT", "development")
+DEBUG = _env_bool("DEBUG", False)
 
-# ============================================================================
-# ENVIRONMENT
-# ============================================================================
 
-ENVIRONMENT = os.getenv("ENVIRONMENT", "production")
-DEBUG = os.getenv("DEBUG", "False").lower() == "true"
+def validate_config() -> list[str]:
+    """Return human-readable problems with the current configuration (empty = fine)."""
+    problems: list[str] = []
+    if TTS_PROVIDER == "elevenlabs" and not ELEVENLABS_API_KEY:
+        problems.append("TTS_PROVIDER=elevenlabs but ELEVENLABS_API_KEY is empty")
+    if AUDIO_SAMPLE_RATE not in (16000, 24000, 44100, 48000):
+        problems.append(f"AUDIO_SAMPLE_RATE={AUDIO_SAMPLE_RATE} is unusual")
+    return problems
 
-# ============================================================================
-# VALIDATION
-# ============================================================================
-
-def validate_config():
-    """Validate required configuration"""
-    errors = []
-    
-    if not ELEVENLABS_API_KEY and ENVIRONMENT == "production":
-        errors.append("ELEVENLABS_API_KEY is required in production")
-    
-    if errors:
-        raise RuntimeError(f"Configuration errors:\n" + "\n".join(errors))
-
-# Optional: validate on import (comment out if not needed during development)
-# validate_config()
-
-# ============================================================================
-# EXPORTS
-# ============================================================================
 
 __all__ = [
-    # Qdrant
-    "QDRANT_HOST",
-    "QDRANT_PORT",
+    "BASE_DIR",
+    "GAME_ID",
+    "SPOKEN_LANGUAGE",
+    "QDRANT_URL",
     "QDRANT_API_KEY",
-    "QDRANT_CONFIG",
-    # Ollama
-    "OLLAMA_MODEL",
     "OLLAMA_BASE_URL",
-    "OLLAMA_CONFIG",
-    # ElevenLabs
-    "ELEVENLABS_API_KEY",
-    "ELEVENLABS_VOICE_ID",
-    "ELEVENLABS_CONFIG",
-    # Reachy
+    "OLLAMA_MODEL",
+    "EMBED_MODEL",
     "REACHY_HOST",
     "REACHY_PORT",
-    "REACHY_CAMERA_PORT",
-    "REACHY_CONFIG",
-    # Directories
-    "BASE_DIR",
+    "REACHY_CONNECTION_MODE",
+    "REACHY_MEDIA_BACKEND",
+    "AUDIO_INPUT_DEVICE",
+    "AUDIO_SAMPLE_RATE",
+    "WHISPER_MODEL",
+    "DIARIZER_URL",
+    "HF_TOKEN",
+    "TTS_PROVIDER",
+    "ELEVENLABS_API_KEY",
+    "ELEVENLABS_VOICE_ID",
+    "VISION_URL",
+    "VISION_MODEL",
+    "VISION_MIN_CONFIDENCE",
     "DATA_DIR",
+    "RULEBOOK_DIR",
     "GAME_LOG_DIR",
     "CAPTURE_DIR",
     "MODEL_DIR",
-    # Logging
+    "ensure_data_dirs",
     "LOG_LEVEL",
     "LOG_FILE",
-    # Environment
     "ENVIRONMENT",
     "DEBUG",
+    "validate_config",
 ]
