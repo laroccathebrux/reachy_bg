@@ -17,6 +17,8 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
+import httpx
+
 from src.config import REACHY_CONNECTION_MODE, REACHY_HOST, REACHY_MEDIA_BACKEND, REACHY_PORT
 from src.logger import get_logger
 
@@ -101,13 +103,33 @@ class Robot:
 
     # ------------------------------------------------------------------ audio
     def say(self, clip: Any) -> None:
-        """Play a WAV clip (``src.speech.tts.Clip``) and block until it finishes."""
-        path = Path(clip.path)
+        """Play a WAV clip (``src.speech.tts.Clip``) on the robot speaker and block until it finishes.
+
+        Playback goes through the daemon's REST endpoint rather than the SDK client's own
+        GStreamer pipeline: on macOS the client-side ``playbin`` reports success but stays
+        silent, while the daemon (which owns the audio device) plays reliably.
+        """
+        path = Path(clip.path).resolve()
         if self.simulated:
             subprocess.run(["afplay", str(path)], check=False)
             return
-        self._mini.media.play_sound(str(path))
+        url = f"http://{REACHY_HOST}:{REACHY_PORT}/api/media/play_sound"
+        try:
+            response = httpx.post(url, json={"file": str(path)}, timeout=10.0)
+            response.raise_for_status()
+        except httpx.HTTPError as exc:
+            log.warning("daemon play_sound failed (%s); falling back to the SDK client", exc)
+            self._mini.media.play_sound(str(path))
         time.sleep(float(clip.duration_s) + 0.3)
+
+    def stop_speaking(self) -> None:
+        """Interrupt the current clip."""
+        if self.simulated:
+            return
+        try:
+            httpx.post(f"http://{REACHY_HOST}:{REACHY_PORT}/api/media/stop_sound", timeout=5.0)
+        except httpx.HTTPError as exc:
+            log.warning("daemon stop_sound failed: %s", exc)
 
 
 __all__ = ["Robot"]
