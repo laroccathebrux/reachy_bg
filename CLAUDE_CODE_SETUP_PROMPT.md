@@ -38,7 +38,8 @@ TAREFAS (nesta ordem):
 - Mostrar contagem total de arquivos
 
 ### 2. Setup do Python Virtual Environment
-- Navegar para /home/claude/eldritch-horror-reachy
+- Clonar repositório: git clone https://github.com/laroccathebrux/reachy_bg.git /home/claude/reachy_bg_dev
+- Navegar para /home/claude/reachy_bg_dev
 - Criar venv: python3 -m venv venv
 - Ativar: source venv/bin/activate
 - Verificar Python: python --version (deve ser 3.9+)
@@ -123,7 +124,8 @@ Imprima estas instruções:
 4. Para começar Phase 1 (Vision), peça:
    "Cria Phase 1.1: Board Capture Module"
 
-📍 LOCALIZAÇÃO DO PROJETO: /home/claude/eldritch-horror-reachy
+📍 LOCALIZAÇÃO DO PROJETO (CLAUDE CODE): /home/claude/reachy_bg_dev
+📍 LOCALIZAÇÃO DO PROJETO (SEU MAC): ~/Documents/Documents - USSILVEIRAAXWR2/reachy_bg
 📍 REPOSITÓRIO: https://github.com/laroccathebrux/reachy_bg
 🔗 BRANCH: main
 ```
@@ -284,7 +286,7 @@ Ele vai diagnosticar e corrigir automaticamente.
 ## 📂 Arquivo Gerado
 
 Este arquivo está em:
-- **Claude Code**: `/home/claude/eldritch-horror-reachy/CLAUDE_CODE_SETUP_PROMPT.md`
+- **Claude Code (Dev)**: `/home/claude/reachy_bg_dev/CLAUDE_CODE_SETUP_PROMPT.md`
 - **GitHub**: https://github.com/laroccathebrux/reachy_bg/blob/main/CLAUDE_CODE_SETUP_PROMPT.md
 - **Seu Mac**: `~/Documents/Documents - USSILVEIRAAXWR2/reachy_bg/CLAUDE_CODE_SETUP_PROMPT.md`
 
