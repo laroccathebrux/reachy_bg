@@ -10,8 +10,8 @@ The rules, in order of confidence:
 3. A question about the rules or the game while it is the robot's turn: probably for it.
 4. A rules question to the table: answered when ``ANSWER_GAME_QUESTIONS`` is on (a
    knowledgeable player would), logged either way.
-5. With a single person at the table (``humans_present=1``), anything in the second person
-   ("você", "tu", "you") can only be for the robot.
+5. With a single person at the table (``humans_present=1``), anything they say out loud is
+   for the robot (second-person forms with more confidence).
 6. Everything else: stay quiet (people talk to each other most of the time).
 
 Every decision is appended to ``data/game_logs/addressee.jsonl`` by :class:`TurnLogger`;
@@ -38,8 +38,11 @@ _INTERROGATIVES = {
     "en-US": "how what which when where why who can could may should do does is are am will would".split(),
 }
 _RULES_WORDS = {
-    "pt-BR": "regra regras ação ações rodada fase turno carta cartas jogar jogo pode posso permitido".split(),
-    "en-US": "rule rules action actions round phase turn card cards play allowed legal can".split(),
+    "pt-BR": (
+        "regra regras ação ações rodada fase turno carta cartas jogar jogo permitido descansar viajar "
+        "comprar lutar monstro monstros portal portais pista pistas investigador investigadores dado dados".split()
+    ),
+    "en-US": "rule rules action actions round phase turn card cards play allowed legal".split(),
 }
 _SHORT_REPLY_MAX_WORDS = 3
 # Second-person forms: with a single known player at the table, "you" can only be the robot.
@@ -84,14 +87,31 @@ def is_question(text: str, language: str) -> bool:
     return bool(words) and words[0] in _INTERROGATIVES.get(language, ())
 
 
+_GAME_TERMS = frozenset(
+    "doom omen gate gates mystery mysteries clue clues monster monsters investigator investigators ancient "
+    "asset assets spell spells artifact artifacts condition conditions encounter encounters mythos rumor "
+    "expedition travel rest trade acquire health sanity delayed detained lore influence observation strength "
+    "will token tokens dice die roll rolls reroll focus ticket tickets space city sea wilderness action actions "
+    "phase round turn card cards rule rules setup win lose awaken awakens".split()
+)
+
+
+def needs_rules(text: str, language: str) -> bool:
+    """True when the utterance is about the game (rules lookup); False for greetings and banter."""
+    words = set(_words(text))
+    if words & _GAME_TERMS:
+        return True
+    return about_the_game(text, language)
+
+
 def second_person(text: str, language: str) -> bool:
     words = set(_words(text))
     return bool(words & _SECOND_PERSON.get(language, frozenset()))
 
 
 def about_the_game(text: str, language: str) -> bool:
-    words = set(_words(text))
-    return any(w in words for w in _RULES_WORDS.get(language, ()))
+    words = set(_words(text))  # accent-stripped, so compare stripped keywords too
+    return any(_strip_accents(w) in words for w in _RULES_WORDS.get(language, ()))
 
 
 def looks_like_echo(text: str, last_answer: str, *, min_shared: float = 0.6) -> bool:
@@ -130,8 +150,11 @@ def decide(
     """
     if mentions_robot(text):
         return Decision(True, "name", 0.95)
-    if humans_present == 1 and second_person(text, language):
-        return Decision(True, "second_person_solo", 0.6)
+    if humans_present == 1 and len(_words(text)) >= 2:
+        # One person at the table: whatever they say out loud is for the robot (a second-person
+        # form makes it certain, anything else is still far more likely than talking alone).
+        reason = "second_person_solo" if second_person(text, language) else "solo"
+        return Decision(True, reason, 0.6 if reason == "second_person_solo" else 0.55)
     question = is_question(text, language)
     recent = (
         follow_up_ok
@@ -171,4 +194,6 @@ __all__ = [
     "mentions_robot",
     "is_question",
     "about_the_game",
+    "second_person",
+    "needs_rules",
 ]

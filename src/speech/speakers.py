@@ -95,6 +95,12 @@ class SpeakerRegistry:
     def names(self) -> list[str]:
         return list(self.prints)
 
+    def warm_up(self) -> float:
+        """Load the embedding model now (about 4 s) instead of on the first utterance."""
+        started = time.perf_counter()
+        self._embed(np.zeros(SAMPLE_RATE, dtype=np.int16))
+        return time.perf_counter() - started
+
     def _embed(self, audio: np.ndarray) -> np.ndarray:
         if self.embedder is None:
             self.embedder = Embedder()

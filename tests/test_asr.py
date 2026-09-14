@@ -51,6 +51,8 @@ def test_hallucination_filter():
     assert not is_hallucination("Quantas ações por rodada?", -0.2, 0.05)
     assert is_hallucination("Cough, Cough, Cough.", -0.3, 0.2)
     assert is_hallucination("Hmm.", -0.3, 0.2)
+    assert is_hallucination("Eeeeeeeeeeeeeeeeeeeeeeeeeeee", -0.3, 0.2)
+    assert not is_hallucination("Reeeally? Can I rest?", -0.3, 0.2)
     assert not is_hallucination("Hmm, can I rest?", -0.3, 0.2)
 
 

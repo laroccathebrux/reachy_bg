@@ -59,6 +59,8 @@ OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen3.6:35b-mlx")
 # Embedding model shared by every Qdrant collection (1024-d).
 EMBED_MODEL = os.getenv("EMBED_MODEL", "bge-m3")
+# How long Ollama keeps the reasoning model in memory after a call; a reload costs ~30 s.
+OLLAMA_KEEP_ALIVE = os.getenv("OLLAMA_KEEP_ALIVE", "30m")
 
 # --------------------------------------------------------------------------- Reachy Mini
 # The reachy-mini daemon exposes REST + WebSocket on this host/port (Lite = same machine).
@@ -79,7 +81,7 @@ AUDIO_SAMPLE_RATE = _env_int("AUDIO_SAMPLE_RATE", 16000)
 # counts as speech when its level exceeds both the absolute floor and the adaptive noise
 # floor plus a margin; an utterance ends after VAD_SILENCE_MS of silence.
 VAD_FRAME_MS = _env_int("VAD_FRAME_MS", 30)
-VAD_SILENCE_MS = _env_int("VAD_SILENCE_MS", 700)
+VAD_SILENCE_MS = _env_int("VAD_SILENCE_MS", 600)
 VAD_MIN_SPEECH_MS = _env_int("VAD_MIN_SPEECH_MS", 300)
 VAD_PRE_ROLL_MS = _env_int("VAD_PRE_ROLL_MS", 300)
 VAD_MAX_UTTERANCE_S = float(os.getenv("VAD_MAX_UTTERANCE_S", "20"))
@@ -89,8 +91,10 @@ VAD_NOISE_MARGIN_DB = float(os.getenv("VAD_NOISE_MARGIN_DB", "8"))
 # (barge-in) needs a louder, longer voice than a normal utterance start.
 # Measured on 2026-09-14 with the MacBook microphone: room floor -48 dBFS, robot voice peaks
 # at -25 dBFS, so the bar sits at floor + 8 + 16 = -24 dBFS (a close, raised voice).
-BARGE_IN_MARGIN_DB = float(os.getenv("BARGE_IN_MARGIN_DB", "16"))
-BARGE_IN_MIN_MS = _env_int("BARGE_IN_MIN_MS", 500)
+# Since the echo-aware check (src/speech/barge_in.py) transcribes what the microphone hears
+# and ignores the robot's own words, the margin only has to keep breathing and rustling out.
+BARGE_IN_MARGIN_DB = float(os.getenv("BARGE_IN_MARGIN_DB", "4"))
+BARGE_IN_MIN_MS = _env_int("BARGE_IN_MIN_MS", 600)
 # Keep every captured utterance as a WAV file for debugging and for the research dataset.
 SAVE_CAPTURES = _env_bool("SAVE_CAPTURES", True)
 
@@ -118,7 +122,7 @@ ROBOT_NAME_ALIASES = tuple(
     a.strip().lower()
     for a in os.getenv(
         "ROBOT_NAME_ALIASES",
-        "reachy,reachie,reachi,reaxi,richie,richy,rich,ritch,ritchie,ritchy,reach,richi,ricci,rishi,ricky,rachi",
+        "reachy,reachie,reachi,reaxi,reed,ride,riche,richie,richy,rich,ritch,ritchie,ritchy,reach,richi,ricci,rishi,ricky,rachi",
     ).split(",")
     if a.strip()
 )
@@ -214,6 +218,7 @@ __all__ = [
     "QDRANT_API_KEY",
     "OLLAMA_BASE_URL",
     "OLLAMA_MODEL",
+    "OLLAMA_KEEP_ALIVE",
     "EMBED_MODEL",
     "REACHY_HOST",
     "REACHY_PORT",

@@ -8,6 +8,7 @@ from src.speech.addressee import (
     is_question,
     looks_like_echo,
     mentions_robot,
+    needs_rules,
 )
 
 
@@ -86,7 +87,9 @@ def test_second_person_counts_only_with_a_single_human():
     assert decide("Can you hear me?", "en-US", humans_present=1).addressed
     assert not decide("Você não parece disposta a conversar.", "pt-BR", humans_present=2).addressed
     assert not decide("Você não parece disposta a conversar.", "pt-BR").addressed
-    assert not decide("Eu vou viajar para Londres.", "pt-BR", humans_present=1).addressed
+    assert decide("Estou com uma dúvida aqui no jogo.", "pt-BR", humans_present=1).reason == "solo"
+    assert not decide("Hmm", "pt-BR", humans_present=1).addressed
+    assert not decide("Eu vou viajar para Londres.", "pt-BR", humans_present=2).addressed
 
 
 def test_follow_up_needs_the_same_speaker():
@@ -96,3 +99,11 @@ def test_follow_up_needs_the_same_speaker():
     )
     assert not decide("E depois?", "pt-BR", seconds_since_robot_spoke=3.0, follow_up_ok=False).addressed
     assert not decide("Cough, cough.", "en-US", seconds_since_robot_spoke=2.0, follow_up_ok=False).addressed
+
+
+def test_needs_rules_separates_game_talk_from_banter():
+    assert needs_rules("Quantas ações eu posso fazer por rodada?", "pt-BR")
+    assert needs_rules("What happens when Doom reaches zero?", "en-US")
+    assert needs_rules("Posso usar o Flesh Ward contra um Monster?", "pt-BR")
+    assert not needs_rules("Então esse é o seu nome.", "pt-BR")
+    assert not needs_rules("Hey Rich, can you hear me?", "en-US")

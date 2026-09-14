@@ -1,6 +1,6 @@
 import wave
 
-from src.llm.prompts import format_passages, rules_question_messages
+from src.llm.prompts import conversation_messages, format_passages, rules_question_messages
 from src.speech.language import detect_language, language_name
 from src.speech.tts import SAMPLE_RATE, elevenlabs_request, pcm16_to_wav
 
@@ -78,3 +78,19 @@ def test_english_game_terms_inside_portuguese_stay_portuguese():
 def test_prompt_ends_with_language_reminder():
     messages = rules_question_messages("Posso descansar?", [], "pt-BR")
     assert "Reply in Brazilian Portuguese, keeping the game terms in English" in messages[1]["content"]
+
+
+def test_format_passages_truncates_long_chunks_on_a_word_boundary():
+    long = {"source": "rulebook", "path": "X", "text": "word " * 400}
+    out = format_passages([long], max_chars=100)
+    body = out.split("\n", 1)[1]
+    assert body.endswith(" ...")
+    assert len(body) <= 105
+
+
+def test_conversation_messages_carry_recent_exchanges():
+    messages = conversation_messages("E aí?", "pt-BR", recent=[("Oi", "Olá."), ("Tudo bem?", "Tudo.")])
+    assert messages[0]["role"] == "system" and "Brazilian Portuguese" in messages[0]["content"]
+    assert [m["role"] for m in messages[1:]] == ["user", "assistant", "user", "assistant", "user"]
+    assert messages[-1]["content"].startswith("E aí?")
+    assert "Reply in Brazilian Portuguese" in messages[-1]["content"]

@@ -206,6 +206,23 @@ Sidecar pins that were not in the plan: `matplotlib<3.9`, `huggingface_hub<1.0`,
 refuses them by default). The Hugging Face token must be passed explicitly to pyannote 3;
 `huggingface_hub`'s cached login (`hf auth login`) is read for that.
 
+## Turn timing as built (2026-09-14)
+
+```
+person stops talking
+  | VAD tail 0.6 s
+  | voiceprint 0.03 s, Whisper 0.7-1.5 s (language id restricted to pt/en, fallback to the
+  |   speaker's last language below 0.5 confidence)
+  | addressee rules (name / solo / follow-up / game question) -> JSONL log
+  | needs_rules? yes: retrieve 5 capped passages (0.1-0.2 s)   no: chat prompt + last 3 turns
+  | LLM streamed; sentence 1 -> ElevenLabs (0.6-0.9 s) -> robot speaker   (sentences 2..n
+  |   are generated and synthesized while sentence 1 plays)
+robot starts talking: 5-6 s after the person stopped, on a busy Mac
+  | while speaking: mic margin +4 dB; voice > 600 ms -> Whisper on that audio ->
+  |   most words in the spoken sentences? echo, keep going : player -> stop clip + stream
+  |   (reaction 1.4 s); the player's words are handled as the next utterance
+```
+
 ## Why not the alternatives
 
 | Option | Why not (for now) |

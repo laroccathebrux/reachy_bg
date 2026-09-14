@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import time
+from collections.abc import Iterator
 from dataclasses import dataclass
 
 import ollama
 
-from src.config import OLLAMA_BASE_URL, OLLAMA_MODEL
+from src.config import OLLAMA_BASE_URL, OLLAMA_KEEP_ALIVE, OLLAMA_MODEL
 
 
 @dataclass(frozen=True)
@@ -34,7 +35,7 @@ def chat(
     base_url: str = OLLAMA_BASE_URL,
     num_ctx: int = 8192,
     temperature: float = 0.3,
-    keep_alive: str = "10m",
+    keep_alive: str = OLLAMA_KEEP_ALIVE,
     think: bool = False,
 ) -> Reply:
     """Send a chat and return the assistant reply with timing and token counts.
@@ -65,4 +66,59 @@ def chat(
     )
 
 
-__all__ = ["chat", "Reply", "LLMError"]
+class StreamStats:
+    """Filled in while :func:`chat_stream` runs; read it after the generator is exhausted."""
+
+    def __init__(self) -> None:
+        self.started = time.perf_counter()
+        self.first_token_s: float | None = None
+        self.seconds = 0.0
+        self.prompt_tokens = 0
+        self.output_tokens = 0
+        self.text = ""
+
+    @property
+    def tokens_per_second(self) -> float:
+        return self.output_tokens / self.seconds if self.seconds else 0.0
+
+
+def chat_stream(
+    messages: list[dict[str, str]],
+    *,
+    stats: StreamStats | None = None,
+    model: str = OLLAMA_MODEL,
+    base_url: str = OLLAMA_BASE_URL,
+    num_ctx: int = 8192,
+    temperature: float = 0.3,
+    keep_alive: str = OLLAMA_KEEP_ALIVE,
+    think: bool = False,
+) -> Iterator[str]:
+    """Yield the reply as it is generated (text deltas), so speech can start on the first sentence."""
+    client = ollama.Client(host=base_url)
+    stats = stats or StreamStats()
+    stats.started = time.perf_counter()
+    try:
+        for chunk in client.chat(
+            model=model,
+            messages=messages,
+            options={"num_ctx": num_ctx, "temperature": temperature},
+            keep_alive=keep_alive,
+            think=think,
+            stream=True,
+        ):
+            delta = chunk.message.content or ""
+            if delta:
+                if stats.first_token_s is None:
+                    stats.first_token_s = time.perf_counter() - stats.started
+                stats.text += delta
+                yield delta
+            if getattr(chunk, "done", False):
+                stats.prompt_tokens = int(getattr(chunk, "prompt_eval_count", 0) or 0)
+                stats.output_tokens = int(getattr(chunk, "eval_count", 0) or 0)
+    except Exception as exc:
+        raise LLMError(f"Ollama stream failed ({model} at {base_url}): {exc}") from exc
+    finally:
+        stats.seconds = time.perf_counter() - stats.started
+
+
+__all__ = ["chat", "chat_stream", "Reply", "StreamStats", "LLMError"]

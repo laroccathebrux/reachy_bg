@@ -242,6 +242,12 @@ class Segmenter:
         """Raise (or reset) the speech threshold, e.g. while the robot's own voice is playing."""
         self.extra_margin_db = max(0.0, db)
 
+    def current_audio(self) -> np.ndarray:
+        """The speech in progress (pre-roll included), empty when nobody is talking."""
+        if not self.in_speech or not self._buffer:
+            return np.zeros(0, dtype=np.int16)
+        return np.concatenate(self._buffer)
+
     def reset(self) -> None:
         """Drop any speech in progress (used to discard the robot's own echo)."""
         self._reset_state()
@@ -470,6 +476,10 @@ class Microphone:
     def set_extra_margin(self, db: float) -> None:
         with self._lock:
             self.segmenter.set_extra_margin(db)
+
+    def current_audio(self) -> np.ndarray:
+        with self._lock:
+            return self.segmenter.current_audio()
 
     def discard(self) -> None:
         """Drop speech in progress and any queued utterance (e.g. the robot's own echo)."""

@@ -24,6 +24,7 @@ import signal
 import statistics
 import sys
 import time
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -36,12 +37,13 @@ from src.config import (
     WHISPER_MODEL,
     validate_config,
 )
-from src.integration.answering import think, voice
+from src.integration.answering import Thought, think_sentences
 from src.llm.ollama_client import LLMError
 from src.logger import get_logger
 from src.robot.reachy import AGREE_MOVES, GREETING_MOVES, OOPS_MOVES, THINKING_MOVES, Robot
-from src.speech.addressee import Decision, TurnLogger, decide, looks_like_echo
+from src.speech.addressee import Decision, TurnLogger, decide, looks_like_echo, needs_rules
 from src.speech.asr import ASRError, Transcriber
+from src.speech.barge_in import EchoAwareBargeIn
 from src.speech.diarization import DiarizerClient
 from src.speech.language import detect_language
 from src.speech.microphone import (
@@ -52,11 +54,21 @@ from src.speech.microphone import (
     read_wav,
 )
 from src.speech.speakers import MIN_ENROLL_S, SpeakerRegistry
-from src.speech.tts import TTSError, synthesize
+from src.speech.tts import Clip, TTSError, synthesize
 
 log = get_logger(__name__)
 
-STAGES = ("vad_tail_s", "asr_s", "who_s", "retrieve_s", "llm_s", "tts_s", "ear_to_mouth_s", "audio_s")
+STAGES = (
+    "vad_tail_s",
+    "asr_s",
+    "who_s",
+    "retrieve_s",
+    "llm_first_sentence_s",
+    "llm_s",
+    "tts_first_s",
+    "ear_to_mouth_s",
+    "audio_s",
+)
 
 ENROL_PROMPTS = {
     "pt-BR": "{name}, diga uma frase longa, de uns cinco segundos, para eu aprender a sua voz.",
@@ -81,6 +93,8 @@ class Session:
     always_answer: bool = False
     last_answer: str = ""
     last_addressed_speaker: str = ""
+    recent: list[tuple[str, str]] = field(default_factory=list)  # (heard, said) for chat continuity
+    speaking_text: str = ""  # sentences being spoken right now (for the echo check)
     last_language: dict[str, str] = field(default_factory=dict)  # per speaker name ("" = unknown)
     robot_spoke_at: float | None = None  # monotonic
     robot_turn: bool = False
@@ -182,22 +196,85 @@ def handle(session: Session, utterance: Utterance) -> dict | None:
 
     session.last_addressed_speaker = str(who["speaker"])
     session.robot.emotion(random.choice(THINKING_MOVES), sound=False, block=False)
-    thought = think(result.text, language)
-    timings.update(thought.timings)
-    session.last_answer = thought.answer
-    if not session.speak:
-        session.robot_spoke_at = time.monotonic()
-        return timings
-    clip = voice(thought)
-    timings.update(thought.timings)
-    mouth_at = time.monotonic()
-    timings["ear_to_mouth_s"] = round(mouth_at - utterance.speech_ended_at, 2)
-    log.info("ear to mouth %.2fs", timings["ear_to_mouth_s"])
-    finished = say(session, clip, timings)
-    session.robot_spoke_at = time.monotonic()
-    if not finished:
-        log.info("interrupted after %.1fs; listening", time.monotonic() - mouth_at)
+    lookup = needs_rules(result.text, language)
+    timings["lookup"] = lookup
+    answer_streaming(session, result.text, language, utterance.speech_ended_at, timings, lookup=lookup)
     return timings
+
+
+def answer_streaming(
+    session: Session, question: str, language: str, ear_at: float, timings: dict, *, lookup: bool = True
+) -> None:
+    """Speak the answer sentence by sentence while the LLM is still writing the rest.
+
+    Each sentence is synthesized in a background thread as soon as the LLM finishes it, so
+    the robot starts talking after the first sentence and the TTS of sentence N+1 overlaps
+    the playback of sentence N. A barge-in stops both the playback and the generation.
+    """
+    thought = Thought(question=question, language=language, answer="", passages=[])
+    sentences = think_sentences(question, language, thought, lookup=lookup, recent=session.recent)
+    started = time.monotonic()
+    spoken: list[str] = []
+    interrupted = False
+    session.speaking_text = ""
+    with ThreadPoolExecutor(max_workers=1, thread_name_prefix="tts") as pool:
+        pending: Future[Clip] | None = None
+        pending_text = ""
+
+        def submit(text: str) -> Future[Clip]:
+            return pool.submit(_synth_timed, text, language, timings)
+
+        try:
+            for sentence in sentences:
+                if not session.speak:
+                    spoken.append(sentence)
+                    continue
+                if pending is None:
+                    pending, pending_text = submit(sentence), sentence
+                    continue
+                clip = pending.result()
+                pending, next_text = submit(sentence), sentence
+                if not _play(session, clip, pending_text, ear_at, started, timings, spoken):
+                    interrupted = True
+                    pending.cancel()
+                    break
+                pending_text = next_text
+            if not interrupted and pending is not None:
+                clip = pending.result()
+                if not _play(session, clip, pending_text, ear_at, started, timings, spoken):
+                    interrupted = True
+        finally:
+            sentences.close()  # stops the LLM stream when a barge-in cut the loop short
+    timings.update(thought.timings)
+    session.last_answer = thought.answer or " ".join(spoken)
+    session.recent.append((question, " ".join(spoken) or session.last_answer))
+    session.recent = session.recent[-3:]
+    session.speaking_text = ""
+    session.robot_spoke_at = time.monotonic()
+    timings["interrupted"] = interrupted
+    if not session.speak:
+        log.info("answer (%s): %s", language, " ".join(spoken))
+    elif interrupted:
+        log.info("interrupted after %.1fs; listening", time.monotonic() - started)
+
+
+def _synth_timed(text: str, language: str, timings: dict) -> Clip:
+    t0 = time.monotonic()
+    clip = synthesize(text, language)
+    timings.setdefault("tts_first_s", round(time.monotonic() - t0, 2))
+    timings["audio_s"] = round(timings.get("audio_s", 0.0) + clip.duration_s, 2)
+    return clip
+
+
+def _play(
+    session: Session, clip: Clip, text: str, ear_at: float, started: float, timings: dict, spoken: list
+) -> bool:
+    if "ear_to_mouth_s" not in timings:
+        timings["ear_to_mouth_s"] = round(time.monotonic() - ear_at, 2)
+        log.info("ear to mouth %.2fs (first sentence)", timings["ear_to_mouth_s"])
+    spoken.append(text)
+    session.speaking_text = " ".join(spoken[-2:])
+    return say(session, clip, timings)
 
 
 def say(session: Session, clip, timings: dict) -> bool:
@@ -208,7 +285,13 @@ def say(session: Session, clip, timings: dict) -> bool:
         mic.discard()
         if session.barge_in:
             mic.set_extra_margin(BARGE_IN_MARGIN_DB)
-            interrupt = lambda: mic.voice_ms >= BARGE_IN_MIN_MS  # noqa: E731
+            interrupt = EchoAwareBargeIn(
+                mic,
+                session.transcriber,
+                lambda: session.speaking_text or clip.text,
+                min_ms=BARGE_IN_MIN_MS,
+                fallback_language=session.last_language.get(session.last_addressed_speaker, DEFAULT_LANGUAGE),
+            )
     try:
         finished = session.robot.say(clip, interrupt=interrupt)
     finally:
@@ -338,6 +421,8 @@ def main(argv: list[str] | None = None) -> int:
     signal.signal(signal.SIGTERM, _terminate)
 
     registry = SpeakerRegistry.load()
+    if registry.names:
+        log.info("speaker model warm-up: %.1fs", registry.warm_up())
     diarizer = None if args.no_diarizer else DiarizerClient().start()
     players = [n.strip() for n in args.players.split(",") if n.strip()]
     session_kwargs = dict(

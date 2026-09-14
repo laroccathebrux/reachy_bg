@@ -130,6 +130,8 @@ def is_hallucination(text: str, avg_logprob: float, no_speech_prob: float) -> bo
         return True
     if normalised and all(word in _NOISE_WORDS for word in normalised.split()):
         return True
+    if any(len(word) > 15 and len(set(word)) <= 3 for word in normalised.split()):
+        return True  # "Eeeeeeeeee", "hahahahaha": a stretched noise, not speech
     return no_speech_prob > NO_SPEECH_THRESHOLD and avg_logprob < LOGPROB_THRESHOLD
 
 

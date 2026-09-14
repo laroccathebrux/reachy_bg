@@ -144,6 +144,43 @@ Findings:
   (`ANSWER_GAME_QUESTIONS=true`); the log records the decision either way so the policy can
   be learned from the annotated sessions.
 
+## Done: fluid conversation on the physical robot (2026-09-14, second live session)
+
+The owner's verdict on the first live run was "the delay is too long and it does not notice
+when I interrupt it". Three changes fixed most of it, all measured live afterwards:
+
+1. **Sentence streaming.** The LLM reply is split into sentences as it streams; each one is
+   synthesized in a background thread while the previous one plays. The robot starts talking
+   after the first sentence instead of after the whole answer (`answer_streaming` in
+   `listen.py`, `think_sentences` in `answering.py`).
+2. **Chat routing.** Utterances without game vocabulary skip retrieval and use a short
+   conversation prompt with the last three exchanges (`needs_rules`, `conversation_messages`);
+   rules questions get five capped passages instead of eight full ones (1000-1200 prompt
+   tokens instead of ~2000). Prompt processing was the largest share of the wait on a busy Mac.
+3. **Echo-aware barge-in** (`src/speech/barge_in.py`). Energy cannot separate a player from
+   the robot's echo at the Mac microphone, so while the robot speaks any voice longer than
+   600 ms is transcribed and compared with the sentences being spoken: echo continues, a
+   player's words cut the clip and the LLM stream, and the interrupting utterance becomes
+   the next question.
+
+Also from that session: the exponential noise floor learned the robot's voice and cut the
+owner's sentences in half (now a rolling 10 s minimum, frozen while the robot speaks);
+low-confidence language ids decoded Portuguese as English nonsense (now the speaker's last
+language wins below 0.5); a colleague's cough became a follow-up (follow-ups need the same
+speaker; coughs and stretched noises are filtered); "Reachy" arrives as Rich, Reed, Ritch,
+Reaxi (aliases); and with one enrolled player at the table everything said out loud is for
+the robot (solo mode).
+
+| Measured live, owner's voice, busy Mac | Before | After |
+|---|---|---|
+| Ear to mouth, rules question | 10-21 s | 5-6 s (12 s on a cold prompt) |
+| Ear to mouth, chat | 9-13 s | 5 s (LLM first sentence 2 s) |
+| Barge-in at normal voice level | never | 1.4 s after the player starts talking |
+| False interruptions | - | 1 in 4 (a misheard fragment) |
+
+Prompt tokens per rules answer: 1000-1200. The remaining wait is Whisper (1.4 s) plus the
+LLM prefill at 2-6 tok/s on the loaded Mac; the same machine idle does 28 tok/s.
+
 ## Decisions taken
 
 | Topic | Decision | Where |
@@ -177,7 +214,7 @@ Blocked on the owner deciding where the robot sits at the table.
 - [x] mlx-whisper transcription per utterance, Portuguese and English, language id per utterance.
 - [x] Listening loop with interruptible speech (`src/integration/listen.py`).
 - [x] Self-echo rejection by transcript match (the robot ignores its own answers).
-- [ ] Reference-based echo canceller so barge-in works at normal voice level.
+- [x] Barge-in at normal voice level (transcription against the spoken text; an acoustic canceller would cut its 1.4 s reaction).
 - [x] `tools/live-diarizer/`: diart sidecar publishing speaker turns over WebSocket.
 - [x] Speaker enrolment and voiceprint matching.
 - [x] Rule-based addressee classifier + speak/silence log.
