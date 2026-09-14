@@ -43,8 +43,8 @@ from src.speech.agent_audio import RobotAudioInterface
 from src.speech.asr import Transcriber
 from src.speech.barge_in import EchoAwareBargeIn
 from src.speech.diarization import DiarizerClient
-from src.speech.eleven_agent import client_tools, ensure_agent
-from src.speech.language import detect_language, language_name
+from src.speech.eleven_agent import client_tools, ensure_agent, session_override
+from src.speech.language import detect_language
 from src.speech.microphone import Segmenter, Utterance, write_wav
 from src.speech.speakers import MIN_ENROLL_S, SpeakerRegistry
 from src.speech.tts import TTSError, synthesize
@@ -186,8 +186,9 @@ class Table:
         self.responses: list[str] = []  # last few agent lines: a filler and its answer overlap in time
         self.barge_ins = 0
         self.transcriber: Transcriber | None = None
-        self.voice_language = DEFAULT_LANGUAGE  # what the agent's language_detection tool last set
-        self._voice_switched = False
+        self.voice_language = DEFAULT_LANGUAGE  # the language (and native voice) of the current session
+        self.restart: Any = None  # set by main: restart(language, text)
+        self._switching = False
 
     def on_user_transcript(self, text: str) -> None:
         heard = self.ear.last_utterance()
@@ -238,8 +239,8 @@ class Table:
         self.last_addressed = name
         # Cheap, immediate hint from the transcript text; the Whisper check below catches the
         # cases where the agent's ASR (pinned to the current language) mangled the words.
-        if language != self.voice_language:
-            self._ask_to_switch(language, "transcript")
+        if language != self.voice_language and len(text.split()) >= 3:
+            self.switch_language(language, text, "transcript")
         elif heard is not None and self.transcriber is not None:
             threading.Thread(
                 target=self._check_language, args=(heard[0],), name="language-watch", daemon=True
@@ -255,7 +256,7 @@ class Table:
         )
 
     def _check_language(self, utterance: Utterance) -> None:
-        """The agent's ASR mangles Portuguese once it has switched to English; our Whisper tells it to switch back."""
+        """The agent's ASR mangles Portuguese once the session is English; our Whisper catches it."""
         try:
             result = self.transcriber.transcribe(utterance.audio, utterance.sample_rate)  # type: ignore[union-attr]
         except Exception as exc:
@@ -263,39 +264,41 @@ class Table:
             return
         if not result.language or result.language_confidence < 0.8 or result.language == self.voice_language:
             return
-        self._ask_to_switch(result.language, f"whisper {result.language_confidence:.2f}")
+        self.switch_language(result.language, result.text, f"whisper {result.language_confidence:.2f}")
 
-    def _ask_to_switch(self, language: str, source: str) -> None:
-        code = language.split("-")[0]
-        name = language_name(language)
+    def switch_language(self, language: str, text: str, source: str) -> None:
+        """Restart the agent session with the other native voice and re-ask ``text`` there.
+
+        Runs on its own thread: ending a session from inside its receive thread would block.
+        """
+        if self.restart is None or self._switching:
+            return
+        self._switching = True
         log.info(
-            "player speaks %s (%s) but the voice is %s; asking the agent to switch",
-            name,
+            "player speaks %s (%s) but the voice is %s; restarting the session",
+            language,
             source,
             self.voice_language,
         )
-        self.diary.write("language_hint", language=language, source=source)
-        try:
-            self.conversation.send_contextual_update(
-                f"The player is speaking {name}. Call language_detection with '{code}' now and answer in {name}."
-            )
-        except Exception as exc:
-            log.warning("could not send the language hint: %s", exc)
+        self.diary.write("language_switch", language=language, source=source, text=text)
+        self.audio.interrupt()
+
+        def run() -> None:
+            try:
+                self.restart(language, text)
+            except Exception as exc:
+                log.warning("language switch failed: %s", exc)
+            finally:
+                self._switching = False
+
+        threading.Thread(target=run, name="language-switch", daemon=True).start()
 
     def on_raw_event(self, message: dict) -> None:
-        """System tool responses are not surfaced by the SDK; the language switch is read from them."""
+        """Keep the raw system tool events in the diary (the SDK does not surface them)."""
         if message.get("type") != "agent_tool_response":
             return
-        event = message.get("agent_tool_response_event", {})
-        self.diary.write(
-            "agent_tool",
-            name=event.get("tool_name"),
-            tool_type=event.get("tool_type"),
-            is_error=event.get("is_error"),
-        )
-        if event.get("tool_name") == "language_detection" and not event.get("is_error"):
-            self._voice_switched = True
-            log.info("agent switched language (tool response)")
+        event = message.get("agent_tool_response_event") or {}
+        self.diary.write("agent_tool", event={k: str(v)[:80] for k, v in event.items()})
 
     @property
     def spoken_recently(self) -> str:
@@ -305,11 +308,6 @@ class Table:
         self.turns += 1
         self.robot_spoke_at = time.monotonic()
         self.responses = (self.responses + [text])[-3:]
-        if self._voice_switched:
-            # The voice follows the tool switch; the text language of this line tells which one.
-            self.voice_language = detect_language(text)
-            self._voice_switched = False
-            log.info("voice is now %s", self.voice_language)
         self.diary.write("said", text=text)
         log.info("robot: %s", text)
 
@@ -438,19 +436,47 @@ def main(argv: list[str] | None = None) -> int:
             table = Table(robot, ear, diary, TurnLogger(), audio)
             table.transcriber = transcriber
             tools = client_tools(on_call=table.on_tool)
-            conversation = TableConversation(
-                client,
-                agent_id,
-                requires_auth=True,
-                audio_interface=audio,
-                client_tools=tools,
-                callback_agent_response=table.on_agent_response,
-                callback_agent_response_correction=table.on_agent_correction,
-                callback_user_transcript=table.on_user_transcript,
-                callback_latency_measurement=table.on_latency,
-                on_raw=table.on_raw_event,
-            )
-            table.conversation = conversation
+            from elevenlabs.conversational_ai.conversation import ConversationInitiationData
+
+            def open_session(language: str) -> Any:
+                conv = TableConversation(
+                    client,
+                    agent_id,
+                    requires_auth=True,
+                    audio_interface=audio,
+                    client_tools=tools,
+                    config=ConversationInitiationData(
+                        conversation_config_override=session_override(language)
+                    ),
+                    callback_agent_response=table.on_agent_response,
+                    callback_agent_response_correction=table.on_agent_correction,
+                    callback_user_transcript=table.on_user_transcript,
+                    callback_latency_measurement=table.on_latency,
+                    on_raw=table.on_raw_event,
+                )
+                table.conversation = conv
+                table.voice_language = language
+                return conv
+
+            def restart(language: str, text: str) -> None:
+                nonlocal conversation
+                _end_session(conversation)
+                conversation = open_session(language)
+                conversation.start_session()
+                if not _wait_connected(conversation, 8.0):
+                    log.warning("the new session did not connect in time")
+                    return
+                recent = "\n".join(f"- {r}" for r in table.responses[-3:])
+                conversation.send_contextual_update(
+                    "The voice session was restarted to switch language. Do not greet or introduce yourself; "
+                    f"continue the conversation. Your last lines were:\n{recent}"
+                )
+                conversation.send_user_message(text)
+                diary.write("session_restart", language=language)
+                log.info("session restarted in %s; re-asking: %s", language, text)
+
+            table.restart = restart
+            conversation = open_session(DEFAULT_LANGUAGE)
             robot.emotion(random.choice(GREETING_MOVES))
             if players:
                 # Enrolment uses the local ear only; start the microphone without the agent.
@@ -487,6 +513,17 @@ def main(argv: list[str] | None = None) -> int:
             diarizer.stop()
         diary.write("session_end")
     return 0
+
+
+def _wait_connected(conversation: Any, timeout: float) -> bool:
+    """``start_session`` connects on a thread; wait until the websocket is up before sending anything."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if getattr(conversation, "_ws", None) is not None:
+            time.sleep(0.3)  # let the initiation metadata land
+            return True
+        time.sleep(0.1)
+    return False
 
 
 def _end_session(conversation: Any, timeout: float = 5.0) -> None:

@@ -178,6 +178,27 @@ def agent_config(
 
 
 # --------------------------------------------------------------------------- create / update
+# The client may override language and voice per session (a language switch restarts the
+# session with the other native voice); everything else stays as configured.
+PLATFORM_SETTINGS: dict[str, Any] = {
+    "overrides": {
+        "conversation_config_override": {
+            "agent": {"language": True, "first_message": True, "prompt": {"prompt": False}},
+            "tts": {"voice_id": True},
+        }
+    }
+}
+
+
+def session_override(language: str, voices: dict[str, str] | None = None) -> dict[str, Any]:
+    """``conversation_config_override`` that starts a session in ``language`` with its native voice."""
+    voices = ELEVEN_AGENT_VOICES if voices is None else voices
+    voice = voices.get(language)
+    if not voice:
+        raise ValueError(f"no native voice configured for {language}")
+    return {"agent": {"language": _lang_code(language)}, "tts": {"voice_id": voice}}
+
+
 def _headers(api_key: str) -> dict[str, str]:
     return {"xi-api-key": api_key, "Content-Type": "application/json"}
 
@@ -210,7 +231,8 @@ def ensure_agent(
     with httpx.Client(headers=_headers(api_key), timeout=timeout) as http:
         if agent_id:
             response = http.patch(
-                f"{API}/agents/{agent_id}", json={"conversation_config": config, "name": name}
+                f"{API}/agents/{agent_id}",
+                json={"conversation_config": config, "platform_settings": PLATFORM_SETTINGS, "name": name},
             )
             if response.status_code == 404:
                 agent_id = ""
@@ -218,7 +240,10 @@ def ensure_agent(
                 _raise_for(response, "update")
                 log.info("agent %s updated", agent_id)
         if not agent_id:
-            response = http.post(f"{API}/agents/create", json={"conversation_config": config, "name": name})
+            response = http.post(
+                f"{API}/agents/create",
+                json={"conversation_config": config, "platform_settings": PLATFORM_SETTINGS, "name": name},
+            )
             _raise_for(response, "create")
             agent_id = str(response.json()["agent_id"])
             save_agent_id(agent_id)
@@ -307,4 +332,5 @@ __all__ = [
     "load_agent_id",
     "rules_lookup",
     "save_agent_id",
+    "session_override",
 ]

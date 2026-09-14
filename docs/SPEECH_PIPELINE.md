@@ -239,6 +239,16 @@ EchoAwareBargeIn (Whisper on held voice)  USB "Reachy Mini Audio" speaker + Head
 shadow addressee decision -> addressee.jsonl ; every event -> conversation.jsonl
 ```
 
+Language and voice: the agent's own `language_detection` tool is unreliable (the LLM often
+answers in English with the Portuguese voice, tested live). So the switch is local and
+deterministic: when the transcript (or, if the agent's ASR mangled the words, our Whisper on
+the captured audio) says the player changed language, `talk.py` ends the session and opens a
+new one with `conversation_config_override` = that language plus its native voice (the agent
+has `platform_settings.overrides` enabled for `agent.language` and `tts.voice_id`), sends the
+last three robot lines as context and re-asks the question. Measured: 1.5 s from detection to
+the new session, correct voice in both directions (verified by voiceprint against reference
+clips of Michelle and Lara).
+
 Why the gate: the MacBook microphone has no acoustic echo cancellation and the robot's voice
 arrives at -21..-31 dBFS, the same as a player. Without the gate the agent transcribed its own
 sentences and answered them (verified). With the gate alone there is no voice interruption

@@ -208,6 +208,10 @@ scratch:
   back while the speaker is busy (+0.3 s); the local VAD + Whisper check transcribes what is
   held and, when it is a player's words rather than the robot's own text, forwards the last
   2 s to the agent and cuts playback. A player talking over the robot gets a full answer.
+- **Language switch by session restart**: the agent's `language_detection` tool was called
+  with the wrong argument by Gemini and not at all by gpt-4.1-mini in live use, so a change
+  of language (transcript text, or local Whisper on the audio) restarts the session with the
+  other native voice, re-sends context and the question; 1.5 s, verified by voiceprint.
 - **Shadow turn-taking**: the local ear (VAD, voiceprints, diarizer label) still names every
   utterance and the addressee rules still decide; the decision is logged with
   `shadow=True` next to what the agent did (`addressee.jsonl`), and every heard/said/tool
