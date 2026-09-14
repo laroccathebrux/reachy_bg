@@ -107,6 +107,26 @@ WHISPER_PROMPT = os.getenv(
 )
 # Live diarizer sidecar (diart in its own venv) publishes speaker events here.
 DIARIZER_URL = os.getenv("DIARIZER_URL", "ws://127.0.0.1:8765")
+# Speaker voiceprints (pyannote/wespeaker-voxceleb-resnet34-LM, 256-d). Cosine similarity
+# above the threshold names the speaker; below it the utterance is "unknown". Measured on
+# 2026-09-14 with short far-field clips: same person 0.36-0.59, different voices -0.1-0.15.
+SPEAKER_EMBEDDING_MODEL = os.getenv("SPEAKER_EMBEDDING_MODEL", "pyannote/wespeaker-voxceleb-resnet34-LM")
+SPEAKER_MATCH_THRESHOLD = float(os.getenv("SPEAKER_MATCH_THRESHOLD", "0.30"))
+# The robot's name as players say it, plus what Whisper tends to hear instead.
+ROBOT_NAME = os.getenv("ROBOT_NAME", "Reachy")
+ROBOT_NAME_ALIASES = tuple(
+    a.strip().lower()
+    for a in os.getenv(
+        "ROBOT_NAME_ALIASES",
+        "reachy,reachie,reachi,reaxi,richie,richy,rich,ritchie,ritchy,reach,richi,ricci,rishi,ricky,rachi",
+    ).split(",")
+    if a.strip()
+)
+# A question within this many seconds after the robot finished speaking is a follow-up to it.
+FOLLOW_UP_WINDOW_S = float(os.getenv("FOLLOW_UP_WINDOW_S", "8"))
+# Answer rules questions asked to the table without naming the robot (a knowledgeable player
+# would); false = only when named, after its own turn, or on its game turn.
+ANSWER_GAME_QUESTIONS = _env_bool("ANSWER_GAME_QUESTIONS", True)
 # Hugging Face token: required once to download the gated pyannote models.
 HF_TOKEN = os.getenv("HF_TOKEN", "")
 
@@ -149,6 +169,7 @@ RULEBOOK_DIR = DATA_DIR / "rulebooks"
 GAME_LOG_DIR = DATA_DIR / "game_logs"
 CAPTURE_DIR = DATA_DIR / "captures"
 AUDIO_CAPTURE_DIR = CAPTURE_DIR / "audio"
+SPEAKER_DIR = DATA_DIR / "speakers"
 MODEL_DIR = DATA_DIR / "models"
 
 
@@ -214,6 +235,12 @@ __all__ = [
     "WHISPER_LANGUAGE",
     "WHISPER_PROMPT",
     "DIARIZER_URL",
+    "SPEAKER_EMBEDDING_MODEL",
+    "SPEAKER_MATCH_THRESHOLD",
+    "ROBOT_NAME",
+    "ROBOT_NAME_ALIASES",
+    "FOLLOW_UP_WINDOW_S",
+    "ANSWER_GAME_QUESTIONS",
     "HF_TOKEN",
     "TTS_PROVIDER",
     "ELEVENLABS_API_KEY",
@@ -229,6 +256,7 @@ __all__ = [
     "GAME_LOG_DIR",
     "CAPTURE_DIR",
     "AUDIO_CAPTURE_DIR",
+    "SPEAKER_DIR",
     "MODEL_DIR",
     "ensure_data_dirs",
     "LOG_LEVEL",

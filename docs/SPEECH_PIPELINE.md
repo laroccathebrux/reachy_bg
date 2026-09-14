@@ -159,6 +159,53 @@ robot better than the MacBook's array, once it is unmuted.
 
 Latencies measured on this Mac are in [PROJECT_STATUS.md](../PROJECT_STATUS.md).
 
+## Phase 2b as built (2026-09-14)
+
+```
+                    +----------------------------------+
+Mac input device -->| tools/live-diarizer (own venv)    |--- ws://127.0.0.1:8765 --+
+      |             | diart: segmentation-3.0+embedding |   hello / turn / step     |
+      |             +----------------------------------+                           v
+      v                                                            src/speech/diarization.py
+Microphone + Segmenter (Phase 2a) --> Utterance                    DiarizerClient (optional)
+      |                                                                            |
+      v                                                                            |
+Transcriber (Whisper) --> text, language                                           |
+      |                                                                            |
+      v                                                                            |
+src/speech/speakers.py  SpeakerRegistry.identify(audio) -> (name, cosine)          |
+      |                 wespeaker-voxceleb-resnet34-LM, enrolled at game start     |
+      v                                                                            |
+src/speech/addressee.py decide(text, language, since_robot_spoke, robot_turn)      |
+      |                 name | follow_up_question | follow_up_reply |              |
+      |                 robot_turn_question | game_question | not_addressed        |
+      |                 (+ self_echo when the text matches the robot's last answer)|
+      v                                                                            |
+TurnLogger -> data/game_logs/addressee.jsonl  <-- diart label joined here  <-------+
+      |
+      v  only when addressed
+think() + voice() -> Robot.say()
+```
+
+- **Enrolment** (`listen.py --players "Ana,Bruno"`): the robot asks each player for one
+  sentence in the default language, keeps the utterance's embedding, and saves the registry
+  to `data/speakers/voiceprints.json`. More clips per name can be added later; matching uses
+  the best clip. Threshold `SPEAKER_MATCH_THRESHOLD=0.30` sits between the measured
+  same-voice (0.36-0.84) and different-voice (< 0.15) similarities.
+- **Diart label vs voiceprint**: the sidecar's label arrives 1.3-1.6 s after the utterance
+  ends and tells "who is speaking now" with overlap handling; the voiceprint names the
+  utterance once it is complete. The decision uses the voiceprint; the label is logged next
+  to it so the two can be reconciled offline (and, later, online by votes).
+- **The dataset**: every heard utterance becomes one JSON line with text, language, speaker
+  name and score, diart label, seconds since the robot last spoke, the decision, its rule
+  and confidence, and the path of the captured WAV. Annotating the `addressed` column of
+  a few real sessions gives the training set for the learned classifier.
+
+Sidecar pins that were not in the plan: `matplotlib<3.9`, `huggingface_hub<1.0`, and a
+`torch.load(weights_only=False)` shim (pyannote 3 checkpoints are full pickles; torch 2.6+
+refuses them by default). The Hugging Face token must be passed explicitly to pyannote 3;
+`huggingface_hub`'s cached login (`hf auth login`) is read for that.
+
 ## Why not the alternatives
 
 | Option | Why not (for now) |

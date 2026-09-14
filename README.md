@@ -20,7 +20,8 @@ question at the table in Portuguese or English, looks it up, and answers with a 
 | `bg_knowledge` | 12 investigators, 4 Ancient Ones, monsters, gates, 142 FAQ entries |
 | `bg_sessions` | created, fills up as games are played |
 | Speech | Mac microphone + VAD, mlx-whisper, ElevenLabs native voices, interruptible playback |
-| Vision, who-is-speaking, strategy, learning | designed, not built (Phases 1, 2b, 3-5) |
+| Who is speaking | diart sidecar (`tools/live-diarizer`), voiceprints per player, rule-based "is it for me?" with a per-utterance log |
+| Vision, strategy, learning | designed, not built (Phases 1, 3-5) |
 
 See [PROJECT_STATUS.md](PROJECT_STATUS.md) for the roadmap.
 
@@ -65,7 +66,14 @@ uv sync --extra speech --extra tts-cloud
 uv run python scripts/venv_postinstall.py       # macOS: make the venv's .pth files visible
 uv run python -m src.integration.smoke          # typed question -> spoken answer
 uv run python -m src.integration.listen         # spoken question -> spoken answer (Ctrl+C to stop)
+uv run python -m src.integration.listen --players "Ana,Bruno"   # enrol voices first
 uv run python -m src.integration.listen --list-devices
+```
+
+Optional live "who is speaking" (separate venv, see [tools/live-diarizer](tools/live-diarizer/README.md)):
+
+```bash
+cd tools/live-diarizer && uv sync && uv run python -m live_diarizer --device "MacBook Pro Microphone"
 ```
 
 Full setup, services and the robot daemon: [GETTING_STARTED.md](GETTING_STARTED.md).

@@ -1,6 +1,6 @@
 # Project Status
 
-Updated 2026-09-14 (Phase 2a).
+Updated 2026-09-14 (Phase 2b).
 
 ## Done: Phase 0, foundation
 
@@ -102,6 +102,48 @@ Findings:
 - Background runs must be stopped with SIGTERM (a `&` job ignores SIGINT); `listen.py` now
   treats SIGTERM like Ctrl+C. Two instances left running answered each other for a minute.
 
+## Done: Phase 2b, who is speaking and is it for me (2026-09-14)
+
+- `tools/live-diarizer/`: diart 0.9.2 + pyannote.audio 3.4 + torch 2.8 + numpy 1.26 in its own
+  `uv` project, reading the same Mac input device and publishing anonymous speaker turns
+  over `ws://127.0.0.1:8765` (`hello` / `turn` / `step` messages, stream and wall-clock
+  times). Three pins were needed on top of the planned stack: `matplotlib<3.9`
+  (pyannote.core still imports `get_cmap`), `huggingface_hub<1.0` (pyannote 3 passes
+  `use_auth_token`), and a `torch.load(weights_only=False)` shim for pyannote's pickled
+  checkpoints. The token must be passed explicitly (`hf auth login` cache or `HF_TOKEN`).
+- `src/speech/diarization.py`: optional WebSocket client with reconnection; the loop runs
+  without it. `src/speech/speakers.py`: voiceprints with
+  `pyannote/wespeaker-voxceleb-resnet34-LM` (256-d) in the main venv, one or more clips per
+  name, cosine matching, persisted in `data/speakers/voiceprints.json`.
+  `src/speech/addressee.py`: rule-based "is it for me?" plus the self-echo check and the
+  per-utterance JSONL log (`data/game_logs/addressee.jsonl`), the dataset for the learned
+  classifier.
+- `listen.py` now enrols players (`--players "Ana,Bruno"`: the robot asks each one for a
+  sentence), names every utterance, applies the rules and answers only when addressed
+  (`--always-answer` restores the Phase 2a behaviour). 75 tests across the two projects (71 + 4).
+
+Measured with synthetic voices (macOS `say`) through the Mac speakers and the MacBook mic:
+
+| Signal | Value |
+|---|---|
+| diart first label after speech starts | 2.0 s (latency 1 s + step 0.5 s + CPU) |
+| diart final turn after speech ends | 1.3-1.6 s |
+| diart turn boundaries vs the played clip | within 0.1-0.3 s |
+| wespeaker load / embedding of a 2-4 s clip | 0.4 s / 30-90 ms |
+| same synthetic voice, enrolment vs later sentences | cosine 0.77-0.84 |
+| different voice | cosine -0.02 |
+| owner's real voice, five far-field captures | 0.36-0.59 between captures |
+
+Findings:
+- Whisper does not hear "Reachy" reliably: "Rich" from the owner, "Reaxi" and "E assim"
+  from the synthetic Portuguese voice. The alias list covers the first two; a name the
+  players can pronounce (or an audio keyword spotter) would be more robust than text.
+- The three `say` clips (two voices) were clustered by diart as one speaker; real voices at
+  the table are the test that matters (the owner's session is the next step).
+- A rules question asked to the table without the robot's name is answered by default
+  (`ANSWER_GAME_QUESTIONS=true`); the log records the decision either way so the policy can
+  be learned from the annotated sessions.
+
 ## Decisions taken
 
 | Topic | Decision | Where |
@@ -134,11 +176,13 @@ Blocked on the owner deciding where the robot sits at the table.
 - [x] Mac microphone capture (`sounddevice`) with device selection from `AUDIO_INPUT_DEVICE`.
 - [x] mlx-whisper transcription per utterance, Portuguese and English, language id per utterance.
 - [x] Listening loop with interruptible speech (`src/integration/listen.py`).
-- [ ] Echo handling so barge-in works at normal voice level (transcript match, then a
-      reference-based canceller).
-- [ ] `tools/live-diarizer/`: diart sidecar publishing speaker turns over WebSocket.
-- [ ] Speaker enrolment and voiceprint matching.
-- [ ] Rule-based addressee classifier + speak/silence log; annotate a recorded session.
+- [x] Self-echo rejection by transcript match (the robot ignores its own answers).
+- [ ] Reference-based echo canceller so barge-in works at normal voice level.
+- [x] `tools/live-diarizer/`: diart sidecar publishing speaker turns over WebSocket.
+- [x] Speaker enrolment and voiceprint matching.
+- [x] Rule-based addressee classifier + speak/silence log.
+- [ ] Record and annotate a real 2-3 player session; measure the rules against the annotation.
+- [ ] Map diart labels to enrolled names over time (label -> name votes) for overlap cases.
 
 ### Phase 3: strategic reasoning (weeks 3-4)
 

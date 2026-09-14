@@ -1,14 +1,19 @@
-"""Listening loop: Mac microphone -> Whisper -> retrieval + LLM -> native voice -> robot.
+"""Listening loop: Mac microphone -> Whisper -> who / for me? -> retrieval + LLM -> voice -> robot.
 
-    uv run python -m src.integration.listen                  # daemon on :8000 required
-    uv run python -m src.integration.listen --no-robot       # gestures logged, audio on the Mac
+    uv run python -m src.integration.listen                    # daemon on :8000 required
+    uv run python -m src.integration.listen --no-robot         # gestures logged, audio on the Mac
+    uv run python -m src.integration.listen --players "Ana,Bruno"   # enrol voices, then listen
+    uv run python -m src.integration.listen --always-answer    # no addressee gating (Phase 2a behaviour)
     uv run python -m src.integration.listen --transcribe-only  # measure hearing alone
-    uv run python -m src.integration.listen --wav clip.wav   # feed a file instead of the mic
+    uv run python -m src.integration.listen --wav clip.wav     # feed a file instead of the mic
     uv run python -m src.integration.listen --list-devices
 
-Every turn is timed from the moment the person stops talking ("ear") to the moment the
-robot starts talking ("mouth"): VAD tail + ASR + retrieval + LLM + TTS. Barge-in: a voice
-that is clearly louder than the robot's own echo for ``BARGE_IN_MIN_MS`` interrupts it.
+Every heard utterance is transcribed, attributed to a player (voiceprint match, plus the
+live diarizer's anonymous label when the sidecar is running), classified as addressed to the
+robot or not, and logged to ``data/game_logs/addressee.jsonl``. The robot answers only when
+addressed (or with ``--always-answer``). Turns are timed from the moment the person stops
+talking ("ear") to the moment the robot starts talking ("mouth"). Barge-in: a voice clearly
+louder than the robot's own echo for ``BARGE_IN_MIN_MS`` interrupts it.
 """
 
 from __future__ import annotations
@@ -19,11 +24,13 @@ import signal
 import statistics
 import sys
 import time
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from src.config import (
     BARGE_IN_MARGIN_DB,
     BARGE_IN_MIN_MS,
+    DEFAULT_LANGUAGE,
     OLLAMA_MODEL,
     VAD_SILENCE_MS,
     WHISPER_MODEL,
@@ -32,8 +39,10 @@ from src.config import (
 from src.integration.answering import think, voice
 from src.llm.ollama_client import LLMError
 from src.logger import get_logger
-from src.robot.reachy import GREETING_MOVES, OOPS_MOVES, THINKING_MOVES, Robot
+from src.robot.reachy import AGREE_MOVES, GREETING_MOVES, OOPS_MOVES, THINKING_MOVES, Robot
+from src.speech.addressee import Decision, TurnLogger, decide, looks_like_echo
 from src.speech.asr import ASRError, Transcriber
+from src.speech.diarization import DiarizerClient
 from src.speech.language import detect_language
 from src.speech.microphone import (
     Microphone,
@@ -42,70 +51,151 @@ from src.speech.microphone import (
     list_input_devices,
     read_wav,
 )
-from src.speech.tts import TTSError
+from src.speech.speakers import MIN_ENROLL_S, SpeakerRegistry
+from src.speech.tts import TTSError, synthesize
 
 log = get_logger(__name__)
 
-STAGES = ("vad_tail_s", "asr_s", "retrieve_s", "llm_s", "tts_s", "ear_to_mouth_s", "audio_s")
+STAGES = ("vad_tail_s", "asr_s", "who_s", "retrieve_s", "llm_s", "tts_s", "ear_to_mouth_s", "audio_s")
+
+ENROL_PROMPTS = {
+    "pt-BR": "{name}, diga uma frase inteira para eu aprender a sua voz.",
+    "en-US": "{name}, say a full sentence so I can learn your voice.",
+}
+ENROL_THANKS = {"pt-BR": "Obrigado, {name}.", "en-US": "Thank you, {name}."}
 
 
-class Turn:
-    """One heard utterance handled end to end, with its timings."""
+@dataclass
+class Session:
+    """What the loop needs to remember between utterances."""
 
-    def __init__(self, utterance: Utterance):
-        self.utterance = utterance
-        self.timings: dict[str, float | str | bool] = {
-            "heard_s": round(utterance.duration_s, 2),
-            "vad_tail_s": round(utterance.ended_at - utterance.speech_ended_at, 2),
-        }
+    transcriber: Transcriber
+    robot: Robot
+    mic: Microphone | None
+    registry: SpeakerRegistry | None = None
+    diarizer: DiarizerClient | None = None
+    turn_log: TurnLogger | None = None
+    speak: bool = True
+    transcribe_only: bool = False
+    barge_in: bool = True
+    always_answer: bool = False
+    last_answer: str = ""
+    robot_spoke_at: float | None = None  # monotonic
+    robot_turn: bool = False
+    turns: list[dict] = field(default_factory=list)
 
 
-def handle(
-    turn: Turn,
-    transcriber: Transcriber,
-    robot: Robot,
-    mic: Microphone | None,
-    *,
-    speak: bool = True,
-    transcribe_only: bool = False,
-    barge_in: bool = True,
-) -> dict[str, float | str | bool] | None:
-    """Transcribe one utterance and, unless ``transcribe_only``, answer it out loud."""
-    utterance, timings = turn.utterance, turn.timings
+def wall_time(monotonic_t: float) -> float:
+    """Convert a ``time.monotonic()`` instant to ``time.time()`` seconds."""
+    return time.time() - (time.monotonic() - monotonic_t)
+
+
+def who_spoke(session: Session, utterance: Utterance) -> dict[str, float | str]:
+    """Voiceprint name and score for an utterance (empty name = nobody enrolled matches)."""
+    who: dict[str, float | str] = {"speaker": "", "speaker_score": 0.0, "diart_label": ""}
     t0 = time.monotonic()
-    result = transcriber.transcribe(utterance.audio, utterance.sample_rate)
+    if session.registry is not None and session.registry.names:
+        try:
+            name, score = session.registry.identify(utterance.audio)
+            who["speaker"], who["speaker_score"] = name, score
+        except Exception as exc:  # the loop must survive a model hiccup
+            log.warning("speaker identification failed: %s", exc)
+    who["who_s"] = round(time.monotonic() - t0, 3)
+    return who
+
+
+def diart_label(session: Session, utterance: Utterance, wait_s: float = 1.5) -> tuple[str, float]:
+    """The live diarizer's anonymous label for the utterance, if the sidecar is running."""
+    if session.diarizer is None or not session.diarizer.connected:
+        return "", 0.0
+    return session.diarizer.speaker_between(
+        wall_time(utterance.started_at), wall_time(utterance.speech_ended_at), wait_s=wait_s
+    )
+
+
+def handle(session: Session, utterance: Utterance) -> dict | None:
+    """Transcribe one utterance, decide whether it is for the robot and, if so, answer it."""
+    timings: dict = {
+        "heard_s": round(utterance.duration_s, 2),
+        "vad_tail_s": round(utterance.ended_at - utterance.speech_ended_at, 2),
+    }
+    t0 = time.monotonic()
+    result = session.transcriber.transcribe(utterance.audio, utterance.sample_rate)
     timings["asr_s"] = result.seconds
     if result.empty:
         log.info("heard nothing usable (no_speech %.2f)", result.no_speech_prob)
         return None
     language = result.language or detect_language(result.text)
-    timings["language"] = language
-    timings["language_confidence"] = result.language_confidence
-    timings["text"] = result.text
-    log.info("heard (%s %.2f): %s", language, result.language_confidence, result.text)
-    if transcribe_only:
+    timings.update(language=language, language_confidence=result.language_confidence, text=result.text)
+    who = who_spoke(session, utterance)
+    timings.update(who)
+    log.info(
+        "heard [%s] (%s %.2f): %s", who["speaker"] or "?", language, result.language_confidence, result.text
+    )
+    if session.transcribe_only:
         timings["ear_to_text_s"] = round(t0 + result.seconds - utterance.speech_ended_at, 2)
         return timings
 
-    robot.emotion(random.choice(THINKING_MOVES), sound=False, block=False)
+    since_robot = None if session.robot_spoke_at is None else time.monotonic() - session.robot_spoke_at
+    if looks_like_echo(result.text, session.last_answer):
+        decision = Decision(False, "self_echo", 0.9)
+    elif session.always_answer:
+        decision = Decision(True, "always_answer", 1.0)
+    else:
+        decision = decide(
+            result.text, language, seconds_since_robot_spoke=since_robot, robot_turn=session.robot_turn
+        )
+    timings.update(addressed=decision.addressed, reason=decision.reason)
+    # The sidecar labels audio ~1.5 s after hearing it; wait for it only when staying quiet,
+    # otherwise take whatever it has so far (the label is logged, not used to decide).
+    label, seconds = diart_label(session, utterance, wait_s=0.0 if decision.addressed else 1.5)
+    timings.update(diart_label=label, diart_overlap_s=round(seconds, 2))
+    if session.turn_log is not None:
+        session.turn_log.log(
+            decision,
+            text=result.text,
+            language=language,
+            speaker=who["speaker"],
+            speaker_score=who["speaker_score"],
+            diart_label=label,
+            heard_s=timings["heard_s"],
+            seconds_since_robot_spoke=None if since_robot is None else round(since_robot, 1),
+            capture=str(utterance.path) if utterance.path else "",
+        )
+    if not decision.addressed:
+        log.info("staying quiet (%s)", decision.reason)
+        return timings
+
+    session.robot.emotion(random.choice(THINKING_MOVES), sound=False, block=False)
     thought = think(result.text, language)
     timings.update(thought.timings)
-    if not speak:
+    session.last_answer = thought.answer
+    if not session.speak:
+        session.robot_spoke_at = time.monotonic()
         return timings
     clip = voice(thought)
     timings.update(thought.timings)
     mouth_at = time.monotonic()
     timings["ear_to_mouth_s"] = round(mouth_at - utterance.speech_ended_at, 2)
     log.info("ear to mouth %.2fs", timings["ear_to_mouth_s"])
+    finished = say(session, clip, timings)
+    session.robot_spoke_at = time.monotonic()
+    if not finished:
+        log.info("interrupted after %.1fs; listening", time.monotonic() - mouth_at)
+    return timings
 
+
+def say(session: Session, clip, timings: dict) -> bool:
+    """Play a clip with barge-in monitoring; records the echo level the microphone saw."""
+    mic = session.mic
     interrupt = None
     if mic is not None:
         mic.discard()
-        if barge_in:
+        if session.barge_in:
             mic.set_extra_margin(BARGE_IN_MARGIN_DB)
             interrupt = lambda: mic.voice_ms >= BARGE_IN_MIN_MS  # noqa: E731
     try:
-        finished = robot.say(clip, interrupt=interrupt)
+        finished = session.robot.say(clip, interrupt=interrupt)
     finally:
         if mic is not None:
             levels = mic.levels()  # read while the barge-in margin is still applied
@@ -119,20 +209,54 @@ def handle(
             levels["threshold_db"],
             levels["noise_floor_db"],
         )
-    if not finished:
-        log.info("interrupted after %.1fs; listening", time.monotonic() - mouth_at)
-    elif mic is not None:
-        mic.discard()  # whatever the microphone caught was the robot's own voice
-    return timings
+        if finished:
+            mic.discard()  # whatever the microphone caught was the robot's own voice
+    return finished
 
 
-def summarise(turns: list[dict[str, float | str | bool]]) -> str:
+def enrol(session: Session, names: list[str], language: str = DEFAULT_LANGUAGE) -> None:
+    """Ask each player for one sentence and store its voiceprint."""
+    assert session.mic is not None and session.registry is not None
+    prompt = ENROL_PROMPTS.get(language, ENROL_PROMPTS["en-US"])
+    thanks = ENROL_THANKS.get(language, ENROL_THANKS["en-US"])
+    for name in names:
+        _speak_line(session, prompt.format(name=name), language)
+        while True:
+            utterance = session.mic.next_utterance(timeout=30.0)
+            if utterance is None:
+                log.warning("no sentence heard from %s; skipping", name)
+                break
+            if utterance.speech_s < MIN_ENROLL_S:
+                log.info("too short for a voiceprint (%.1fs); say a longer sentence", utterance.speech_s)
+                continue
+            session.registry.enroll(name, utterance.audio, replace=True)
+            session.registry.save()
+            session.robot.emotion(random.choice(AGREE_MOVES), sound=False, block=False)
+            _speak_line(session, thanks.format(name=name), language)
+            break
+
+
+def _speak_line(session: Session, text: str, language: str) -> None:
+    log.info("robot: %s", text)
+    if not session.speak:
+        return
+    try:
+        session.robot.say(synthesize(text, language))
+    except TTSError as exc:
+        log.warning("%s", exc)
+    if session.mic is not None:
+        session.mic.discard()
+
+
+def summarise(turns: list[dict]) -> str:
     """Median of every timed stage over the session, as a small text table."""
     lines = [f"{'stage':<16}{'median':>8}{'max':>8}{'n':>4}"]
     for stage in STAGES:
         values = [float(t[stage]) for t in turns if isinstance(t.get(stage), int | float)]
         if values:
             lines.append(f"{stage:<16}{statistics.median(values):>8.2f}{max(values):>8.2f}{len(values):>4}")
+    answered = sum(1 for t in turns if t.get("addressed"))
+    lines.append(f"utterances {len(turns)}, answered {answered}")
     return "\n".join(lines)
 
 
@@ -161,8 +285,15 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--no-speech", action="store_true", help="answer in the log only (no TTS)")
     parser.add_argument("--transcribe-only", action="store_true", help="print transcripts, never answer")
     parser.add_argument(
+        "--always-answer", action="store_true", help="answer every utterance (no addressee rules)"
+    )
+    parser.add_argument(
         "--no-barge-in", action="store_true", help="never interrupt the robot while it speaks"
     )
+    parser.add_argument(
+        "--no-diarizer", action="store_true", help="do not connect to the live diarizer sidecar"
+    )
+    parser.add_argument("--players", default="", help="comma-separated names to enrol by voice at the start")
     parser.add_argument("--device", default=None, help="input device name substring or index")
     parser.add_argument("--list-devices", action="store_true", help="list input devices and exit")
     parser.add_argument("--wav", action="append", type=Path, help="WAV file(s) to treat as heard speech")
@@ -192,34 +323,53 @@ def main(argv: list[str] | None = None) -> int:
     # is left quiet and the latency summary is printed.
     signal.signal(signal.SIGTERM, _terminate)
 
-    turns: list[dict[str, float | str | bool]] = []
-    speak = not args.no_speech
-    kwargs = {"speak": speak, "transcribe_only": args.transcribe_only, "barge_in": not args.no_barge_in}
+    registry = SpeakerRegistry.load()
+    diarizer = None if args.no_diarizer else DiarizerClient().start()
+    players = [n.strip() for n in args.players.split(",") if n.strip()]
+    session_kwargs = dict(
+        registry=registry,
+        diarizer=diarizer,
+        turn_log=TurnLogger(),
+        speak=not args.no_speech,
+        transcribe_only=args.transcribe_only,
+        barge_in=not args.no_barge_in,
+        always_answer=args.always_answer,
+    )
+    session: Session | None = None
     try:
         with Robot.connect(simulated=args.no_robot) as robot:
             if args.wav:
+                session = Session(transcriber, robot, None, **session_kwargs)
                 for path in args.wav:
-                    _run(Turn(_utterance_from_wav(path)), transcriber, robot, None, turns, **kwargs)
+                    _run(session, _utterance_from_wav(path))
                 return 0
             with Microphone(device=args.device if args.device is not None else "") as mic:
+                session = Session(transcriber, robot, mic, **session_kwargs)
+                if diarizer is not None and diarizer.wait_connected(2.0):
+                    log.info("live diarizer connected")
                 if not args.transcribe_only:
                     robot.emotion(random.choice(GREETING_MOVES))
+                if players:
+                    enrol(session, players)
                 log.info(
-                    "say something (Ctrl+C to stop); utterances end after %d ms of silence", VAD_SILENCE_MS
+                    "listening for %s (Ctrl+C to stop); utterances end after %d ms of silence",
+                    ", ".join(registry.names) or "unknown voices",
+                    VAD_SILENCE_MS,
                 )
                 while True:
                     utterance = mic.next_utterance(timeout=0.5)
-                    if utterance is None:
-                        continue
-                    _run(Turn(utterance), transcriber, robot, mic, turns, **kwargs)
+                    if utterance is not None:
+                        _run(session, utterance)
     except MicrophoneError as exc:
         log.error("%s", exc)
         return 1
     except KeyboardInterrupt:
         log.info("stopping")
     finally:
-        if turns:
-            log.info("session latencies (s)\n%s", summarise(turns))
+        if diarizer is not None:
+            diarizer.stop()
+        if session is not None and session.turns:
+            log.info("session latencies (s)\n%s", summarise(session.turns))
     return 0
 
 
@@ -227,20 +377,18 @@ def _terminate(*_: object) -> None:
     raise KeyboardInterrupt
 
 
-def _run(
-    turn: Turn, transcriber: Transcriber, robot: Robot, mic: Microphone | None, turns: list, **kwargs
-) -> None:
+def _run(session: Session, utterance: Utterance) -> None:
     try:
-        timings = handle(turn, transcriber, robot, mic, **kwargs)
+        timings = handle(session, utterance)
     except ASRError as exc:
         log.error("%s", exc)
         return
     except (LLMError, TTSError) as exc:
         log.error("%s", exc)
-        robot.emotion(random.choice(OOPS_MOVES), block=False)
+        session.robot.emotion(random.choice(OOPS_MOVES), block=False)
         return
     if timings is not None:
-        turns.append(timings)
+        session.turns.append(timings)
         log.info("timings %s", {k: v for k, v in timings.items() if k != "text"})
 
 
