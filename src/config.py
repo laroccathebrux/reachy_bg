@@ -14,7 +14,12 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 BASE_DIR = Path(__file__).resolve().parent.parent
-load_dotenv(BASE_DIR / ".env")
+# REACHY_BG_DOTENV overrides the .env location; an empty value disables loading (tests).
+_dotenv = os.getenv("REACHY_BG_DOTENV")
+if _dotenv is None:
+    load_dotenv(BASE_DIR / ".env")
+elif _dotenv:
+    load_dotenv(_dotenv)
 
 
 def _env_int(name: str, default: int) -> int:

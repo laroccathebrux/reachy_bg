@@ -58,6 +58,19 @@ the strategy layer can use later.
 - **Development / CI fallback: `qwen2.5:3b`** for tests that need a live model without
   loading 22 GB.
 
+## First measurements (2026-09-14, machine saturated: load average ~70, 8 GB swap)
+
+| Call | Output | Time | Throughput |
+|---|---|---|---|
+| First call of the session (loads the 22 GB model) | 3 sentences | 41 s | 1.4 tok/s incl. load |
+| Warm call, English | 3 sentences | 12.4 s | 4.3 tok/s |
+| Warm call, Portuguese | 3 sentences | 7.8 s | 7.7 tok/s |
+
+Far below the 30-50 tok/s a 3B-active model should reach, but the machine was also
+compiling, syncing and running a VM at the time. Repeat on a quiet evening before drawing
+conclusions; if it stays under 10 tok/s, shorten in-game answers to one or two sentences
+and keep `think=False`.
+
 ## Operating rules
 
 1. Keep at most one large model resident: `OLLAMA_KEEP_ALIVE` short (5 minutes) during

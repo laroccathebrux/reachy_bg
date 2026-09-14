@@ -27,8 +27,11 @@ ollama pull qwen2.5:3b        # optional: small model for tests
 git clone ssh://git@github.com/laroccathebrux/reachy_bg.git
 cd reachy_bg
 uv sync                       # core deps: robot SDK, Ollama/Qdrant clients, PDF tools
+uv run python scripts/venv_postinstall.py   # macOS: makes the GStreamer bindings importable (see Troubleshooting)
 cp .env.example .env
 ```
+
+Run the post-install script again after every `uv sync` that recreates the venv.
 
 Optional extras, installed on demand:
 
@@ -85,8 +88,20 @@ The Qdrant dashboard at http://127.0.0.1:6333/dashboard shows the three `bg_*` c
 ## 5. Talk to the robot
 
 ```bash
-uv run reachy-mini-daemon                 # separate terminal; wait for "Uvicorn running on :8000"
+uv run reachy-mini-daemon                 # separate terminal; ~3 min until "Uvicorn running on :8000"
 ```
+
+End-to-end smoke test (question -> rules retrieval -> Qwen -> native-voice TTS -> robot speaker):
+
+```bash
+uv run python -m src.integration.smoke --no-robot -q "How many actions per round?"   # Mac speaker
+uv run python -m src.integration.smoke                                                # robot, interactive
+```
+
+Ask in Portuguese or English; the answer comes back in the same language with that
+language's voice. Timings per stage are logged.
+
+Direct SDK check:
 
 ```bash
 uv run python -c "
@@ -131,6 +146,7 @@ data/                git-ignored runtime data: rulebooks/, captures/, game_logs/
 |---|---|
 | `uv sync` tries to build PyGObject | It should not: `pyproject.toml` limits resolution to macOS. Run `uv lock --upgrade` if the lock is stale. |
 | `ModuleNotFoundError: src` | Run from the repository root with `uv run python -m src....`; tests add the root to `sys.path`. |
+| `ModuleNotFoundError: No module named 'gi'` when importing `reachy_mini` or starting the daemon | The venv's `.pth` files carry the macOS `hidden` flag (something on this Mac re-applies it within a minute) and Python 3.12.13+ skips hidden `.pth` files, so the GStreamer bindings never reach `sys.path`. Run `uv run python scripts/venv_postinstall.py`: it writes a `sitecustomize.py` that replays the `.pth` set-up and is immune to the flag. |
 | Embedding requests hang | Ollama is loading `bge-m3` for the first time; wait, or check `ollama ps`. |
 | Qdrant `Connection refused` | Start the container (section 3). |
 | Push rejected with 403 for another GitHub user | The remote must stay `ssh://git@github.com/...`; see [WORKFLOW.md](WORKFLOW.md). |

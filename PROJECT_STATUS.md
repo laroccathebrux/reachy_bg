@@ -23,7 +23,38 @@ Updated 2026-09-14.
   - `sessions.py`: `bg_sessions` round memory with `record_round` / `recall`.
 - Documentation rewritten: design, game reference, setup protocol, physical setup, speech
   pipeline, model sizing, learning, getting started, workflow.
-- 21 unit tests passing; none require external services.
+- 31 unit tests passing; none require external services.
+
+## Done: step 1, end-to-end smoke test on the physical robot (2026-09-14)
+
+`uv run python -m src.integration.smoke` runs typed question -> retrieval (`bg_rules` +
+`bg_knowledge`) -> Qwen 3.6 via Ollama -> ElevenLabs with the native voice for the detected
+language -> playback on the Reachy Mini speaker, with a nod and antenna gestures. New modules:
+`src/llm/` (Ollama client, prompts), `src/rag/retrieve.py`, `src/speech/` (typed-text language
+detection, TTS), `src/robot/reachy.py` (SDK wrapper with a speaker-only simulation mode).
+
+Measured on the work Mac under heavy load (load average ~70, 8 GB swap in use):
+
+| Stage | English question | Portuguese question |
+|---|---|---|
+| Embedding + retrieval (8 passages) | 2.4 s (cold) | 0.2 s |
+| LLM answer, 3 sentences | 12.4 s at 4.3 tok/s | 7.8 s at 7.7 tok/s |
+| First LLM call of the session (model load) | 41 s | - |
+| ElevenLabs TTS (16 kHz PCM) | 1.5 s | 1.4 s |
+| Spoken answer length | 16 s | 17 s |
+
+Findings:
+- The robot daemon works on this macOS with SDK 1.10.0 (control loop 49 Hz), but only after
+  `scripts/venv_postinstall.py`: the venv's `.pth` files get the macOS `hidden` flag re-applied
+  within a minute by something on this machine, and Python 3.12.13 skips hidden `.pth` files,
+  so the GStreamer bindings were invisible. The daemon takes about 3 minutes to open port 8000.
+- macOS denied camera access to the daemon started from the terminal; grant it in
+  System Settings > Privacy & Security > Camera before Phase 1.
+- LLM throughput is well below the 30-50 tok/s expected for a 3B-active model because the
+  machine was saturated; answers of 3 sentences still land in 8-12 s. Re-measure on a quiet
+  machine and consider `think=False` plus shorter answers for in-game replies.
+- Language detection and voice selection behaved correctly in both languages; game terms
+  stay in English inside Portuguese answers as agreed.
 
 ## Decisions taken
 
@@ -42,6 +73,9 @@ Updated 2026-09-14.
 
 ### Phase 1: vision and board state (weeks 1-2)
 
+Blocked on the owner deciding where the robot sits at the table.
+
+- [ ] Grant camera permission to the terminal/daemon (macOS Privacy settings).
 - [ ] Calibration session with the checklist in docs/PHYSICAL_SETUP.md; reference photos of every token type.
 - [ ] `src/vision/capture.py`: gaze to table pose, sharpest-of-three capture, save to `data/captures/`.
 - [ ] `src/vision/detect.py`: YOLO-World with the game's prompt list; gallery matching.
