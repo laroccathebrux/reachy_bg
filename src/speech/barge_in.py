@@ -21,7 +21,7 @@ from src.speech.addressee import looks_like_echo
 
 log = get_logger(__name__)
 
-MIN_WORDS = 2  # fewer words cannot be judged; the echo check handles short fragments
+MIN_WORDS = 3  # fewer words cannot be judged; the echo check handles short fragments
 
 
 class EchoAwareBargeIn:
@@ -31,7 +31,7 @@ class EchoAwareBargeIn:
         transcriber: Any,
         spoken_text: Callable[[], str],
         *,
-        min_ms: int = 600,
+        min_ms: int = 900,
         recheck_ms: int = 1200,
         fallback_language: str | Callable[[], str] = "",
         clock: Callable[[], float] = time.monotonic,

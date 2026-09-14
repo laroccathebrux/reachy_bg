@@ -144,12 +144,19 @@ class RobotAudioInterface:
         """True while microphone audio is being held back (speaker busy or its tail)."""
         return self.gate_while_speaking and (self.speaking or time.monotonic() < self._spoke_until)
 
-    def release_gate(self) -> int:
-        """A player is talking over the robot: stop playback and forward the held audio. Returns frames sent."""
+    def release_gate(self, frames: int | None = None) -> int:
+        """A player is talking over the robot: stop playback and forward the held audio.
+
+        ``frames`` limits the forwarded audio to the most recent 250 ms blocks (the player's
+        words), so the robot's own echo held before them is not sent. Returns frames sent.
+        """
         self.interrupt()
+        held = list(self._held)
+        self._held.clear()
+        if frames is not None:
+            held = held[-max(1, frames) :]
         sent = 0
-        while self._held:
-            chunk = self._held.popleft()
+        for chunk in held:
             if self._callback is not None and not self.muted:
                 self._callback(chunk)
                 sent += 1

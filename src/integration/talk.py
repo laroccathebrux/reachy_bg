@@ -324,11 +324,12 @@ class Table:
                     self.ear,
                     transcriber,
                     lambda: self.spoken_recently,
-                    min_ms=600,
-                    fallback_language=DEFAULT_LANGUAGE,
+                    min_ms=900,
+                    fallback_language=lambda: detect_language(self.spoken_recently),
                 )
             if checker():
-                sent = self.audio.release_gate()
+                # Forward only the stretch where the voice was heard, not the robot's echo before it.
+                sent = self.audio.release_gate(frames=int(self.ear.voice_ms / 250) + 2)
                 self.barge_ins += 1
                 self.diary.write("barge_in", heard=checker.heard, frames_forwarded=sent)
                 log.info("player talked over the robot (%r); forwarded %d held frames", checker.heard, sent)
@@ -435,7 +436,6 @@ def main(argv: list[str] | None = None) -> int:
         with Robot.connect(simulated=args.no_robot) as robot:
             table = Table(robot, ear, diary, TurnLogger(), audio)
             table.transcriber = transcriber
-            tools = client_tools(on_call=table.on_tool)
             from elevenlabs.conversational_ai.conversation import ConversationInitiationData
 
             def open_session(language: str) -> Any:
@@ -444,7 +444,7 @@ def main(argv: list[str] | None = None) -> int:
                     agent_id,
                     requires_auth=True,
                     audio_interface=audio,
-                    client_tools=tools,
+                    client_tools=client_tools(on_call=table.on_tool),  # a fresh loop per session
                     config=ConversationInitiationData(
                         conversation_config_override=session_override(language)
                     ),

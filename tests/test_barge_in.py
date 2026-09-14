@@ -47,7 +47,7 @@ def test_echo_does_not_interrupt_but_a_player_does():
 
 def test_single_words_and_silence_never_interrupt():
     mic = FakeMic()
-    asr = FakeTranscriber(["Reachy", ""])
+    asr = FakeTranscriber(["Reachy stop", ""])
     check = EchoAwareBargeIn(mic, asr, lambda: ANSWER, min_ms=600, recheck_ms=1000)
     mic.voice_ms = 700
     assert check() is False
