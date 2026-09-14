@@ -19,7 +19,7 @@ question at the table in Portuguese or English, looks it up, and answers with a 
 | `bg_rules` | official English rulebook + reference guide, 216 chunks, searchable |
 | `bg_knowledge` | 12 investigators, 4 Ancient Ones, monsters, gates, 142 FAQ entries |
 | `bg_sessions` | created, fills up as games are played |
-| Speech | Mac microphone + VAD, mlx-whisper, ElevenLabs native voices, interruptible playback |
+| Speech | ElevenLabs agent for the conversation (0.2-2.5 s turns) with local rules tools; fully local Whisper + Ollama path kept for offline work |
 | Who is speaking | diart sidecar (`tools/live-diarizer`), voiceprints per player, rule-based "is it for me?" with a per-utterance log |
 | Vision, strategy, learning | designed, not built (Phases 1, 3-5) |
 
@@ -65,8 +65,9 @@ With the robot daemon on `:8000` and the ElevenLabs key in `.env`:
 uv sync --extra speech --extra tts-cloud
 uv run python scripts/venv_postinstall.py       # macOS: make the venv's .pth files visible
 uv run python -m src.integration.smoke          # typed question -> spoken answer
-uv run python -m src.integration.listen         # spoken question -> spoken answer (Ctrl+C to stop)
-uv run python -m src.integration.listen --players "Ana,Bruno"   # enrol voices first
+uv run python -m src.integration.talk           # table conversation on the ElevenLabs agent (Ctrl+C to stop)
+uv run python -m src.integration.talk --players "Ana,Bruno"     # enrol voices first
+uv run python -m src.integration.listen         # fully local pipeline (Whisper + Ollama), slower
 uv run python -m src.integration.listen --list-devices
 ```
 

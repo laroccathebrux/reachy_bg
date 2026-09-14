@@ -139,6 +139,21 @@ TTS_PROVIDER = os.getenv("TTS_PROVIDER", "elevenlabs")  # "elevenlabs" | "local"
 ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY", "")
 ELEVENLABS_MODEL_ID = os.getenv("ELEVENLABS_MODEL_ID", "eleven_flash_v2_5")
 
+# --------------------------------------------------------------------------- conversation agent
+# The spoken conversation runs on an ElevenLabs agent (ASR + LLM + TTS + turn-taking in the
+# cloud, ~0.5 s turns); rules and knowledge stay local as client tools. See docs/SPEECH_PIPELINE.md.
+ELEVEN_AGENT_ID = os.getenv("ELEVEN_AGENT_ID", "")  # empty = create once, remember in data/eleven_agent.json
+ELEVEN_AGENT_NAME = os.getenv("ELEVEN_AGENT_NAME", "Reachy Eldritch Horror")
+# gpt-4.1-mini follows the prompt (game terms in English, language switching) better than the
+# platform default (gemini-2.5-flash); empty = platform default.
+ELEVEN_AGENT_LLM = os.getenv("ELEVEN_AGENT_LLM", "gpt-4.1-mini")
+ELEVEN_TURN_TIMEOUT_S = float(os.getenv("ELEVEN_TURN_TIMEOUT_S", "300"))
+ELEVEN_MAX_DURATION_S = _env_int("ELEVEN_MAX_DURATION_S", 7200)
+# The robot speaker is a USB audio device on the Mac ("Reachy Mini Audio"); streaming to it
+# directly is the only audible path for streamed audio on macOS.
+AUDIO_OUTPUT_DEVICE = os.getenv("AUDIO_OUTPUT_DEVICE", "Reachy Mini Audio")
+HEAD_SWAY = _env_bool("HEAD_SWAY", True)
+
 
 def _voice_map(prefix: str) -> dict[str, str]:
     """``{"pt-BR": <voice>, "en-US": <voice>}`` from ``<prefix>_PT_BR`` / ``<prefix>_EN_US`` style vars."""
@@ -154,6 +169,9 @@ def _voice_map(prefix: str) -> dict[str, str]:
 ELEVENLABS_VOICES = _voice_map("ELEVENLABS_VOICE_ID")
 # Local TTS (Piper-style voice names, e.g. pt_BR-faber-medium / en_US-lessac-medium).
 LOCAL_TTS_VOICES = _voice_map("LOCAL_TTS_VOICE")
+# Agents refuse voices with live moderation (Mariana M), so the agent may need its own native
+# voice per language; missing entries fall back to the file-TTS voices.
+ELEVEN_AGENT_VOICES = {**ELEVENLABS_VOICES, **_voice_map("ELEVEN_AGENT_VOICE_ID")}
 
 
 def voice_for(language: str, provider: str = TTS_PROVIDER) -> str:
@@ -251,6 +269,14 @@ __all__ = [
     "ELEVENLABS_API_KEY",
     "ELEVENLABS_MODEL_ID",
     "ELEVENLABS_VOICES",
+    "ELEVEN_AGENT_ID",
+    "ELEVEN_AGENT_VOICES",
+    "ELEVEN_AGENT_NAME",
+    "ELEVEN_AGENT_LLM",
+    "ELEVEN_TURN_TIMEOUT_S",
+    "ELEVEN_MAX_DURATION_S",
+    "AUDIO_OUTPUT_DEVICE",
+    "HEAD_SWAY",
     "LOCAL_TTS_VOICES",
     "voice_for",
     "VISION_URL",

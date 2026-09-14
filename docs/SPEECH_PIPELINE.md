@@ -223,6 +223,29 @@ robot starts talking: 5-6 s after the person stopped, on a busy Mac
   |   (reaction 1.4 s); the player's words are handled as the next utterance
 ```
 
+## The conversation as built: ElevenLabs agent + local ears (2026-09-14)
+
+```
+Mac microphone --250 ms pcm16k--> RobotAudioInterface --gate--> ElevenLabs agent (ASR, LLM, TTS, turns)
+      |                                   |  held while the speaker is busy      |  client_tool_call
+      |  tap                              |                                      v
+      v                                   |                       game_rules / game_knowledge (Qdrant, local)
+LocalEar: Segmenter (VAD) -> voiceprint  |                                      |
+      |        -> diarizer label          |  <---- pcm16k audio + transcripts ---+
+      v                                   v
+EchoAwareBargeIn (Whisper on held voice)  USB "Reachy Mini Audio" speaker + HeadSway
+      |  player's words -> release_gate(): forward held 2 s, cut playback
+      v
+shadow addressee decision -> addressee.jsonl ; every event -> conversation.jsonl
+```
+
+Why the gate: the MacBook microphone has no acoustic echo cancellation and the robot's voice
+arrives at -21..-31 dBFS, the same as a player. Without the gate the agent transcribed its own
+sentences and answered them (verified). With the gate alone there is no voice interruption
+(the earlier projects accepted that with the robot microphone); the local Whisper check on the
+held audio restores it at the cost of about 1.4 s of reaction. A reference-based canceller
+would make the gate unnecessary and is still the better long-term fix.
+
 ## Why not the alternatives
 
 | Option | Why not (for now) |

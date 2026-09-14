@@ -74,6 +74,11 @@ def test_looks_like_echo():
         "Isso se aplica ao número de Monstros", "Isso se aplica tanto ao número de Monstros gerados"
     )
     assert not looks_like_echo("Can I travel twice in a round?", answer)
+    assert looks_like_echo(
+        "Deixa eu verificar o vídeo.", "Deixe-me verificar o Guia de Referência."
+    )  # misheard echo
+    assert not looks_like_echo("Então eu posso pegar mais de um?", "Deixe-me verificar o Guia de Referência.")
+    assert not looks_like_echo("wait, what about Rest?", answer)
     assert not looks_like_echo("two actions", answer)  # too short to judge
     assert not looks_like_echo("anything", "")
 

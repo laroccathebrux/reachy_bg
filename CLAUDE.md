@@ -41,6 +41,7 @@ The remote is `ssh://git@github.com/laroccathebrux/reachy_bg.git`. Keep the `ssh
 | Qdrant | Docker container `reachy-books-qdrant`, `http://127.0.0.1:6333` | Ours: `bg_rules` (English rulebook + reference guide), `bg_knowledge` (investigators, Ancient Ones, monsters, gates, FAQ), `bg_sessions` (round memory). The other collections in that container (`boardgames`, `conhecimento`, `partidas`, `livros`) belong to `../reachy`: read-only, never modify. |
 | Ollama | `http://127.0.0.1:11434` | `qwen3.6:35b-mlx` for reasoning (35B MoE, 3B active), `bge-m3` for embeddings (1024-d; every `bg_*` collection uses it). |
 | Reachy daemon | `reachy-mini-daemon`, `http://127.0.0.1:8000` | Started per session; robot on USB `/dev/cu.usbmodem*`. |
+| ElevenLabs Agents | `https://api.elevenlabs.io/v1/convai` | The spoken conversation (ASR + LLM + TTS + turn-taking); agent id in `data/eleven_agent.json`. Rules/knowledge stay local as client tools. The robot speaker is also the Mac USB output device "Reachy Mini Audio": streamed audio goes there directly (SDK playback is silent on macOS). |
 
 ## Layout
 

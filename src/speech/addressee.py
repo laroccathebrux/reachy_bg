@@ -114,13 +114,25 @@ def about_the_game(text: str, language: str) -> bool:
     return any(_strip_accents(w) in words for w in _RULES_WORDS.get(language, ()))
 
 
-def looks_like_echo(text: str, last_answer: str, *, min_shared: float = 0.6) -> bool:
-    """True when most of the heard words are in the robot's last answer (its own voice)."""
+def _same_word(heard: str, spoken: set[str], stems: set[str]) -> bool:
+    """Exact match, or the same first four letters for longer words ("deixa" ~ "deixe", misheard echo)."""
+    if heard in spoken:
+        return True
+    return len(heard) >= 4 and heard[:4] in stems
+
+
+def looks_like_echo(text: str, last_answer: str, *, min_shared: float = 0.5) -> bool:
+    """True when most of the heard words are in the robot's recent speech (its own voice).
+
+    Echo reaches the microphone distorted, so words are matched on their first four letters
+    as well; short function words count like any other.
+    """
     heard = _words(text)
     if len(heard) < 3 or not last_answer:
         return False
     spoken = set(_words(last_answer))
-    shared = sum(1 for w in heard if w in spoken)
+    stems = {w[:4] for w in spoken if len(w) >= 4}
+    shared = sum(1 for w in heard if _same_word(w, spoken, stems))
     return shared / len(heard) >= min_shared
 
 

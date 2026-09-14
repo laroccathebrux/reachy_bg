@@ -181,6 +181,51 @@ the robot (solo mode).
 Prompt tokens per rules answer: 1000-1200. The remaining wait is Whisper (1.4 s) plus the
 LLM prefill at 2-6 tok/s on the loaded Mac; the same machine idle does 28 tok/s.
 
+## Done: the conversation moved to an ElevenLabs agent (2026-09-14, third live session)
+
+Even with streaming, the local chain answered in 5-13 s and the 3B-active model invented
+rules ("Você só precisa repor se... exceder o limite máximo de dez"). The owner's verdict:
+"horrível... pior comportamento desde julho". The three earlier projects in `../reachy` all
+ended in the same place after benchmarking their local stacks: a cloud realtime agent for the
+conversation, everything else local. `src/integration/talk.py` does that, written from
+scratch:
+
+- **ElevenLabs Agents** (`src/speech/eleven_agent.py`): the agent is created once and
+  updated at every start from `agent_config()` (English persona prompt, golden rule "rules
+  come from the tool", one native voice per language through `language_presets` plus the
+  `language_detection` system tool, pcm 16 kHz both ways, 300 s turn timeout, 2 h sessions).
+  Voices with live moderation (Mariana M) are refused by agents, so the agent uses Michelle
+  for Portuguese (`ELEVEN_AGENT_VOICE_ID_PT_BR`) and Lara for English.
+- **Local client tools**: `game_rules` and `game_knowledge` run our Qdrant retrieval and
+  return numbered passages plus a note on how to use them (0.7 s per call). Tool results
+  must be sent as text (the orchestrator rejects a JSON object).
+- **Audio** (`src/speech/agent_audio.py`): Mac microphone in; the robot speaker is the USB
+  output device "Reachy Mini Audio", written directly from a playback thread (the SDK's
+  `push_audio_sample` is silent on macOS, like its `play_sound`). Head motion comes from
+  `src/robot/sway.py`, a loudness-driven sway, because the daemon's wobbler cannot see USB audio.
+- **Echo gate with local barge-in**: the Mac microphone hears the robot at a player's level,
+  and the first run had the agent answering itself in a loop. Now microphone audio is held
+  back while the speaker is busy (+0.3 s); the local VAD + Whisper check transcribes what is
+  held and, when it is a player's words rather than the robot's own text, forwards the last
+  2 s to the agent and cuts playback. A player talking over the robot gets a full answer.
+- **Shadow turn-taking**: the local ear (VAD, voiceprints, diarizer label) still names every
+  utterance and the addressee rules still decide; the decision is logged with
+  `shadow=True` next to what the agent did (`addressee.jsonl`), and every heard/said/tool
+  event goes to `conversation.jsonl`. That is the research dataset; the agent itself answers
+  whatever it hears, as the earlier projects did.
+
+Measured with synthetic voices through the Mac speakers:
+
+| Signal | Value |
+|---|---|
+| Question end -> filler line ("Let me check the Reference Guide") | 0.2 s |
+| Question end -> answer with passages (tool 0.7 s inside) | 2.5 s |
+| Language switch pt -> en with the American voice | same turn |
+| Player talking over the robot -> playback cut | 1.4 s |
+| False interruption from the robot's own echo | 1 (fixed: echo compared with the last 3 lines) |
+
+`listen.py` (Whisper + Ollama) stays as the offline path and for the research components.
+
 ## Decisions taken
 
 | Topic | Decision | Where |
@@ -190,6 +235,7 @@ LLM prefill at 2-6 tok/s on the loaded Mac; the same machine idle does 28 tok/s.
 | Vector store | Qdrant in the existing Docker container; collections `bg_rules`, `bg_knowledge`, `bg_sessions` | docs/DESIGN_DOCUMENT.md |
 | Speech input | Mac microphone; mlx-whisper; diart + pyannote 3 live in a sidecar; pyannote 4 + WhisperX offline | docs/SPEECH_PIPELINE.md |
 | Speech output | ElevenLabs by default, local TTS optional | src/config.py |
+| Conversation | ElevenLabs agent (cloud) + local client tools; local Whisper + Ollama kept as fallback | docs/SPEECH_PIPELINE.md |
 | Game setup | verbal briefing + knowledge base, no card OCR | docs/SETUP_PROTOCOL.md |
 | Vision | YOLO-World + image-embedding gallery, SAM not used | docs/DESIGN_DOCUMENT.md |
 | Prior project | read for lessons only; no code copied | CLAUDE.md |
