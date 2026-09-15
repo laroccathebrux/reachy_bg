@@ -60,8 +60,8 @@ SPACES: tuple[Space, ...] = (
     _px("9", "wilderness", 412, 128),
     _px("10", "wilderness", 508, 425),
     _px("11", "sea", 527, 612),
-    _px("12", "sea", 695, 100),
-    _px("13", "sea", 458, 692),
+    _px("13", "sea", 695, 100),  # North Atlantic, above London
+    _px("12", "sea", 458, 692),  # South Atlantic, below Buenos Aires
     _px("14", "city", 660, 210),
     _px("15", "city", 646, 622),
     _px("16", "city", 806, 210),
