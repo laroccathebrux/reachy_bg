@@ -1,5 +1,6 @@
 """Foreground pieces on a synthetic board: baseline of the empty board, then a token placed on a space."""
 
+import numpy as np
 import pytest
 
 cv2 = pytest.importorskip("cv2")

@@ -39,7 +39,9 @@ DIFF_THRESHOLD = 45  # summed absolute Lab difference (0..255 scale) that counts
 MIN_AREA = 300  # rectified-map pixels: an investigator marker or a token is 400-1500 at 1200 wide
 NEAR_FACTOR = 2.8  # a piece this many radii from a space centre is reported as "near" it
 MAX_AREA = 40000
-MIN_SIDE = 12  # rectified-map pixels: thinner blobs are slivers along the frame or board edges
+MIN_SIDE = (
+    20  # rectified-map pixels: thinner blobs are slivers along the frame or board edges (a token is 25+)
+)
 BOARD_MARGIN_TOP = 0.09  # fraction of the map height ignored at the top: the Doom track and hands beyond it
 BOARD_MARGIN_BOTTOM = 0.06  # and at the bottom edge
 RESERVE_BOX = (0.0, 0.82, 0.37, 1.0)  # x0, y0, x1, y1 of the Reserve (cards on it are read separately)
