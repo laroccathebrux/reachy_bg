@@ -596,7 +596,7 @@ class Preview:
         the baseline of the view the piece was seen from (both are in map coordinates).
         """
         from src.vision.capture import capture_sharpest
-        from src.vision.detect import closest_to, find_pieces
+        from src.vision.detect import DIE_SURE_CONFIDENCE, closest_to, find_pieces
 
         bodies = dict(SCAN_VIEWS)
         looks = 0
@@ -613,7 +613,9 @@ class Preview:
             baseline = None if view is None else self.baselines.views.get(view)
             if baseline is None:
                 continue
-            if piece.space is None:
+            if piece.kind == "die" and piece.kind_confidence < DIE_SURE_CONFIDENCE:
+                why = f"die value {piece.value} at {piece.kind_confidence:.2f}"
+            elif piece.space is None:
                 why = "between spaces"
             elif piece.edge:
                 why = "frame edge"
@@ -872,8 +874,9 @@ class Preview:
                 self.scan_state = f"scan: {name} view, {describe(pieces)}"
             if mode == "detect":
                 merged = merge_pieces(sightings)
+                classify_pieces(merged)  # dice with a divided vote are worth a closer look
                 self._closer_looks(merged, pitch, stamp)
-                classify_pieces(merged)
+                classify_pieces(merged)  # again, with the closer look's crop weighing twice
                 self._name_pieces(merged)
         finally:
             try:

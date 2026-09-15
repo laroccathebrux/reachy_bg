@@ -86,7 +86,10 @@ class Piece:
         """Ambiguous enough to be worth pointing the camera straight at it."""
         limit = self.threshold + CLOSER_LOOK_MARGIN if min_strength is None else min_strength
         weak = self.strength < limit
-        return not self.confirmed and (self.space is None or self.radius_ratio > 0.6 or self.edge or weak)
+        unsure_die = self.kind == "die" and self.kind_confidence < DIE_SURE_CONFIDENCE
+        return not self.confirmed and (
+            self.space is None or self.radius_ratio > 0.6 or self.edge or weak or unsure_die
+        )
 
     def record(self) -> dict[str, Any]:
         return {
@@ -186,6 +189,7 @@ class BaselineSet:
         return result
 
 
+DIE_SURE_CONFIDENCE = 0.8  # a die whose views disagree more than this gets a closer look
 DIE_MAX_FRAME_ASPECT = 1.35  # frame height over width above which a piece cannot be a die
 MERGE_RADIUS = 50.0  # rectified-map pixels: sightings closer than this are one piece (a standee splits into two blobs 40-60 px apart)
 
