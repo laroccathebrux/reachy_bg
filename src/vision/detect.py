@@ -39,6 +39,8 @@ DIFF_THRESHOLD = 45  # summed absolute Lab difference (0..255 scale) that counts
 MIN_AREA = 300  # rectified-map pixels: an investigator marker or a token is 400-1500 at 1200 wide
 NEAR_FACTOR = 2.8  # a piece this many radii from a space centre is reported as "near" it
 MAX_AREA = 40000
+STANDEE_ASPECT = 1.25  # frame height over width from which a blob is treated as a standing piece
+STANDEE_DROP = 0.35  # of the blob's frame height: how far below the visible bottom the base is put
 MIN_SIDE = (
     20  # rectified-map pixels: thinner blobs are slivers along the frame or board edges (a token is 25+)
 )
@@ -263,6 +265,12 @@ def find_pieces(
         in_frame = registration.to_frame(outline)
         lowest = in_frame[:, 1] >= np.percentile(in_frame[:, 1], 92)
         fbx, fby = (float(v) for v in in_frame[lowest].mean(axis=0))
+        # A standee's lower part often matches the dark art it stands on and drops out of the
+        # blob, so a tall blob ends above its contact point: put the base a little further down.
+        frame_h = float(in_frame[:, 1].max() - in_frame[:, 1].min())
+        frame_w = float(in_frame[:, 0].max() - in_frame[:, 0].min())
+        if frame_w > 0 and frame_h / frame_w >= STANDEE_ASPECT:
+            fby = min(fh - 1.0, fby + STANDEE_DROP * frame_h)
         base_ref = registration.to_reference([(fbx, fby)])[0]
         base_x, base_y = (
             float(base_ref[0]) / registration.reference_size[0],
