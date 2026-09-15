@@ -115,6 +115,16 @@ const overlay = document.getElementById('overlay');
 let board = null;  // last /board answer: outline and spaces in frame fractions
 let found = [];    // last /detect answer: pieces with frame boxes in fractions
 let scanning = false;
+function labelForm(crop, current) {
+  const id = 'lbl' + Math.random().toString(36).slice(2, 8);
+  return `<div style="font-size:12px"><input id="${id}" placeholder="label, e.g. investigator:Akachi" value="${current || ''}" size="22"> <button onclick="saveLabel('${crop}', '${id}')">Save</button></div>`;
+}
+async function saveLabel(crop, id) {
+  const label = document.getElementById(id).value.trim();
+  if (!label) return;
+  const j = await (await fetch('/label', {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify({crop, label})})).json();
+  msg.textContent = j.error ? j.error : `saved as ${j.label}; gallery now: ` + Object.entries(j.counts).map(([k, v]) => `${k} x${v}`).join(', ');
+}
 async function startScan(mode) {
   const j = await (await fetch('/scan', {method: 'POST', headers: {'content-type': 'application/json'},
                                         body: JSON.stringify({mode, pitch: +pitch.value})})).json();
@@ -133,14 +143,17 @@ async function showScan() {
   for (const r of (j.reserve || [])) {
     const fig = document.createElement('figure'); fig.style.margin = '0';
     const label = !r.seen ? 'not in view' : (r.occupied ? 'card' : 'empty');
-    fig.innerHTML = `<img src="${r.crop || ''}" style="height:160px;border:2px solid ${r.occupied ? '#fd5' : '#555'};display:block"><figcaption style="font-size:12px;color:#ccc">Reserve slot ${r.slot}: ${label} (${Math.round(r.fraction * 100)}%)</figcaption>`;
+    const named = r.occupied && r.name ? ` ${r.name.replace(':', ' ')} (${Math.round(r.name_score * 100)}%)` : (r.occupied ? ' unknown card' : '');
+    fig.innerHTML = `<img src="${r.crop || ''}" style="height:160px;border:2px solid ${r.occupied ? '#fd5' : '#555'};display:block"><figcaption style="font-size:12px;color:#ccc">Reserve slot ${r.slot}: ${label}${named} (${Math.round(r.fraction * 100)}%)</figcaption>` + (r.occupied && r.crop ? labelForm(r.crop, r.name) : '');
     box.appendChild(fig);
   }
   for (const p of j.pieces) {
     const fig = document.createElement('figure'); fig.style.margin = '0';
     let where = p.space || (p.near ? 'near ' + p.near : 'between spaces');
     if (p.kind === 'die') where = `die showing ${p.value ?? '?'}${p.kind_confidence < 0.6 ? ' (unsure)' : ''} at ${where}`;
-    fig.innerHTML = `<img src="${p.crop}" style="height:160px;border:1px solid #555;display:block;cursor:zoom-in"><figcaption style="font-size:12px;color:#ccc">${where} (seen from ${p.views.join(', ')}${p.confirmed ? ', confirmed by a closer look' : ''})</figcaption>`;
+    else if (p.name) where = `${p.name.replace(':', ' ')} (${Math.round(p.name_score * 100)}%) at ${where}`;
+    else where = `unknown piece at ${where}`;
+    fig.innerHTML = `<img src="${p.crop}" style="height:160px;border:1px solid #555;display:block;cursor:zoom-in"><figcaption style="font-size:12px;color:#ccc">${where} (seen from ${p.views.join(', ')}${p.confirmed ? ', confirmed by a closer look' : ''})</figcaption>` + (p.kind === 'die' ? '' : labelForm(p.crop, p.name));
     fig.querySelector('img').onclick = () => { if (p.views.includes('centre') && p.box) { zoom.value = 3; setZoom(3, (p.box[0] + p.box[2]) / 2, (p.box[1] + p.box[3]) / 2); } };
     box.appendChild(fig);
   }
@@ -441,6 +454,7 @@ class Preview:
         self._sweep_thread: threading.Thread | None = None
         self.zoom = (1.0, 0.5, 0.5)  # digital zoom of the stream only: factor, centre x, centre y
         self.board: Any = None  # BoardReference, when the reference picture exists
+        self.gallery: Any = None  # Gallery of labelled crops, when torch is available
         self.baselines: Any = None  # BaselineSet of the empty board, one per scan view
         self.scan_state = ""
         self.last_scan: dict[str, Any] | None = None
@@ -679,6 +693,47 @@ class Preview:
                 piece.strength,
             )
 
+    def _name_pieces(self, pieces: list[Any]) -> None:
+        """Name every non-die piece by the gallery (best of its crops, the closer look last)."""
+        if self.gallery is None:
+            return
+        for piece in pieces:
+            if piece.kind == "die":
+                continue
+            crops = [c for c in piece.sighting_crops if c is not None and c.size] or (
+                [piece.crop] if piece.crop is not None and piece.crop.size else []
+            )
+            best = None
+            for crop in crops:
+                try:
+                    found = self.gallery.match(crop)
+                except Exception as exc:
+                    log.warning("gallery match failed: %s", exc)
+                    continue
+                if found and (best is None or found.score > best.score):
+                    best = found
+            if best is not None:
+                piece.name, piece.name_score = best.label, best.score
+
+    def label_crop(self, crop_url: str, label: str) -> dict[str, Any]:
+        """Add a crop shown on the page (``/captures/...``) to the gallery under ``label``."""
+        import cv2
+
+        if self.gallery is None:
+            return {"error": "no gallery (torch missing?)"}
+        relative = crop_url.split("?")[0].removeprefix("/captures/")
+        target = (self.capture_dir / relative).resolve()
+        if self.capture_dir.resolve() not in target.parents or not target.exists():
+            return {"error": "unknown crop"}
+        image = cv2.imread(str(target))
+        if image is None:
+            return {"error": "unreadable crop"}
+        try:
+            path = self.gallery.add(label, image, source=relative)
+        except ValueError as exc:
+            return {"error": str(exc)}
+        return {"ok": True, "label": label, "path": str(path), "counts": self.gallery.counts()}
+
     def current_view(self) -> str:
         """Name of the scan view the body is closest to."""
         body = float(getattr(self.camera, "body", 0.0) or 0.0)
@@ -780,6 +835,19 @@ class Preview:
                             )
                             file.write_bytes(encode_jpeg(slot.crop, quality=92))
                             record["crop"] = f"/captures/reserve/{file.name}"
+                        if (
+                            slot.occupied
+                            and slot.crop is not None
+                            and slot.crop.size
+                            and self.gallery is not None
+                        ):
+                            try:
+                                found = self.gallery.match(slot.crop)
+                            except Exception as exc:
+                                log.warning("gallery match failed: %s", exc)
+                                found = None
+                            record["name"] = found.label if found else None
+                            record["name_score"] = found.score if found else 0.0
                         reserve_out.append(record)
                     reserve_text = describe_reserve(slots)
                     self.scan_state = f"scan: {reserve_text}"
@@ -803,6 +871,7 @@ class Preview:
                 merged = merge_pieces(sightings)
                 self._closer_looks(merged, pitch, stamp)
                 classify_pieces(merged)
+                self._name_pieces(merged)
         finally:
             try:
                 self.camera.look(pitch, 0.0, 0.0)
@@ -1144,6 +1213,12 @@ def make_handler(preview: Preview, table_pitch: float = TABLE_PITCH) -> type[Bas
                     self._json({"error": str(exc)}, 500)
                     return
                 self._json({"ok": True, "body": getattr(preview.camera, "body", None)})
+            elif self.path.startswith("/label"):
+                try:
+                    body = json.loads(raw or b"{}")
+                    self._json(preview.label_crop(str(body["crop"]), str(body["label"])))
+                except (ValueError, TypeError, KeyError) as exc:
+                    self._json({"error": str(exc)}, 400)
             elif self.path.startswith("/zoom"):
                 try:
                     body = json.loads(raw or b"{}")
@@ -1195,6 +1270,7 @@ def main(argv: list[str] | None = None) -> int:
         "--sweep", default="", help="run one sweep at these body angles (e.g. 60,30,0,-30,-60) and exit"
     )
     parser.add_argument("--no-board", action="store_true", help="do not register frames to the board picture")
+    parser.add_argument("--no-gallery", action="store_true", help="do not name pieces with the gallery")
     args = parser.parse_args(argv)
 
     if args.fake:
@@ -1216,6 +1292,13 @@ def main(argv: list[str] | None = None) -> int:
             from src.vision.board_map import BoardReference
 
             preview.board = BoardReference()
+            if not args.no_gallery:
+                try:
+                    from src.vision.gallery import Gallery
+
+                    preview.gallery = Gallery()
+                except Exception as exc:
+                    log.warning("gallery off: %s", exc)
             if preview.load_baseline():
                 log.info(
                     "empty-board baselines loaded from %s: %s",

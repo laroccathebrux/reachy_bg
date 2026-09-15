@@ -75,6 +75,8 @@ class Piece:
     radius_ratio: float = 0.0  # distance to the space centre over the space radius (0 = dead centre)
     edge: bool = False  # base within EDGE_FRACTION of the frame border (lens distortion zone)
     kind: str = "piece"  # piece | die
+    name: str | None = None  # gallery label ("investigator:Akachi Onyele"), when one matched
+    name_score: float = 0.0
     value: int | None = None  # what a die shows
     kind_confidence: float = 0.0
     sighting_crops: list[np.ndarray] = field(default_factory=list, repr=False)  # every look at it
@@ -103,6 +105,8 @@ class Piece:
             "confirmed": self.confirmed,
             "edge": self.edge,
             "kind": self.kind,
+            "name": self.name,
+            "name_score": round(self.name_score, 3),
             "value": self.value,
             "kind_confidence": round(self.kind_confidence, 2),
         }
@@ -426,6 +430,10 @@ def describe(pieces: list[Piece]) -> str:
             shown = f"showing {piece.value}" if piece.value is not None else "value unread"
             sure = "" if piece.kind_confidence >= 0.6 else " (unsure)"
             parts.append(f"a die {shown}{sure} {where}{note}")
+        elif piece.name:
+            kind, _, label = piece.name.partition(":")
+            what = f"{kind} {label}" if label else kind
+            parts.append(f"{what} {where}{note}")
         else:
             parts.append(
                 f"something {where} ({int(piece.width)}x{int(piece.height)} px, strength {piece.strength:.0f}{note})"

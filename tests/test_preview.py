@@ -257,6 +257,18 @@ def test_scan_learns_the_empty_board_then_finds_a_token_from_every_view(tmp_path
             r["occupied"] for r in found["reserve"]
         )
         assert piece["confirmed"] is True  # with the margin forced high every piece gets a closer look
+        assert piece["name"] is None  # no gallery wired in this test
+        # Labelling a crop shown on the page puts it in the gallery; a later scan names the piece.
+        from src.vision.gallery import Gallery
+        from tests.test_gallery import ColourEmbedder
+
+        preview.gallery = Gallery(tmp_path / "gallery", embedder=ColourEmbedder(), threshold=0.9)
+        saved = post("/label", {"crop": piece["crop"], "label": "token:red disc"})
+        assert saved["ok"] and saved["counts"] == {"token:red disc": 1}
+        assert "error" in post("/label", {"crop": "/captures/../../etc/passwd", "label": "x"})
+        assert post("/scan", {"mode": "detect"})["ok"]
+        named = wait_scan()["pieces"][0]
+        assert named["name"] == "token:red disc" and named["name_score"] > 0.9
         assert any(look[0] == "at" for look in camera.looks)
         assert "Rome" in found["text"] and found["centre_pieces"][0]["space"] == "Rome"
         crop = urllib.request.urlopen(base + piece["crop"]).read()

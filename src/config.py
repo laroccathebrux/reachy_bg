@@ -192,6 +192,9 @@ GAME_LOG_DIR = DATA_DIR / "game_logs"
 CAPTURE_DIR = DATA_DIR / "captures"
 # Top-down picture of the whole board (the canonical map every camera frame is registered to).
 BOARD_REFERENCE_IMAGE = Path(os.getenv("BOARD_REFERENCE_IMAGE", str(DATA_DIR / "imgs" / "World_Map.webp")))
+# Crops of the real pieces, one folder per label, photographed by the robot and named by the owner.
+GALLERY_DIR = Path(os.getenv("GALLERY_DIR", str(DATA_DIR / "gallery")))
+GALLERY_MATCH_THRESHOLD = float(os.getenv("GALLERY_MATCH_THRESHOLD", "0.72"))
 AUDIO_CAPTURE_DIR = CAPTURE_DIR / "audio"
 SPEAKER_DIR = DATA_DIR / "speakers"
 MODEL_DIR = DATA_DIR / "models"
@@ -289,6 +292,8 @@ __all__ = [
     "GAME_LOG_DIR",
     "CAPTURE_DIR",
     "BOARD_REFERENCE_IMAGE",
+    "GALLERY_DIR",
+    "GALLERY_MATCH_THRESHOLD",
     "AUDIO_CAPTURE_DIR",
     "SPEAKER_DIR",
     "MODEL_DIR",
