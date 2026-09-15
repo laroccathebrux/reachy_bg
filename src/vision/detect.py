@@ -39,6 +39,9 @@ BLUR = 7  # pixels, on the rectified map, before differencing
 DIFF_THRESHOLD = 45  # upper bound of the adaptive threshold (evening light, noisy baseline)
 DIFF_THRESHOLD_MIN = 25  # lower bound (flat daylight: standees differ by only 33-40, noise p90 is 7)
 NOISE_FACTOR = 3.0  # threshold = NOISE_FACTOR x the 95th percentile of the difference over the board
+LOW_FACTOR = 0.6  # hysteresis: a blob seeded above the threshold grows down to LOW_FACTOR x threshold
+LOW_THRESHOLD_MIN = 20
+SEED_MIN_AREA = 25  # rectified-map pixels above the high threshold needed inside a blob
 MIN_AREA = 300  # rectified-map pixels: an investigator marker or a token is 400-1500 at 1200 wide
 NEAR_FACTOR = 2.8  # a piece this many radii from a space centre is reported as "near" it
 MAX_AREA = 40000
@@ -267,7 +270,12 @@ def find_pieces(
     both = (covered == 255) & (baseline.coverage == 255)  # only where both pictures saw the board
     if threshold is None:
         threshold = adaptive_threshold(diff, both)
-    mask = (diff >= threshold).astype(np.uint8) * 255
+    # Hysteresis: a piece must have a core clearly above the threshold, but its extent is taken
+    # down to a lower one, so a standee that differs only mildly from the board (flat daylight)
+    # keeps its whole footprint while noise without a core is dropped.
+    low = max(LOW_THRESHOLD_MIN, int(round(threshold * LOW_FACTOR)))
+    high_mask = (diff >= threshold) & both
+    mask = (diff >= low).astype(np.uint8) * 255
     mask[~both] = 0
     mask[: int(h * BOARD_MARGIN_TOP), :] = 0
     mask[h - int(h * BOARD_MARGIN_BOTTOM) :, :] = 0
@@ -278,13 +286,16 @@ def find_pieces(
     mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
     mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (9, 9)))
     count, labels, stats, centroids = cv2.connectedComponentsWithStats(mask, connectivity=8)
+    seeds = (
+        np.bincount(labels[high_mask].ravel(), minlength=count) if high_mask.any() else np.zeros(count, int)
+    )
     pieces: list[Piece] = []
     scale_x = registration.reference_size[0] / width
     scale_y = registration.reference_size[1] / h
     fw, fh = registration.frame_size
     for i in range(1, count):
         x, y, bw, bh, area = (int(v) for v in stats[i])
-        if area < min_area or area > max_area or min(bw, bh) < MIN_SIDE:
+        if area < min_area or area > max_area or min(bw, bh) < MIN_SIDE or seeds[i] < SEED_MIN_AREA:
             continue
         cx, cy = (float(v) for v in centroids[i])
         strength = float(diff[labels == i].mean())
