@@ -122,7 +122,7 @@ async function showScan() {
   for (const p of j.pieces) {
     const fig = document.createElement('figure'); fig.style.margin = '0';
     const where = p.space || (p.near ? 'near ' + p.near : 'between spaces');
-    fig.innerHTML = `<img src="${p.crop}" style="height:160px;border:1px solid #555;display:block;cursor:zoom-in"><figcaption style="font-size:12px;color:#ccc">${where} (seen from ${p.views.join(', ')})</figcaption>`;
+    fig.innerHTML = `<img src="${p.crop}" style="height:160px;border:1px solid #555;display:block;cursor:zoom-in"><figcaption style="font-size:12px;color:#ccc">${where} (seen from ${p.views.join(', ')}${p.confirmed ? ', confirmed by a closer look' : ''})</figcaption>`;
     fig.querySelector('img').onclick = () => { if (p.views.includes('centre') && p.box) { zoom.value = 3; setZoom(3, (p.box[0] + p.box[2]) / 2, (p.box[1] + p.box[3]) / 2); } };
     box.appendChild(fig);
   }
@@ -309,6 +309,9 @@ class FakeCamera:
             self.body = body_yaw
         self.looks.append((pitch, yaw, body_yaw))
 
+    def look_at(self, u: float, v: float) -> None:
+        self.looks.append(("at", float(u), float(v)))
+
     def close(self) -> None:
         pass
 
@@ -345,6 +348,15 @@ class RobotCamera:
         if body_yaw is not None:
             self.body = body_yaw
             self.wait_for_body(body_yaw)
+
+    def look_at(self, u: float, v: float) -> None:
+        """Point the camera at pixel (u, v) of the current frame; the body may turn with it."""
+        w, h = 1920, 1080
+        self._mini.look_at_image(int(min(max(u, 1), w - 2)), int(min(max(v, 1), h - 2)), duration=0.8)
+        time.sleep(0.8)
+        measured = self.body_angle()
+        if measured is not None:
+            self.body = measured
 
     def body_angle(self) -> float | None:
         """Measured body yaw in degrees (the first head joint), None when unavailable."""
@@ -408,6 +420,7 @@ class Preview:
         self.scan_state = ""
         self.last_scan: dict[str, Any] | None = None
         self._scan_thread: threading.Thread | None = None
+        self._look_crops: dict[int, str] = {}
         self.registration: Any = None  # latest Registration of the latest frame
         self.registered_at = 0.0
         self._board_thread: threading.Thread | None = None
@@ -533,6 +546,78 @@ class Preview:
         log.info("pieces (%s view): %s", view, text)
         return {"ok": True, "view": view, "inliers": registration.inliers, "pieces": out, "text": text}
 
+    def _closer_looks(self, merged: list[Any], pitch: float, stamp: str) -> None:
+        """Point the camera straight at every ambiguous piece and take the verdict from there.
+
+        At the frame centre the homography is exact (the wide lens distorts the borders) and
+        the piece is at its largest, so the base lands on the right space. The comparison uses
+        the baseline of the view the piece was seen from (both are in map coordinates).
+        """
+        from src.vision.capture import capture_sharpest
+        from src.vision.detect import closest_to, find_pieces
+
+        bodies = dict(SCAN_VIEWS)
+        for index, piece in enumerate(merged):
+            if not piece.needs_closer_look():
+                continue
+            view = next((v for v in piece.views if v in bodies), None)
+            baseline = None if view is None else self.baselines.views.get(view)
+            if baseline is None:
+                continue
+            if piece.space is None:
+                why = "between spaces"
+            elif piece.edge:
+                why = "frame edge"
+            else:
+                why = f"strength {piece.strength:.0f}"
+            self.scan_state = f"scan: closer look at {piece.space or piece.near or '?'} ({why})"
+            try:
+                self.camera.look(pitch, 0.0, bodies[view])
+                time.sleep(SCAN_SETTLE_S)
+                self.camera.look_at(*piece.frame_base)
+                time.sleep(SCAN_SETTLE_S)
+                frame, _ = capture_sharpest(self.camera.get_frame, frames=3)
+                registration = None if frame is None else self.board.locate(frame)
+                if registration is None:
+                    log.info("closer look at %s: board not found", piece.space or piece.near)
+                    continue
+                candidates = find_pieces(registration, frame, baseline)
+                seen_again = closest_to(candidates, piece.x, piece.y)
+            except Exception as exc:
+                log.warning("closer look failed: %s", exc)
+                continue
+            if seen_again is None:
+                log.info("closer look at %s: nothing there any more", piece.space or piece.near)
+                continue
+            before = piece.space or f"near {piece.near}"
+            for attr in (
+                "x",
+                "y",
+                "width",
+                "height",
+                "area",
+                "strength",
+                "space",
+                "near",
+                "distance",
+                "radius_ratio",
+                "crop",
+            ):
+                setattr(piece, attr, getattr(seen_again, attr))
+            piece.confirmed = True
+            piece.edge = False
+            name = f"{stamp}_look_{index}_{(piece.space or piece.near or 'between').replace(' ', '_')}.jpg"
+            if piece.crop is not None and piece.crop.size:
+                (self.capture_dir / "pieces").mkdir(parents=True, exist_ok=True)
+                (self.capture_dir / "pieces" / name).write_bytes(encode_jpeg(piece.crop, quality=92))
+                self._look_crops[id(piece)] = f"/captures/pieces/{name}"
+            log.info(
+                "closer look: %s -> %s (strength %.0f)",
+                before,
+                piece.space or f"near {piece.near}",
+                piece.strength,
+            )
+
     def current_view(self) -> str:
         """Name of the scan view the body is closest to."""
         body = float(getattr(self.camera, "body", 0.0) or 0.0)
@@ -561,6 +646,8 @@ class Preview:
             self.scan_state = "scan failed: run the baseline sweep on the empty board first"
             return
         stamp = time.strftime("%Y%m%d_%H%M%S")
+        self._look_crops = {}
+        candidate_names: dict[int, str | None] = {}  # crop file names use the space at sighting time
         sightings: list[tuple[str, list[Any]]] = []
         views_out: list[dict[str, Any]] = []
         seen: set[str] = set()
@@ -591,6 +678,8 @@ class Preview:
                     views_out.append({"view": name, "error": "no baseline for this view"})
                     continue
                 pieces = find_pieces(registration, frame, baseline)
+                for piece in pieces:
+                    candidate_names[id(piece)] = piece.space or piece.near
                 records = self._pieces_json(registration, pieces, stamp, name)
                 if name == "centre":
                     centre_pieces = records
@@ -604,6 +693,9 @@ class Preview:
                     }
                 )
                 self.scan_state = f"scan: {name} view, {describe(pieces)}"
+            if mode == "detect":
+                merged = merge_pieces(sightings)
+                self._closer_looks(merged, pitch, stamp)
         finally:
             try:
                 self.camera.look(pitch, 0.0, 0.0)
@@ -624,16 +716,17 @@ class Preview:
                 f"{len(seen)} spaces covered, {len(unseen)} not"
             )
             return
-        merged = merge_pieces(sightings)
         merged_out = []
         for piece in merged:
             record = piece.record()
+            if id(piece) in self._look_crops:
+                record["crop"] = self._look_crops[id(piece)]
             for view_name, pieces in sightings:
                 for i, candidate in enumerate(pieces):
-                    if candidate is piece:
+                    if candidate is piece and "crop" not in record:
                         record["crop"] = (
                             f"/captures/pieces/{stamp}_{view_name}_{i}_"
-                            f"{(piece.space or piece.near or 'between').replace(' ', '_')}.jpg"
+                            f"{(candidate_names.get(id(candidate)) or 'between').replace(' ', '_')}.jpg"
                         )
                         if view_name == "centre" and i < len(centre_pieces):
                             record["box"] = centre_pieces[i]["box"]

@@ -179,8 +179,11 @@ def test_board_endpoints_with_a_synthetic_board(tmp_path):
         preview.stop()
 
 
-def test_scan_learns_the_empty_board_then_finds_a_token_from_every_view(tmp_path):
+def test_scan_learns_the_empty_board_then_finds_a_token_from_every_view(tmp_path, monkeypatch):
     cv2 = pytest.importorskip("cv2")
+    import src.vision.detect as detect_module
+
+    monkeypatch.setattr(detect_module, "CLOSER_LOOK_STRENGTH", 1000.0)  # every piece gets a closer look
     from src.vision.board_map import BoardReference
     from src.vision.spaces import BY_NAME
     from tests.test_board_map import perspective_frame, synthetic_board
@@ -204,6 +207,9 @@ def test_scan_learns_the_empty_board_then_finds_a_token_from_every_view(tmp_path
             self.looks.append((pitch, yaw, body_yaw))
             if body_yaw is not None:
                 self.body = body_yaw
+
+        def look_at(self, u, v):
+            self.looks.append(("at", u, v))
 
     camera = Camera()
     preview = Preview(camera, stream_width=320, fps=10.0, capture_dir=tmp_path / "board")
@@ -247,6 +253,8 @@ def test_scan_learns_the_empty_board_then_finds_a_token_from_every_view(tmp_path
         assert found["ok"] and len(found["pieces"]) == 1, found
         piece = found["pieces"][0]
         assert piece["space"] == "Rome" and sorted(piece["views"]) == ["centre", "left", "right"]
+        assert piece["confirmed"] is True  # the synthetic disc is weak (< 60): it got a closer look
+        assert any(look[0] == "at" for look in camera.looks)
         assert "Rome" in found["text"] and found["centre_pieces"][0]["space"] == "Rome"
         crop = urllib.request.urlopen(base + piece["crop"]).read()
         assert crop[:2] == b"\xff\xd8"

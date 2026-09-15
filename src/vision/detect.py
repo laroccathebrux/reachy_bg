@@ -30,6 +30,8 @@ from src.vision.spaces import nearest_space
 log = get_logger(__name__)
 
 MAP_WIDTH = 1200  # working width of the rectified map; the space table was annotated at this size
+CLOSER_LOOK_STRENGTH = 60.0  # weaker sightings get a closer look (owner's rule)
+EDGE_FRACTION = 0.12  # of the frame width/height: the lens distorts there, the homography does not
 BLUR = 7  # pixels, on the rectified map, before differencing
 # Measured on the empty board against a median baseline: no false blob of 300 px survives 45,
 # while a dark investigator standee on the dark green Buenos Aires circle scores 53 (1200 px).
@@ -58,6 +60,15 @@ class Piece:
     frame_box: tuple[int, int, int, int] = (0, 0, 0, 0)  # x0, y0, x1, y1 in the original frame
     crop: np.ndarray | None = field(default=None, repr=False)
     views: list[str] = field(default_factory=list)  # which views of a scan saw it
+    frame_base: tuple[float, float] = (0.0, 0.0)  # frame pixel where the piece touches the board
+    confirmed: bool = False  # verdict taken from a closer look with the piece at the frame centre
+    radius_ratio: float = 0.0  # distance to the space centre over the space radius (0 = dead centre)
+    edge: bool = False  # base within EDGE_FRACTION of the frame border (lens distortion zone)
+
+    def needs_closer_look(self, min_strength: float | None = None) -> bool:
+        """Ambiguous enough to be worth pointing the camera straight at it."""
+        weak = self.strength < (CLOSER_LOOK_STRENGTH if min_strength is None else min_strength)
+        return not self.confirmed and (self.space is None or self.radius_ratio > 0.6 or self.edge or weak)
 
     def record(self) -> dict[str, Any]:
         return {
@@ -72,6 +83,9 @@ class Piece:
             "distance": round(self.distance, 4),
             "frame_box": list(self.frame_box),
             "views": list(self.views),
+            "frame_base": [round(self.frame_base[0], 1), round(self.frame_base[1], 1)],
+            "confirmed": self.confirmed,
+            "edge": self.edge,
         }
 
 
@@ -237,6 +251,14 @@ def find_pieces(
         if space is None:
             candidate, distance = nearest_space(base_x, base_y, max_radius_factor=NEAR_FACTOR)
             near = candidate.name if candidate else None
+        anchor = space or nearest_space(base_x, base_y, max_radius_factor=1e9)[0]
+        radius_ratio = distance / anchor.radius if anchor else 0.0
+        ref_w, ref_h = registration.reference_size
+        fbx, fby = registration.to_frame([(base_x * ref_w, base_y * ref_h)])[0]
+        edge = not (
+            EDGE_FRACTION * fw <= fbx <= (1 - EDGE_FRACTION) * fw
+            and EDGE_FRACTION * fh <= fby <= (1 - EDGE_FRACTION) * fh
+        )
         # The blob's box back in the original frame, with a margin, for the zoomed crop.
         corners = np.float32([[x, y], [x + bw, y], [x + bw, y + bh], [x, y + bh]]) * [scale_x, scale_y]
         in_frame = registration.to_frame(corners)
@@ -263,10 +285,23 @@ def find_pieces(
                 near=near,
                 frame_box=box,
                 crop=crop,
+                frame_base=(float(fbx), float(fby)),
+                radius_ratio=float(radius_ratio),
+                edge=bool(edge),
             )
         )
     pieces.sort(key=lambda p: -p.area)
     return pieces
+
+
+def closest_to(pieces: list[Piece], x: float, y: float, max_distance: float = 120.0) -> Piece | None:
+    """The piece whose map position is nearest to (x, y), within ``max_distance`` map pixels."""
+    best, best_d = None, max_distance
+    for piece in pieces:
+        d = ((piece.x - x) ** 2 + (piece.y - y) ** 2) ** 0.5
+        if d <= best_d:
+            best, best_d = piece, d
+    return best
 
 
 def describe(pieces: list[Piece]) -> str:
@@ -281,8 +316,9 @@ def describe(pieces: list[Piece]) -> str:
             where = f"near {piece.near}, not on it"
         else:
             where = "between spaces"
+        note = ", confirmed by a closer look" if piece.confirmed else ""
         parts.append(
-            f"something {where} ({int(piece.width)}x{int(piece.height)} px, strength {piece.strength:.0f})"
+            f"something {where} ({int(piece.width)}x{int(piece.height)} px, strength {piece.strength:.0f}{note})"
         )
     return "; ".join(parts) + "."
 
@@ -294,6 +330,7 @@ __all__ = [
     "difference_map",
     "find_pieces",
     "merge_pieces",
+    "closest_to",
     "describe",
     "MAP_WIDTH",
 ]

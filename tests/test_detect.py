@@ -84,3 +84,19 @@ def test_pieces_on_the_reserve_and_the_legend_are_ignored():
     frame = cv2.warpPerspective(busy, true_h, (empty.shape[1], empty.shape[0]))
     registration = reference.locate(frame)
     assert find_pieces(registration, frame, baseline, min_area=80) == []
+
+
+def test_needs_closer_look_rules():
+    from src.vision.detect import Piece, closest_to
+
+    strong = Piece(100, 100, 20, 20, 400, 80.0, "Rome", 0.01, radius_ratio=0.2)
+    weak = Piece(100, 100, 20, 20, 400, 50.0, "Rome", 0.01, radius_ratio=0.2)
+    off_centre = Piece(100, 100, 20, 20, 400, 80.0, "Rome", 0.03, radius_ratio=0.8)
+    at_edge = Piece(100, 100, 20, 20, 400, 80.0, "Rome", 0.01, radius_ratio=0.2, edge=True)
+    between = Piece(100, 100, 20, 20, 400, 80.0, None, 0.06, near="Rome", radius_ratio=1.5)
+    assert not strong.needs_closer_look()
+    assert all(p.needs_closer_look() for p in (weak, off_centre, at_edge, between))
+    strong.confirmed = True
+    assert not strong.needs_closer_look()
+    assert closest_to([strong, Piece(500, 500, 9, 9, 100, 70.0, "Tokyo", 0.0)], 110, 95) is strong
+    assert closest_to([strong], 400, 400) is None
