@@ -237,11 +237,7 @@ def find_pieces(
     mask[h - int(h * BOARD_MARGIN_BOTTOM) :, :] = 0
     for x0, y0, x1, y1 in (RESERVE_BOX, LEGEND_BOX):
         mask[int(h * y0) : int(h * y1), int(w * x0) : int(w * x1)] = 0
-    # Direction "towards the camera" on the map: a standing piece is smeared away from the
-    # camera, so the point where it touches the board is its extreme along this direction.
     fw, fh = registration.frame_size
-    towards = registration.to_reference([(fw / 2, fh), (fw / 2, 0)])
-    towards = (towards[0] - towards[1]) / (np.linalg.norm(towards[0] - towards[1]) + 1e-6)
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
     mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
     mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (9, 9)))
@@ -256,10 +252,22 @@ def find_pieces(
             continue
         cx, cy = (float(v) for v in centroids[i])
         strength = float(diff[labels == i].mean())
-        ys, xs = np.nonzero(labels == i)
-        along = xs * towards[0] * scale_x + ys * towards[1] * scale_y
-        nearest = along >= np.percentile(along, 92)  # the 8 % of the blob closest to the camera
-        base_x, base_y = float(xs[nearest].mean()) / w, float(ys[nearest].mean()) / h
+        # A standing piece is smeared away from the camera; the point where it touches the
+        # board is its lowest point in the camera frame (nearest to the camera). Work on the
+        # blob's contour in frame pixels: the direction "down" in the frame is reliable, a
+        # direction computed on the map from far-away frame pixels is not (the horizon).
+        contours, _ = cv2.findContours(
+            (labels == i).astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE
+        )
+        outline = np.vstack([c.reshape(-1, 2) for c in contours]).astype(np.float32) * [scale_x, scale_y]
+        in_frame = registration.to_frame(outline)
+        lowest = in_frame[:, 1] >= np.percentile(in_frame[:, 1], 92)
+        fbx, fby = (float(v) for v in in_frame[lowest].mean(axis=0))
+        base_ref = registration.to_reference([(fbx, fby)])[0]
+        base_x, base_y = (
+            float(base_ref[0]) / registration.reference_size[0],
+            float(base_ref[1]) / registration.reference_size[1],
+        )
         space, distance = nearest_space(base_x, base_y)
         near = None
         if space is None:
@@ -267,8 +275,6 @@ def find_pieces(
             near = candidate.name if candidate else None
         anchor = space or nearest_space(base_x, base_y, max_radius_factor=1e9)[0]
         radius_ratio = distance / anchor.radius if anchor else 0.0
-        ref_w, ref_h = registration.reference_size
-        fbx, fby = registration.to_frame([(base_x * ref_w, base_y * ref_h)])[0]
         edge = not (
             EDGE_FRACTION * fw <= fbx <= (1 - EDGE_FRACTION) * fw
             and EDGE_FRACTION * fh <= fby <= (1 - EDGE_FRACTION) * fh
