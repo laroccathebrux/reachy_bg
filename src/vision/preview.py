@@ -132,7 +132,8 @@ async function showScan() {
   }
   for (const p of j.pieces) {
     const fig = document.createElement('figure'); fig.style.margin = '0';
-    const where = p.space || (p.near ? 'near ' + p.near : 'between spaces');
+    let where = p.space || (p.near ? 'near ' + p.near : 'between spaces');
+    if (p.kind === 'die') where = `die showing ${p.value ?? '?'}${p.kind_confidence < 0.6 ? ' (unsure)' : ''} at ${where}`;
     fig.innerHTML = `<img src="${p.crop}" style="height:160px;border:1px solid #555;display:block;cursor:zoom-in"><figcaption style="font-size:12px;color:#ccc">${where} (seen from ${p.views.join(', ')}${p.confirmed ? ', confirmed by a closer look' : ''})</figcaption>`;
     fig.querySelector('img').onclick = () => { if (p.views.includes('centre') && p.box) { zoom.value = 3; setZoom(3, (p.box[0] + p.box[2]) / 2, (p.box[1] + p.box[3]) / 2); } };
     box.appendChild(fig);
@@ -651,6 +652,8 @@ class Preview:
                 setattr(piece, attr, getattr(seen_again, attr))
             piece.confirmed = True
             piece.edge = False
+            if seen_again.crop is not None and seen_again.crop.size:
+                piece.sighting_crops = piece.sighting_crops + [seen_again.crop]
             name = f"{stamp}_look_{index}_{(piece.space or piece.near or 'between').replace(' ', '_')}.jpg"
             if piece.crop is not None and piece.crop.size:
                 (self.capture_dir / "pieces").mkdir(parents=True, exist_ok=True)
@@ -679,7 +682,14 @@ class Preview:
 
     def _scan(self, mode: str, pitch: float) -> None:
         from src.vision.capture import capture_sharpest
-        from src.vision.detect import Baseline, BaselineSet, describe, find_pieces, merge_pieces
+        from src.vision.detect import (
+            Baseline,
+            BaselineSet,
+            classify_pieces,
+            describe,
+            find_pieces,
+            merge_pieces,
+        )
         from src.vision.spaces import SPACES
 
         if self.board is None:
@@ -763,6 +773,7 @@ class Preview:
             if mode == "detect":
                 merged = merge_pieces(sightings)
                 self._closer_looks(merged, pitch, stamp)
+                classify_pieces(merged)
         finally:
             try:
                 self.camera.look(pitch, 0.0, 0.0)

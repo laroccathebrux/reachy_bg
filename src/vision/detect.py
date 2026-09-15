@@ -64,6 +64,10 @@ class Piece:
     confirmed: bool = False  # verdict taken from a closer look with the piece at the frame centre
     radius_ratio: float = 0.0  # distance to the space centre over the space radius (0 = dead centre)
     edge: bool = False  # base within EDGE_FRACTION of the frame border (lens distortion zone)
+    kind: str = "piece"  # piece | die
+    value: int | None = None  # what a die shows
+    kind_confidence: float = 0.0
+    sighting_crops: list[np.ndarray] = field(default_factory=list, repr=False)  # every look at it
 
     def needs_closer_look(self, min_strength: float | None = None) -> bool:
         """Ambiguous enough to be worth pointing the camera straight at it."""
@@ -86,6 +90,9 @@ class Piece:
             "frame_base": [round(self.frame_base[0], 1), round(self.frame_base[1], 1)],
             "confirmed": self.confirmed,
             "edge": self.edge,
+            "kind": self.kind,
+            "value": self.value,
+            "kind_confidence": round(self.kind_confidence, 2),
         }
 
 
@@ -171,13 +178,18 @@ def merge_pieces(sightings: list[tuple[str, list[Piece]]]) -> list[Piece]:
     merged: list[Piece] = []
     for view, pieces in sightings:
         for piece in pieces:
+            if piece.crop is not None and piece.crop.size and not piece.sighting_crops:
+                piece.sighting_crops = [piece.crop]
             for known in merged:
                 if ((known.x - piece.x) ** 2 + (known.y - piece.y) ** 2) ** 0.5 <= MERGE_RADIUS:
+                    crops = known.sighting_crops + piece.sighting_crops
                     if piece.area > known.area:  # keep the better sighting, remember both views
                         piece.views = known.views + [view]
+                        piece.sighting_crops = crops
                         merged[merged.index(known)] = piece
                     else:
                         known.views.append(view)
+                        known.sighting_crops = crops
                     break
             else:
                 piece.views = [view]
@@ -304,6 +316,30 @@ def closest_to(pieces: list[Piece], x: float, y: float, max_distance: float = 12
     return best
 
 
+def classify_pieces(pieces: list[Piece]) -> None:
+    """Dice among the pieces, with the value voted across every look at them."""
+    from collections import Counter
+
+    from src.vision.dice import read_die
+
+    for piece in pieces:
+        crops = [c for c in piece.sighting_crops if c is not None and c.size] or (
+            [piece.crop] if piece.crop is not None and piece.crop.size else []
+        )
+        readings = [read_die(c) for c in crops]
+        dice = [r for r in readings if r.is_die]
+        if not readings or len(dice) * 2 < len(readings):
+            continue
+        piece.kind = "die"
+        values = Counter(r.value for r in dice if r.value is not None)
+        if not values:
+            piece.value, piece.kind_confidence = None, 0.2
+            continue
+        value, votes = values.most_common(1)[0]
+        piece.value = value
+        piece.kind_confidence = round(votes / len(dice), 2) if len(dice) > 1 else 0.5
+
+
 def describe(pieces: list[Piece]) -> str:
     """One English sentence per piece, for the log and for the voice later."""
     if not pieces:
@@ -317,9 +353,14 @@ def describe(pieces: list[Piece]) -> str:
         else:
             where = "between spaces"
         note = ", confirmed by a closer look" if piece.confirmed else ""
-        parts.append(
-            f"something {where} ({int(piece.width)}x{int(piece.height)} px, strength {piece.strength:.0f}{note})"
-        )
+        if piece.kind == "die":
+            shown = f"showing {piece.value}" if piece.value is not None else "value unread"
+            sure = "" if piece.kind_confidence >= 0.6 else " (unsure)"
+            parts.append(f"a die {shown}{sure} {where}{note}")
+        else:
+            parts.append(
+                f"something {where} ({int(piece.width)}x{int(piece.height)} px, strength {piece.strength:.0f}{note})"
+            )
     return "; ".join(parts) + "."
 
 
@@ -330,6 +371,7 @@ __all__ = [
     "difference_map",
     "find_pieces",
     "merge_pieces",
+    "classify_pieces",
     "closest_to",
     "describe",
     "MAP_WIDTH",

@@ -100,3 +100,17 @@ def test_needs_closer_look_rules():
     assert not strong.needs_closer_look()
     assert closest_to([strong, Piece(500, 500, 9, 9, 100, 70.0, "Tokyo", 0.0)], 110, 95) is strong
     assert closest_to([strong], 400, 400) is None
+
+
+def test_classify_pieces_votes_dice_values():
+    from src.vision.detect import Piece, classify_pieces, describe
+    from tests.test_dice import synthetic_die
+
+    die = Piece(100, 100, 20, 20, 400, 70.0, "10", 0.01)
+    die.sighting_crops = [synthetic_die(5), synthetic_die(5), synthetic_die(3)]
+    token = Piece(300, 300, 20, 20, 400, 70.0, "Rome", 0.01)
+    token.crop = np.full((60, 60, 3), (200, 210, 220), dtype=np.uint8)
+    classify_pieces([die, token])
+    assert die.kind == "die" and die.value == 5 and die.kind_confidence > 0.6
+    assert token.kind == "piece" and token.value is None
+    assert describe([die]).startswith("a die showing 5 at 10")

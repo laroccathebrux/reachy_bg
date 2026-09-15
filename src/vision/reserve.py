@@ -17,7 +17,7 @@ from typing import Any
 import numpy as np
 
 from src.logger import get_logger
-from src.vision.detect import DIFF_THRESHOLD, Baseline, difference_map
+from src.vision.detect import Baseline, difference_map
 
 log = get_logger(__name__)
 
@@ -26,7 +26,11 @@ RESERVE_SLOTS: tuple[tuple[float, float, float, float], ...] = tuple(
     (x0 / 1200, 684 / 790, x1 / 1200, 790 / 790) for x0, x1 in ((94, 174), (182, 256), (262, 336), (344, 418))
 )
 SLOT_INSET = 0.12  # fraction of the slot shrunk on every side: the printed outline is not a card
-OCCUPIED_FRACTION = 0.35  # of the inset slot area differing from the baseline
+SLOT_PICTURE_BOTTOM = 0.55  # the upper part of a card is its picture: strong against the cream slot;
+# the text half is cream on cream and barely differs. Measured: cards 0.62-0.73 of the picture
+# window above 20, empty slots 0.00 (another empty view against the baseline).
+SLOT_THRESHOLD = 20
+OCCUPIED_FRACTION = 0.3  # of the picture window differing from the baseline
 COVERED_FRACTION = 0.8  # of the slot that both pictures must have seen to judge it
 
 
@@ -54,7 +58,7 @@ def read_reserve(
     frame: np.ndarray,
     baseline: Baseline,
     *,
-    threshold: int = DIFF_THRESHOLD,
+    threshold: int = SLOT_THRESHOLD,
     occupied_fraction: float = OCCUPIED_FRACTION,
 ) -> list[Slot]:
     width = baseline.image.shape[1]
@@ -67,7 +71,7 @@ def read_reserve(
     slots: list[Slot] = []
     for index, (x0, y0, x1, y1) in enumerate(RESERVE_SLOTS, start=1):
         ix0, ix1 = x0 + (x1 - x0) * SLOT_INSET, x1 - (x1 - x0) * SLOT_INSET
-        iy0, iy1 = y0 + (y1 - y0) * SLOT_INSET, y1 - (y1 - y0) * SLOT_INSET
+        iy0, iy1 = y0 + (y1 - y0) * SLOT_INSET, y0 + (y1 - y0) * SLOT_PICTURE_BOTTOM
         px0, px1 = int(ix0 * w), int(ix1 * w)
         py0, py1 = int(iy0 * h), min(int(iy1 * h), h - 1)
         window = diff[py0:py1, px0:px1]
