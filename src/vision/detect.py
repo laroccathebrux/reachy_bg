@@ -182,7 +182,7 @@ class BaselineSet:
         return result
 
 
-MERGE_RADIUS = 30.0  # rectified-map pixels: sightings closer than this from two views are one piece
+MERGE_RADIUS = 50.0  # rectified-map pixels: sightings closer than this are one piece (a standee splits into two blobs 40-60 px apart)
 
 
 def merge_pieces(sightings: list[tuple[str, list[Piece]]]) -> list[Piece]:

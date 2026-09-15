@@ -429,10 +429,14 @@ is the extreme of its blob towards the camera, computed per view.
   scan view: a view turned further (60-75) shows too much room to register, and the base
   stalls at 64 with the head at pitch 35.
 - **Dice** (`src/vision/dice.py`): a die is the black, roughly square blob nearest the centre
-  of a piece's crop (25-140 px); its value is the count of light round spots inside the
-  eroded body, voted across the views that saw it. At 60 px per die the value is a best
-  effort: 6 read as 6 twice, once as 4; confidence is reported and low values should be
-  confirmed by voice.
+  of a piece's crop (25-140 px). Seen from the head at 35 degrees above the table the top
+  face is the compressed upper part of the outline (about 45 % of its height, pips wider than
+  tall) and the front face the larger lower part with rounder pips; the first reader counted
+  the front face. Now only the spots above 55 % of the body height count (in the 40-55 %
+  band only wide, full-size ones), a spot 1.6 x the median pip area counts as two touching
+  pips, and the value is voted across the views with the closer look weighing twice. Live
+  with the owner's values: 5 read as 5 (confidence 0.8) and 4 as 4 (0.33, flagged unsure);
+  per view the centre and the closer look were right every time, the side views half the time.
 - **Daylight**: the evening baseline was useless in the morning (board brightness 138 -> 86,
   median difference 28 against 2 the night before) and the scan invented pieces. Now every
   scan view is checked against its baseline (at least 40 inliers, median difference at most
