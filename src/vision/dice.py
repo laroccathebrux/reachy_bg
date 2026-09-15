@@ -26,7 +26,13 @@ UPSCALE = 4
 BODY_GREY_MAX = 70  # a die body is darker than this (0..255): black plastic, not the board's dark art
 MIN_BODY_PX = 25  # in original frame pixels: smaller dark blobs are shadows or print
 MAX_BODY_PX = 140
-INNER_FRACTION = 0.22  # of the body size eroded on every side before counting pips
+INNER_FRACTION = 0.12  # of the body size eroded on every side before counting pips
+# Seen from the robot's head (about 35 degrees above the table) a die shows its top face,
+# compressed to roughly the upper 45 % of its outline, and its front face below it, larger
+# and with rounder pips. Only the spots above this fraction of the body height are the value.
+TOP_FACE_FRACTION = 0.55
+TOP_FACE_BAND = 0.40  # between this and TOP_FACE_FRACTION a spot must look like a compressed top pip
+MERGED_PIP_AREA = 1.6  # a spot this many times the median pip area is two pips touching
 PIP_MIN_AREA_FRACTION = 0.004  # of the body area (at the upscaled size)
 PIP_MAX_AREA_FRACTION = 0.06
 
@@ -97,22 +103,34 @@ def read_die(crop: np.ndarray) -> DieReading:
     threshold = floor + max(30.0, 0.5 * (float(np.percentile(inside, 99)) - floor))
     light = ((grey > threshold) & (inner > 0)).astype(np.uint8) * 255
     light = cv2.morphologyEx(light, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5)))
-    count, _, stats, _ = cv2.connectedComponentsWithStats(light)
-    pips = 0
+    count, _, stats, centroids = cv2.connectedComponentsWithStats(light)
+    spots: list[tuple[float, float, float, float]] = []  # x, y, area, width over height
     for i in range(1, count):
         bx, by, bw, bh, area = (int(v) for v in stats[i])
         if not (PIP_MIN_AREA_FRACTION * body_area <= area <= PIP_MAX_AREA_FRACTION * body_area):
             continue
-        if not (0.5 <= bw / max(1, bh) <= 2.0):
+        if not (0.4 <= bw / max(1, bh) <= 2.5):
             continue
-        if area < 0.45 * bw * bh:  # not filled enough to be a round spot
-            continue
-        pips += 1
-    if pips == 0:
+        spots.append((float(centroids[i][0]), float(centroids[i][1]), float(area), bw / max(1, bh)))
+    if spots:  # highlights are much smaller than the pips
+        median_area = float(np.median([a for _, _, a, _ in spots]))
+        spots = [sp for sp in spots if sp[2] >= 0.4 * median_area]
+    if not spots:
         return DieReading(True, None, 0.2, int(size), 0)
+    median_area = float(np.median([a for _, _, a, _ in spots]))
+    pips = 0
+    for _, sy, area, aspect in spots:
+        fy = (sy - y) / max(1, h)
+        if fy >= TOP_FACE_FRACTION:
+            continue  # front face
+        if fy >= TOP_FACE_BAND and (aspect < 0.95 or area < 0.75 * median_area):
+            continue  # a front-face pip peeking into the band: taller than wide, and smaller
+        pips += 2 if area >= MERGED_PIP_AREA * median_area else 1
+    if pips == 0:
+        return DieReading(True, None, 0.2, int(size), len(spots))
     value = min(6, pips)
-    confidence = 0.75 if 1 <= pips <= 6 else 0.3
-    return DieReading(True, value, confidence, int(size), pips)
+    confidence = 0.7 if pips <= 6 else 0.3
+    return DieReading(True, value, confidence, int(size), len(spots))
 
 
 def describe_die(reading: DieReading) -> str:

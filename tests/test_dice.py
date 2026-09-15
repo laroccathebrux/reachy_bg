@@ -17,19 +17,20 @@ LAYOUTS = {
 }
 
 
-def synthetic_die(value, size=60, margin=30, blur=3):
+def synthetic_die(value, front=3, size=100, margin=30, blur=3):
+    """A die as the robot sees it: the top face compressed into the upper 45 % of the outline, the
+    front face (showing ``front``) below it, larger and with rounder pips."""
     canvas = np.full(
         (size + 2 * margin, size + 2 * margin, 3), (170, 190, 200), dtype=np.uint8
     )  # cream board
     cv2.rectangle(canvas, (margin, margin), (margin + size, margin + size), (25, 25, 25), -1)
+    top_h = int(size * 0.45)
     for fx, fy in LAYOUTS[value]:
-        cv2.circle(
-            canvas,
-            (int(margin + fx * size), int(margin + fy * size)),
-            max(3, size // 11),
-            (235, 235, 235),
-            -1,
-        )
+        centre = (int(margin + fx * size), int(margin + fy * top_h))
+        cv2.ellipse(canvas, centre, (size // 16, size // 24), 0, 0, 360, (235, 235, 235), -1)
+    for fx, fy in LAYOUTS[front]:
+        centre = (int(margin + fx * size), int(margin + top_h + fy * (size - top_h)))
+        cv2.circle(canvas, centre, size // 14, (235, 235, 235), -1)
     return cv2.GaussianBlur(canvas, (blur | 1, blur | 1), 0)
 
 

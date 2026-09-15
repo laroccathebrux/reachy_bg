@@ -393,13 +393,20 @@ def classify_pieces(pieces: list[Piece]) -> None:
         if not readings or len(dice) * 2 < len(readings):
             continue
         piece.kind = "die"
-        values = Counter(r.value for r in dice if r.value is not None)
+        # The closer look (appended last when the piece was confirmed) has the die centred in
+        # the frame, the most faithful view of its top face: it weighs twice.
+        weights = [2 if (piece.confirmed and i == len(readings) - 1) else 1 for i in range(len(readings))]
+        values: Counter[int] = Counter()
+        for reading, weight in zip(readings, weights, strict=True):
+            if reading.is_die and reading.value is not None:
+                values[reading.value] += weight
         if not values:
             piece.value, piece.kind_confidence = None, 0.2
             continue
         value, votes = values.most_common(1)[0]
         piece.value = value
-        piece.kind_confidence = round(votes / len(dice), 2) if len(dice) > 1 else 0.5
+        total = sum(values.values())
+        piece.kind_confidence = round(votes / total, 2) if total > 1 else 0.5
 
 
 def describe(pieces: list[Piece]) -> str:
