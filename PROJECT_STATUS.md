@@ -390,6 +390,37 @@ Still open on this path: naming *what* the piece is (gallery of the real pieces,
 several pieces close together (one blob), and pieces on the Reserve or the far right edge
 (a sweep view instead of the centre view).
 
+## Done: the board scan with a closer look (2026-09-14, evening)
+
+At the start of a session the robot scans the board in three views (centre, body +45,
+body -45): a *baseline sweep* on the empty board learns one baseline per view; a *scan*
+detects the pieces in every view, merges the sightings by map position and returns one
+board state (piece -> space, which views saw it) plus the spaces no view covers (none, with
+this framing). Ambiguous sightings (between spaces, base off-centre in its space, frame edge,
+or difference strength below 60, the owner's rule) get a *closer look*: the body turns to
+put the piece at the frame centre and the verdict is taken there, against the baseline of
+the nearest scan view. Buttons "Baseline sweep (empty board)" and "Scan the board" in the
+preview; `POST /scan`, `GET /scan_result`.
+
+Measured and learned on the robot:
+
+| Signal | Value |
+|---|---|
+| Three-view scan without closer looks | 14 s |
+| Each closer look (turn, settle, three frames, register) | 4-5 s |
+| Body yaw: frame pixels per degree at 1080p | 17.5 (a point moves right when the body turns left) |
+| Head pitch: frame pixels per degree | 2.7 (the head tilts around the camera; pitch cannot centre a piece) |
+| Investigator on San Francisco, first pass from the left view | "1" or "near 2" (standee smeared by perspective, board corner) |
+| Same, after the closer look with the nearest view's baseline | "San Francisco" |
+| Investigator on Sydney (right view only) | "Sydney", confirmed |
+| Card lying in the Reserve | ignored (the Reserve and the legend are masked) |
+
+Two dead ends: the SDK's `look_at_image` sent the head to the ceiling (it reads the camera
+calibration at the sensor's full size and resets the body yaw); comparing a closer-look frame
+with the *centre* baseline at a board corner gave a false blob offset (the corner is in the
+lens distortion zone of the centre view), hence the nearest-view baseline. The piece's base
+is the extreme of its blob towards the camera, computed per view.
+
 ## Decisions taken
 
 | Topic | Decision | Where |

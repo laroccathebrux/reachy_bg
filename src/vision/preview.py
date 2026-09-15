@@ -48,6 +48,10 @@ SCAN_VIEWS = (("centre", 0.0), ("left", 45.0), ("right", -45.0))  # name, body y
 SCAN_SETTLE_S = 0.6
 BODY_YAW_MAX = 90.0  # degrees either way; the base turns further but the table is in front
 BODY_YAW_SPEED = 60.0  # deg/s asked of the base when turning between views
+FRAME_WIDTH, FRAME_HEIGHT = 1920, 1080
+LOOK_PX_PER_DEG_BODY = 17.5  # measured: frame pixels a map point moves per degree of body yaw
+LOOK_CENTRE_TOLERANCE = 250.0  # px (horizontal): a closer look is refined once beyond this
+LOOK_RAISE_DEG = 8.0  # head raised by this much for a closer look at the far edge of the board
 
 PAGE = """<!doctype html>
 <html lang="en">
@@ -350,13 +354,20 @@ class RobotCamera:
             self.wait_for_body(body_yaw)
 
     def look_at(self, u: float, v: float) -> None:
-        """Point the camera at pixel (u, v) of the current frame; the body may turn with it."""
-        w, h = 1920, 1080
-        self._mini.look_at_image(int(min(max(u, 1), w - 2)), int(min(max(v, 1), h - 2)), duration=0.8)
-        time.sleep(0.8)
-        measured = self.body_angle()
-        if measured is not None:
-            self.body = measured
+        """Centre pixel (u, v) of the current frame horizontally by turning the body.
+
+        Measured on the robot (2026-09-14): one degree of body yaw moves a point of the map
+        by LOOK_PX_PER_DEG_BODY pixels at 1080p, while one degree of head pitch moves it by
+        under 3 pixels (the head tilts around the camera), so the vertical position is left
+        alone. The SDK's ``look_at_image`` is not used: it reads the calibration at the
+        sensor's full size and resets the body yaw, which sent the head to the ceiling.
+        """
+        d_yaw = (u - FRAME_WIDTH / 2) / LOOK_PX_PER_DEG_BODY
+        body = max(-BODY_YAW_MAX, min(BODY_YAW_MAX, self.body - d_yaw))
+        pitch = self.pitch
+        if v < FRAME_HEIGHT * 0.25:  # far edge of the board: raise the head a little (owner's suggestion)
+            pitch = max(-10.0, self.pitch - LOOK_RAISE_DEG)
+        self.look(pitch, 0.0, body)
 
     def body_angle(self) -> float | None:
         """Measured body yaw in degrees (the first head joint), None when unavailable."""
@@ -574,13 +585,40 @@ class Preview:
             try:
                 self.camera.look(pitch, 0.0, bodies[view])
                 time.sleep(SCAN_SETTLE_S)
-                self.camera.look_at(*piece.frame_base)
-                time.sleep(SCAN_SETTLE_S)
-                frame, _ = capture_sharpest(self.camera.get_frame, frames=3)
-                registration = None if frame is None else self.board.locate(frame)
+                target = piece.frame_base
+                frame = registration = None
+                for attempt in range(2):  # point, check where the piece landed, correct once
+                    self.camera.look_at(*target)
+                    time.sleep(SCAN_SETTLE_S)
+                    frame, _ = capture_sharpest(self.camera.get_frame, frames=3)
+                    registration = None if frame is None else self.board.locate(frame)
+                    if registration is None:
+                        break
+                    scale = registration.reference_size[0] / baseline.image.shape[1]
+                    landed = registration.to_frame([(piece.x * scale, piece.y * scale)])[0]
+                    off = abs(float(landed[0]) - FRAME_WIDTH / 2)  # horizontal only: pitch cannot centre
+                    log.info(
+                        "closer look at %s: attempt %d, %d inliers, piece %.0f px from the centre",
+                        piece.space or piece.near,
+                        attempt + 1,
+                        registration.inliers,
+                        off,
+                    )
+                    if off <= LOOK_CENTRE_TOLERANCE:
+                        break
+                    target = (float(landed[0]), float(landed[1]))
+                if frame is not None:  # kept for offline analysis of the closer looks
+                    looks_dir = self.capture_dir / "looks"
+                    looks_dir.mkdir(parents=True, exist_ok=True)
+                    (looks_dir / f"{stamp}_{index}.jpg").write_bytes(encode_jpeg(frame, quality=92))
                 if registration is None:
                     log.info("closer look at %s: board not found", piece.space or piece.near)
                     continue
+                # Compare with the baseline of the scan view nearest to where the body ended up:
+                # the piece sits near that view's frame centre, where its baseline is accurate.
+                body_now = float(getattr(self.camera, "body", bodies[view]) or 0.0)
+                nearest_view = min(bodies, key=lambda name: abs(bodies[name] - body_now))
+                baseline = self.baselines.views.get(nearest_view, baseline)
                 candidates = find_pieces(registration, frame, baseline)
                 seen_again = closest_to(candidates, piece.x, piece.y)
             except Exception as exc:
@@ -1023,6 +1061,17 @@ def make_handler(preview: Preview, table_pitch: float = TABLE_PITCH) -> type[Bas
                 except Exception as exc:
                     log.warning("detection failed: %s", exc)
                     self._json({"error": str(exc)}, 500)
+            elif self.path.startswith("/look_at"):
+                try:
+                    body = json.loads(raw or b"{}")
+                    preview.camera.look_at(float(body["u"]), float(body["v"]))
+                except (ValueError, TypeError, KeyError) as exc:
+                    self._json({"error": str(exc)}, 400)
+                    return
+                except Exception as exc:
+                    self._json({"error": str(exc)}, 500)
+                    return
+                self._json({"ok": True, "body": getattr(preview.camera, "body", None)})
             elif self.path.startswith("/zoom"):
                 try:
                     body = json.loads(raw or b"{}")
