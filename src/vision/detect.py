@@ -30,12 +30,15 @@ from src.vision.spaces import nearest_space
 log = get_logger(__name__)
 
 MAP_WIDTH = 1200  # working width of the rectified map; the space table was annotated at this size
-CLOSER_LOOK_STRENGTH = 60.0  # weaker sightings get a closer look (owner's rule)
+CLOSER_LOOK_STRENGTH = 60.0  # kept for callers that pass an absolute limit
+CLOSER_LOOK_MARGIN = 15.0  # a sighting weaker than threshold + margin gets a closer look (owner's rule)
 EDGE_FRACTION = 0.12  # of the frame width/height: the lens distorts there, the homography does not
 BLUR = 7  # pixels, on the rectified map, before differencing
 # Measured on the empty board against a median baseline: no false blob of 300 px survives 45,
 # while a dark investigator standee on the dark green Buenos Aires circle scores 53 (1200 px).
-DIFF_THRESHOLD = 45  # summed absolute Lab difference (0..255 scale) that counts as "not the board"
+DIFF_THRESHOLD = 45  # upper bound of the adaptive threshold (evening light, noisy baseline)
+DIFF_THRESHOLD_MIN = 25  # lower bound (flat daylight: standees differ by only 33-40, noise p90 is 7)
+NOISE_FACTOR = 3.0  # threshold = NOISE_FACTOR x the 95th percentile of the difference over the board
 MIN_AREA = 300  # rectified-map pixels: an investigator marker or a token is 400-1500 at 1200 wide
 NEAR_FACTOR = 2.8  # a piece this many radii from a space centre is reported as "near" it
 MAX_AREA = 40000
@@ -72,10 +75,12 @@ class Piece:
     value: int | None = None  # what a die shows
     kind_confidence: float = 0.0
     sighting_crops: list[np.ndarray] = field(default_factory=list, repr=False)  # every look at it
+    threshold: float = DIFF_THRESHOLD  # the difference threshold this sighting was found with
 
     def needs_closer_look(self, min_strength: float | None = None) -> bool:
         """Ambiguous enough to be worth pointing the camera straight at it."""
-        weak = self.strength < (CLOSER_LOOK_STRENGTH if min_strength is None else min_strength)
+        limit = self.threshold + CLOSER_LOOK_MARGIN if min_strength is None else min_strength
+        weak = self.strength < limit
         return not self.confirmed and (self.space is None or self.radius_ratio > 0.6 or self.edge or weak)
 
     def record(self) -> dict[str, Any]:
@@ -232,12 +237,21 @@ def light_change(registration: Any, frame: np.ndarray, baseline: Baseline) -> fl
     return float(np.median(diff[both])) if both.any() else 0.0
 
 
+def adaptive_threshold(diff: np.ndarray, valid: np.ndarray) -> int:
+    """Difference threshold from the frame's own noise: pieces cover little of the board, so the
+    95th percentile of the difference measures the light and the sensor, not the game."""
+    if not valid.any():
+        return DIFF_THRESHOLD
+    p95 = float(np.percentile(diff[valid], 95))
+    return int(round(min(DIFF_THRESHOLD, max(DIFF_THRESHOLD_MIN, NOISE_FACTOR * p95))))
+
+
 def find_pieces(
     registration: Registration,
     frame: np.ndarray,
     baseline: Baseline,
     *,
-    threshold: int = DIFF_THRESHOLD,
+    threshold: int | None = None,
     min_area: int = MIN_AREA,
     max_area: int = MAX_AREA,
     crop_margin: float = 0.6,
@@ -250,8 +264,11 @@ def find_pieces(
     covered = registration.rectify(np.full(frame.shape[:2], 255, dtype=np.uint8), width=width)
     diff = difference_map(rectified, baseline)
     h, w = diff.shape
+    both = (covered == 255) & (baseline.coverage == 255)  # only where both pictures saw the board
+    if threshold is None:
+        threshold = adaptive_threshold(diff, both)
     mask = (diff >= threshold).astype(np.uint8) * 255
-    mask[(covered < 255) | (baseline.coverage < 255)] = 0  # only where both pictures saw the board
+    mask[~both] = 0
     mask[: int(h * BOARD_MARGIN_TOP), :] = 0
     mask[h - int(h * BOARD_MARGIN_BOTTOM) :, :] = 0
     for x0, y0, x1, y1 in (RESERVE_BOX, LEGEND_BOX):
@@ -333,6 +350,7 @@ def find_pieces(
                 frame_base=(float(fbx), float(fby)),
                 radius_ratio=float(radius_ratio),
                 edge=bool(edge),
+                threshold=float(threshold),
             )
         )
     pieces.sort(key=lambda p: -p.area)
@@ -403,6 +421,7 @@ __all__ = [
     "BaselineSet",
     "difference_map",
     "find_pieces",
+    "adaptive_threshold",
     "light_change",
     "merge_pieces",
     "classify_pieces",

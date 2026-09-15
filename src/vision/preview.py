@@ -45,7 +45,8 @@ BOUNDARY = "reachyframe"
 BOARD_CAPTURE_DIR = CAPTURE_DIR / "board"
 TABLE_PITCH = 35.0
 # name, body yaw in degrees: the Reserve (bottom-left card slots) needs its own view, centred at 75.
-SCAN_VIEWS = (("centre", 0.0), ("left", 45.0), ("reserve", 75.0), ("right", -45.0))
+# The base cannot go past about 64 with the head at pitch 35, so the Reserve view stays at 60.
+SCAN_VIEWS = (("centre", 0.0), ("left", 45.0), ("reserve", 60.0), ("right", -45.0))
 SCAN_SETTLE_S = 0.6
 BODY_YAW_MAX = 90.0  # degrees either way; the base turns further but the table is in front
 BODY_YAW_SPEED = 60.0  # deg/s asked of the base when turning between views
@@ -596,7 +597,7 @@ class Preview:
             elif piece.edge:
                 why = "frame edge"
             else:
-                why = f"strength {piece.strength:.0f}"
+                why = f"strength {piece.strength:.0f} (threshold {piece.threshold:.0f})"
             self.scan_state = f"scan: closer look at {piece.space or piece.near or '?'} ({why})"
             try:
                 self.camera.look(pitch, 0.0, bodies[view])

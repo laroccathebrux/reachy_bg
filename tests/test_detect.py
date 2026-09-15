@@ -128,3 +128,14 @@ def test_light_change_is_low_for_the_same_light_and_high_for_a_darker_board():
     assert light_change(registration, frame, baseline) < 3
     darker = (frame.astype(np.float32) * 0.55).astype(np.uint8)
     assert light_change(reference.locate(darker) or registration, darker, baseline) > 15
+
+
+def test_adaptive_threshold_follows_the_noise():
+    from src.vision.detect import DIFF_THRESHOLD, DIFF_THRESHOLD_MIN, adaptive_threshold
+
+    quiet = np.full((100, 100), 3, dtype=np.uint16)
+    noisy = np.full((100, 100), 30, dtype=np.uint16)
+    valid = np.ones((100, 100), dtype=bool)
+    assert adaptive_threshold(quiet, valid) == DIFF_THRESHOLD_MIN
+    assert adaptive_threshold(noisy, valid) == DIFF_THRESHOLD
+    assert adaptive_threshold(quiet, np.zeros((100, 100), dtype=bool)) == DIFF_THRESHOLD
