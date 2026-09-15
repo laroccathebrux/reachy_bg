@@ -115,8 +115,8 @@ def read_die(crop: np.ndarray) -> DieReading:
     if spots:  # highlights are much smaller than the pips
         median_area = float(np.median([a for _, _, a, _ in spots]))
         spots = [sp for sp in spots if sp[2] >= 0.4 * median_area]
-    if not spots:
-        return DieReading(True, None, 0.2, int(size), 0)
+    if not spots:  # a black block without light spots: a standee's plastic base, not a die
+        return DieReading(False, None, 0.0, int(size), 0)
     median_area = float(np.median([a for _, _, a, _ in spots]))
     pips = 0
     for _, sy, area, aspect in spots:
@@ -127,7 +127,7 @@ def read_die(crop: np.ndarray) -> DieReading:
             continue  # a front-face pip peeking into the band: taller than wide, and smaller
         pips += 2 if area >= MERGED_PIP_AREA * median_area else 1
     if pips == 0:
-        return DieReading(True, None, 0.2, int(size), len(spots))
+        return DieReading(False, None, 0.0, int(size), len(spots))
     value = min(6, pips)
     confidence = 0.7 if pips <= 6 else 0.3
     return DieReading(True, value, confidence, int(size), len(spots))

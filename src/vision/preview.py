@@ -117,7 +117,7 @@ let found = [];    // last /detect answer: pieces with frame boxes in fractions
 let scanning = false;
 function labelForm(crop, current) {
   const id = 'lbl' + Math.random().toString(36).slice(2, 8);
-  return `<div style="font-size:12px"><input id="${id}" placeholder="label, e.g. investigator:Akachi" value="${current || ''}" size="22"> <button onclick="saveLabel('${crop}', '${id}')">Save</button></div>`;
+  return `<div style="font-size:12px"><input id="${id}" placeholder="kind:name, e.g. investigator:Akachi Onyele" value="${current || ''}" size="22"> <button onclick="saveLabel('${crop}', '${id}')">Save</button></div>`;
 }
 async function saveLabel(crop, id) {
   const label = document.getElementById(id).value.trim();

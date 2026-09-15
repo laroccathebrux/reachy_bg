@@ -393,7 +393,7 @@ def classify_pieces(pieces: list[Piece]) -> None:
             [piece.crop] if piece.crop is not None and piece.crop.size else []
         )
         readings = [read_die(c) for c in crops]
-        dice = [r for r in readings if r.is_die]
+        dice = [r for r in readings if r.is_die and r.value is not None]
         if not readings or len(dice) * 2 < len(readings):
             continue
         piece.kind = "die"
