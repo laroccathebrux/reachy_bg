@@ -40,6 +40,7 @@ FRONT_PEEK_BAND = 0.14  # of the body height above the edge where a front pip ca
 MIN_FACE_GAP = 0.10  # of the body height: smaller gaps are just the spacing of pips within a face
 MIN_SPOTS = 2  # a die seen from above at an angle shows two faces: one lone spot is a highlight
 MERGED_PIP_AREA = 1.6  # a spot this many times the median pip area is two pips touching
+MERGED_THREE_AREA = 2.8  # and this many times, three (a diagonal of a 5 seen blurred)
 PIP_MIN_AREA_FRACTION = 0.004  # of the body area (at the upscaled size)
 PIP_MAX_AREA_FRACTION = 0.06
 
@@ -154,7 +155,8 @@ def read_die(crop: np.ndarray) -> DieReading:
             continue  # front face
         if fy >= limit - FRONT_PEEK_BAND and (aspect < 0.95 or area < 0.75 * median_area):
             continue  # the front face's top pip peeking above the edge: taller than wide, smaller
-        pips += 2 if area >= MERGED_PIP_AREA * median_area else 1
+        ratio = area / median_area
+        pips += 3 if ratio >= MERGED_THREE_AREA else (2 if ratio >= MERGED_PIP_AREA else 1)  # touching pips
     if pips == 0:
         return DieReading(False, None, 0.0, int(size), len(spots))
     value = min(6, pips)

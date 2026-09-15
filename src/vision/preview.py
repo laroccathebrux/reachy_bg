@@ -600,7 +600,10 @@ class Preview:
 
         bodies = dict(SCAN_VIEWS)
         looks = 0
-        for index, piece in enumerate(merged):
+        # Dice first: their value depends on the closer look most, and the looks are capped.
+        order = sorted(range(len(merged)), key=lambda i: (merged[i].kind != "die", i))
+        for index in order:
+            piece = merged[index]
             if not piece.needs_closer_look():
                 continue
             if looks >= MAX_CLOSER_LOOKS:
