@@ -45,3 +45,10 @@ def test_empty_board_has_no_pieces():
     baseline = Baseline.capture(registration, frame)
     assert find_pieces(registration, frame, baseline) == []
     assert describe([]).startswith("Nothing")
+
+
+def test_a_piece_next_to_a_space_is_reported_as_near_it():
+    from src.vision.detect import Piece, describe
+
+    piece = Piece(10, 10, 5, 5, 400, 70.0, None, 0.06, near="Rome")
+    assert "near Rome" in describe([piece]) and piece.record()["near"] == "Rome"

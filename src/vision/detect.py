@@ -31,10 +31,11 @@ log = get_logger(__name__)
 
 MAP_WIDTH = 1200  # working width of the rectified map; the space table was annotated at this size
 BLUR = 7  # pixels, on the rectified map, before differencing
-# Measured on the empty board (two fresh frames against the baseline): the 99.9th percentile of
-# the difference is 26-63 and the largest value 44-78; nothing false survives 60 with 300 px.
-DIFF_THRESHOLD = 60  # summed absolute Lab difference (0..255 scale) that counts as "not the board"
+# Measured on the empty board against a median baseline: no false blob of 300 px survives 45,
+# while a dark investigator standee on the dark green Buenos Aires circle scores 53 (1200 px).
+DIFF_THRESHOLD = 45  # summed absolute Lab difference (0..255 scale) that counts as "not the board"
 MIN_AREA = 300  # rectified-map pixels: an investigator marker or a token is 400-1500 at 1200 wide
+NEAR_FACTOR = 2.8  # a piece this many radii from a space centre is reported as "near" it
 MAX_AREA = 40000
 BOARD_MARGIN = 0.06  # fraction of the map height ignored at the top (Doom track) and bottom (Reserve)
 
@@ -47,8 +48,9 @@ class Piece:
     height: float
     area: int
     strength: float  # mean difference inside the blob
-    space: str | None  # nearest space name, None when between spaces
-    distance: float  # to the space centre, in board widths
+    space: str | None  # the space the piece stands on, None when it is only near one (or none)
+    distance: float  # to the nearest space centre, in board widths
+    near: str | None = None  # nearest space when not on one
     frame_box: tuple[int, int, int, int] = (0, 0, 0, 0)  # x0, y0, x1, y1 in the original frame
     crop: np.ndarray | None = field(default=None, repr=False)
 
@@ -61,6 +63,7 @@ class Piece:
             "area": self.area,
             "strength": round(self.strength, 1),
             "space": self.space,
+            "near": self.near,
             "distance": round(self.distance, 4),
             "frame_box": list(self.frame_box),
         }
@@ -166,7 +169,15 @@ def find_pieces(
             continue
         cx, cy = (float(v) for v in centroids[i])
         strength = float(diff[labels == i].mean())
-        space, distance = nearest_space(cx / w, cy / h)
+        # Standees and stacked tokens rise towards the far edge of the map in perspective, so
+        # the point that touches the board is the bottom of the blob (the camera looks from
+        # the bottom edge), not its centroid.
+        base_x, base_y = cx / w, (y + bh - 2) / h
+        space, distance = nearest_space(base_x, base_y)
+        near = None
+        if space is None:
+            candidate, distance = nearest_space(base_x, base_y, max_radius_factor=NEAR_FACTOR)
+            near = candidate.name if candidate else None
         # The blob's box back in the original frame, with a margin, for the zoomed crop.
         corners = np.float32([[x, y], [x + bw, y], [x + bw, y + bh], [x, y + bh]]) * [scale_x, scale_y]
         in_frame = registration.to_frame(corners)
@@ -190,8 +201,9 @@ def find_pieces(
                 strength,
                 space.name if space else None,
                 distance,
-                box,
-                crop,
+                near=near,
+                frame_box=box,
+                crop=crop,
             )
         )
     pieces.sort(key=lambda p: -p.area)
@@ -204,9 +216,14 @@ def describe(pieces: list[Piece]) -> str:
         return "Nothing on the board that is not the board."
     parts = []
     for piece in pieces:
-        where = piece.space or "between spaces"
+        if piece.space:
+            where = f"at {piece.space}"
+        elif piece.near:
+            where = f"near {piece.near}, not on it"
+        else:
+            where = "between spaces"
         parts.append(
-            f"something at {where} ({int(piece.width)}x{int(piece.height)} px, strength {piece.strength:.0f})"
+            f"something {where} ({int(piece.width)}x{int(piece.height)} px, strength {piece.strength:.0f})"
         )
     return "; ".join(parts) + "."
 

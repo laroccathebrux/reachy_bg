@@ -114,7 +114,7 @@ document.getElementById('detect').onclick = async () => {
   const box = document.getElementById('pieces'); box.innerHTML = '';
   for (const p of j.pieces) {
     const fig = document.createElement('figure'); fig.style.margin = '0';
-    fig.innerHTML = `<img src="${p.crop}" style="height:160px;border:1px solid #555;display:block;cursor:zoom-in"><figcaption style="font-size:12px;color:#ccc">${p.space || 'between spaces'}</figcaption>`;
+    fig.innerHTML = `<img src="${p.crop}" style="height:160px;border:1px solid #555;display:block;cursor:zoom-in"><figcaption style="font-size:12px;color:#ccc">${p.space || (p.near ? 'near ' + p.near : 'between spaces')}</figcaption>`;
     fig.querySelector('img').onclick = () => { zoom.value = 3; setZoom(3, (p.box[0] + p.box[2]) / 2, (p.box[1] + p.box[3]) / 2); };
     box.appendChild(fig);
   }
@@ -168,7 +168,7 @@ function drawBoard() {
   for (const p of found) {
     const [x0, y0] = toView([p.box[0], p.box[1]]), [x1, y1] = toView([p.box[2], p.box[3]]);
     c.strokeStyle = '#f44'; c.lineWidth = 3; c.strokeRect(x0, y0, x1 - x0, y1 - y0);
-    c.fillStyle = '#f44'; c.font = 'bold 14px system-ui'; c.fillText(p.space || '?', x0, y0 - 4);
+    c.fillStyle = '#f44'; c.font = 'bold 14px system-ui'; c.fillText(p.space || (p.near ? 'near ' + p.near : '?'), x0, y0 - 4);
   }
   if (!overlay.checked || !board || !board.inliers) return;
   c.strokeStyle = 'rgba(0,220,80,0.9)'; c.lineWidth = 2; c.beginPath();
@@ -505,7 +505,7 @@ class Preview:
         folder.mkdir(parents=True, exist_ok=True)
         out = []
         for i, piece in enumerate(pieces):
-            name = f"{stamp}_{i}_{(piece.space or 'between').replace(' ', '_')}.jpg"
+            name = f"{stamp}_{i}_{(piece.space or piece.near or 'between').replace(' ', '_')}.jpg"
             if piece.crop is not None and piece.crop.size:
                 (folder / name).write_bytes(encode_jpeg(piece.crop, quality=92))
             x0, y0, x1, y1 = piece.frame_box
