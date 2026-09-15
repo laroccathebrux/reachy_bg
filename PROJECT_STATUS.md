@@ -367,6 +367,29 @@ top-down view (`/rectified.jpg`).
 The board picture is runtime data (git-ignored, copyrighted art); the owner drops it in
 `data/imgs/`. Anything with the same art works after one rescale of the space table.
 
+## Done: first piece found and named on the real board (2026-09-14)
+
+`src/vision/detect.py`: at the start of a session the empty board is captured as a baseline
+(the frame rectified to the map, median of five frames); afterwards "what is on the board
+that is not the board" is the Lab difference between the current rectified frame and that
+baseline, cleaned by morphology, split into blobs and named by the space under the blob's
+*base* (standees rise towards the far edge in perspective; the centroid put the Istanbul
+marker between spaces). Each piece comes with a full-resolution crop of the frame (the zoom)
+saved under `data/captures/board/pieces/`. The preview page has the two buttons and draws
+the boxes.
+
+Live test with the owner moving an investigator standee: Istanbul -> "something at
+Istanbul"; Buenos Aires -> found (dark standee on a dark green circle, strength 53, the
+weakest case); Arkham -> "something at Arkham" twice; empty board -> nothing, three times.
+Tuned on the real board: threshold 45 (empty-board maximum 44-78 before the median
+baseline), minimum 300 px and 12 px on each side (a sliver along the frame edge), top 9 %
+of the map ignored (Doom track and hands beyond the far edge), bottom 6 % (Reserve).
+Sea spaces 12 and 13 were swapped in the first space table; fixed by the owner's reading.
+
+Still open on this path: naming *what* the piece is (gallery of the real pieces, next),
+several pieces close together (one blob), and pieces on the Reserve or the far right edge
+(a sweep view instead of the centre view).
+
 ## Decisions taken
 
 | Topic | Decision | Where |
