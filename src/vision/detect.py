@@ -186,6 +186,7 @@ class BaselineSet:
         return result
 
 
+DIE_MAX_FRAME_ASPECT = 1.35  # frame height over width above which a piece cannot be a die
 MERGE_RADIUS = 50.0  # rectified-map pixels: sightings closer than this are one piece (a standee splits into two blobs 40-60 px apart)
 
 
@@ -389,6 +390,9 @@ def classify_pieces(pieces: list[Piece]) -> None:
     from src.vision.dice import read_die
 
     for piece in pieces:
+        x0, y0, x1, y1 = piece.frame_box
+        if x1 > x0 and (y1 - y0) / (x1 - x0) > DIE_MAX_FRAME_ASPECT:
+            continue  # a tall blob is a standing piece; a die is a cube
         crops = [c for c in piece.sighting_crops if c is not None and c.size] or (
             [piece.crop] if piece.crop is not None and piece.crop.size else []
         )

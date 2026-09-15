@@ -115,6 +115,7 @@ const overlay = document.getElementById('overlay');
 let board = null;  // last /board answer: outline and spaces in frame fractions
 let found = [];    // last /detect answer: pieces with frame boxes in fractions
 let scanning = false;
+let lastShown = '';  // the scan result already rendered (a reload in the middle of a scan must not lose it)
 function labelForm(crop, current) {
   const id = 'lbl' + Math.random().toString(36).slice(2, 8);
   return `<div style="font-size:12px"><input id="${id}" placeholder="kind:name, e.g. investigator:Akachi Onyele" value="${current || ''}" size="22"> <button onclick="saveLabel('${crop}', '${id}')">Save</button></div>`;
@@ -257,7 +258,7 @@ async function poll() {
     info.textContent = s.frames ? `${s.width}x${s.height}  ${s.fps.toFixed(1)} fps  frame age ${s.age_s.toFixed(1)} s  head pitch ${s.pitch} yaw ${s.yaw} body ${s.body}  zoom ${s.zoom}x` : `waiting for frames (${s.waited_s.toFixed(0)} s)`;
     if (s.warning) msg.textContent = s.warning;
     if (s.sweep) msg.textContent = s.sweep;
-    if (s.scan) { msg.textContent = s.scan; if (scanning && s.scan.startsWith('scan done')) { scanning = false; showScan(); } }
+    if (s.scan) { msg.textContent = s.scan; if (s.scan.startsWith('scan done') && s.scan !== lastShown) { lastShown = s.scan; scanning = false; showScan(); } }
     if (s.board !== undefined) info.textContent += s.board ? `  board: ${s.board} inliers` : '  board: not found';
   } catch (e) { info.textContent = 'server unreachable'; }
 }

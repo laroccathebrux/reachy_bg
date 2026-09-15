@@ -32,6 +32,7 @@ INNER_FRACTION = 0.12  # of the body size eroded on every side before counting p
 # and with rounder pips. Only the spots above this fraction of the body height are the value.
 TOP_FACE_FRACTION = 0.55
 TOP_FACE_BAND = 0.40  # between this and TOP_FACE_FRACTION a spot must look like a compressed top pip
+MIN_SPOTS = 2  # a die seen from above at an angle shows two faces: one lone spot is a highlight
 MERGED_PIP_AREA = 1.6  # a spot this many times the median pip area is two pips touching
 PIP_MIN_AREA_FRACTION = 0.004  # of the body area (at the upscaled size)
 PIP_MAX_AREA_FRACTION = 0.06
@@ -115,8 +116,8 @@ def read_die(crop: np.ndarray) -> DieReading:
     if spots:  # highlights are much smaller than the pips
         median_area = float(np.median([a for _, _, a, _ in spots]))
         spots = [sp for sp in spots if sp[2] >= 0.4 * median_area]
-    if not spots:  # a black block without light spots: a standee's plastic base, not a die
-        return DieReading(False, None, 0.0, int(size), 0)
+    if len(spots) < MIN_SPOTS:  # a black block with at most a highlight: a standee's plastic base
+        return DieReading(False, None, 0.0, int(size), len(spots))
     median_area = float(np.median([a for _, _, a, _ in spots]))
     pips = 0
     for _, sy, area, aspect in spots:
