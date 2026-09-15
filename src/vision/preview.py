@@ -44,6 +44,8 @@ STREAM_FPS = 10.0
 BOUNDARY = "reachyframe"
 BOARD_CAPTURE_DIR = CAPTURE_DIR / "board"
 TABLE_PITCH = 35.0
+SCAN_VIEWS = (("centre", 0.0), ("left", 45.0), ("right", -45.0))  # name, body yaw in degrees
+SCAN_SETTLE_S = 0.6
 BODY_YAW_MAX = 90.0  # degrees either way; the base turns further but the table is in front
 BODY_YAW_SPEED = 60.0  # deg/s asked of the base when turning between views
 
@@ -84,8 +86,8 @@ PAGE = """<!doctype html>
   <label><input id="grid" type="checkbox" checked> guides</label>
   <label><input id="overlay" type="checkbox" checked> board overlay</label>
   <a href="/rectified.jpg" target="_blank" style="color:#9ad">top-down view</a>
-  <button id="baseline">Set empty-board baseline</button>
-  <button id="detect">Find pieces</button>
+  <button id="baseline">Baseline sweep (empty board)</button>
+  <button id="scan">Scan the board</button>
 </div>
 <div id="pieces" style="padding: 0 12px 8px; display: flex; flex-wrap: wrap; gap: 10px;"></div>
 <div id="bar2" style="display:none">
@@ -102,24 +104,30 @@ const body = document.getElementById('body'), bodyv = document.getElementById('b
 const overlay = document.getElementById('overlay');
 let board = null;  // last /board answer: outline and spaces in frame fractions
 let found = [];    // last /detect answer: pieces with frame boxes in fractions
-document.getElementById('baseline').onclick = async () => {
-  const j = await (await fetch('/baseline', {method: 'POST'})).json();
-  msg.textContent = j.error || `baseline captured (${j.inliers} inliers): the board is now what "empty" looks like`;
-};
-document.getElementById('detect').onclick = async () => {
-  msg.textContent = 'looking...';
-  const j = await (await fetch('/detect', {method: 'POST'})).json();
-  if (j.error) { msg.textContent = j.error; return; }
-  found = j.pieces; msg.textContent = j.text;
+let scanning = false;
+async function startScan(mode) {
+  const j = await (await fetch('/scan', {method: 'POST', headers: {'content-type': 'application/json'},
+                                        body: JSON.stringify({mode, pitch: +pitch.value})})).json();
+  msg.textContent = j.error || `${mode} scan started: centre, left, right`;
+  scanning = !j.error;
+}
+document.getElementById('baseline').onclick = () => startScan('baseline');
+document.getElementById('scan').onclick = () => startScan('detect');
+async function showScan() {
+  const j = await (await fetch('/scan_result')).json();
+  if (!j.ok) return;
+  found = j.centre_pieces || [];
+  msg.textContent = j.text + (j.unseen.length ? `  |  not covered by any view: ${j.unseen.join(', ')}` : '  |  every space covered');
   const box = document.getElementById('pieces'); box.innerHTML = '';
   for (const p of j.pieces) {
     const fig = document.createElement('figure'); fig.style.margin = '0';
-    fig.innerHTML = `<img src="${p.crop}" style="height:160px;border:1px solid #555;display:block;cursor:zoom-in"><figcaption style="font-size:12px;color:#ccc">${p.space || (p.near ? 'near ' + p.near : 'between spaces')}</figcaption>`;
-    fig.querySelector('img').onclick = () => { zoom.value = 3; setZoom(3, (p.box[0] + p.box[2]) / 2, (p.box[1] + p.box[3]) / 2); };
+    const where = p.space || (p.near ? 'near ' + p.near : 'between spaces');
+    fig.innerHTML = `<img src="${p.crop}" style="height:160px;border:1px solid #555;display:block;cursor:zoom-in"><figcaption style="font-size:12px;color:#ccc">${where} (seen from ${p.views.join(', ')})</figcaption>`;
+    fig.querySelector('img').onclick = () => { if (p.views.includes('centre') && p.box) { zoom.value = 3; setZoom(3, (p.box[0] + p.box[2]) / 2, (p.box[1] + p.box[3]) / 2); } };
     box.appendChild(fig);
   }
   draw();
-};
+}
 const zoom = document.getElementById('zoom'), zoomv = document.getElementById('zoomv');
 let crop = {factor: 1, cx: 0.5, cy: 0.5};
 async function setZoom(factor, cx, cy) {
@@ -218,6 +226,7 @@ async function poll() {
     info.textContent = s.frames ? `${s.width}x${s.height}  ${s.fps.toFixed(1)} fps  frame age ${s.age_s.toFixed(1)} s  head pitch ${s.pitch} yaw ${s.yaw} body ${s.body}  zoom ${s.zoom}x` : `waiting for frames (${s.waited_s.toFixed(0)} s)`;
     if (s.warning) msg.textContent = s.warning;
     if (s.sweep) msg.textContent = s.sweep;
+    if (s.scan) { msg.textContent = s.scan; if (scanning && s.scan.startsWith('scan done')) { scanning = false; showScan(); } }
     if (s.board !== undefined) info.textContent += s.board ? `  board: ${s.board} inliers` : '  board: not found';
   } catch (e) { info.textContent = 'server unreachable'; }
 }
@@ -395,7 +404,10 @@ class Preview:
         self._sweep_thread: threading.Thread | None = None
         self.zoom = (1.0, 0.5, 0.5)  # digital zoom of the stream only: factor, centre x, centre y
         self.board: Any = None  # BoardReference, when the reference picture exists
-        self.baseline: Any = None  # Baseline of the empty board (data/board/baseline.jpg)
+        self.baselines: Any = None  # BaselineSet of the empty board, one per scan view
+        self.scan_state = ""
+        self.last_scan: dict[str, Any] | None = None
+        self._scan_thread: threading.Thread | None = None
         self.registration: Any = None  # latest Registration of the latest frame
         self.registered_at = 0.0
         self._board_thread: threading.Thread | None = None
@@ -449,17 +461,17 @@ class Preview:
             "spaces": spaces,
         }
 
-    def baseline_path(self) -> Path:
-        return self.capture_dir.parent / "board_baseline" / "baseline.jpg"
+    def baseline_dir(self) -> Path:
+        return self.capture_dir.parent / "board_baseline"
 
     def load_baseline(self) -> bool:
-        from src.vision.detect import Baseline
+        from src.vision.detect import BaselineSet
 
         try:
-            self.baseline = Baseline.load(self.baseline_path())
-        except (FileNotFoundError, OSError):
+            self.baselines = BaselineSet.load(self.baseline_dir())
+        except (FileNotFoundError, OSError, ValueError):
             return False
-        return True
+        return bool(self.baselines.views)
 
     def _register_now(self) -> tuple[Any, np.ndarray | None]:
         """A fresh full-resolution registration of the latest frame (for baselines and detections)."""
@@ -469,43 +481,29 @@ class Preview:
             return None, None
         return self.board.locate(frame), frame
 
-    def capture_baseline(self) -> dict[str, Any]:
-        from src.vision.detect import Baseline
-
-        registration, frame = self._register_now()
-        if registration is None or frame is None:
-            return {"error": "board not registered: is the map in view?"}
+    def _more_frames(self, first: np.ndarray, count: int = 4) -> list[np.ndarray]:
+        """A few more frames of the same view (the median of them removes sensor noise)."""
         extra: list[np.ndarray] = []
         seq = self.frames
-        while len(extra) < 4:  # a few more frames of the same view: the median removes sensor noise
+        while len(extra) < count:
             seq, _ = self.wait_jpeg(seq, 1.0)
             with self._lock:
                 more = self.frame
-            if more is None or more is frame or (extra and more is extra[-1]):
+            if more is None or more is first or (extra and more is extra[-1]):
                 break
             extra.append(more)
-        self.baseline = Baseline.capture(registration, frame, extra=extra)
-        path = self.baseline.save(self.baseline_path())
-        log.info("empty-board baseline saved to %s (%d inliers)", path, registration.inliers)
-        return {"ok": True, "inliers": registration.inliers, "path": str(path)}
+        return extra
 
-    def detect_pieces(self) -> dict[str, Any]:
-        """Find what is on the board now; crops go to <captures>/pieces/ for the page and the gallery."""
-        from src.vision.detect import describe, find_pieces
-
-        if self.baseline is None:
-            return {"error": "no empty-board baseline yet: clear the board and press the baseline button"}
-        registration, frame = self._register_now()
-        if registration is None or frame is None:
-            return {"error": "board not registered: is the map in view?"}
-        pieces = find_pieces(registration, frame, self.baseline)
+    def _pieces_json(
+        self, registration: Any, pieces: list[Any], stamp: str, view: str
+    ) -> list[dict[str, Any]]:
+        """Records with the frame box (fractions) and the saved crop of every piece."""
         fw, fh = registration.frame_size
-        stamp = time.strftime("%Y%m%d_%H%M%S")
         folder = self.capture_dir / "pieces"
         folder.mkdir(parents=True, exist_ok=True)
         out = []
         for i, piece in enumerate(pieces):
-            name = f"{stamp}_{i}_{(piece.space or piece.near or 'between').replace(' ', '_')}.jpg"
+            name = f"{stamp}_{view}_{i}_{(piece.space or piece.near or 'between').replace(' ', '_')}.jpg"
             if piece.crop is not None and piece.crop.size:
                 (folder / name).write_bytes(encode_jpeg(piece.crop, quality=92))
             x0, y0, x1, y1 = piece.frame_box
@@ -516,9 +514,143 @@ class Preview:
                     "crop": f"/captures/pieces/{name}",
                 }
             )
+        return out
+
+    def detect_pieces(self) -> dict[str, Any]:
+        """Find what is on the board in the current view only (the scan does every view)."""
+        from src.vision.detect import describe, find_pieces
+
+        view = self.current_view()
+        baseline = None if self.baselines is None else self.baselines.views.get(view)
+        if baseline is None:
+            return {"error": f"no empty-board baseline for the {view} view: run the baseline sweep first"}
+        registration, frame = self._register_now()
+        if registration is None or frame is None:
+            return {"error": "board not registered: is the map in view?"}
+        pieces = find_pieces(registration, frame, baseline)
+        out = self._pieces_json(registration, pieces, time.strftime("%Y%m%d_%H%M%S"), view)
         text = describe(pieces)
-        log.info("pieces: %s", text)
-        return {"ok": True, "inliers": registration.inliers, "pieces": out, "text": text}
+        log.info("pieces (%s view): %s", view, text)
+        return {"ok": True, "view": view, "inliers": registration.inliers, "pieces": out, "text": text}
+
+    def current_view(self) -> str:
+        """Name of the scan view the body is closest to."""
+        body = float(getattr(self.camera, "body", 0.0) or 0.0)
+        return min(SCAN_VIEWS, key=lambda v: abs(v[1] - body))[0]
+
+    def start_scan(self, mode: str, pitch: float = TABLE_PITCH) -> bool:
+        """Sweep the scan views on a thread: ``baseline`` learns the empty board, ``detect`` finds pieces."""
+        if self._scan_thread is not None and self._scan_thread.is_alive():
+            return False
+        pitch = max(-10.0, min(60.0, float(pitch)))
+        self._scan_thread = threading.Thread(target=self._scan, args=(mode, pitch), name="scan", daemon=True)
+        self._scan_thread.start()
+        return True
+
+    def _scan(self, mode: str, pitch: float) -> None:
+        from src.vision.capture import capture_sharpest
+        from src.vision.detect import Baseline, BaselineSet, describe, find_pieces, merge_pieces
+        from src.vision.spaces import SPACES
+
+        if self.board is None:
+            self.scan_state = "scan failed: no board reference picture"
+            return
+        if mode == "baseline":
+            self.baselines = BaselineSet()
+        elif self.baselines is None or not self.baselines.views:
+            self.scan_state = "scan failed: run the baseline sweep on the empty board first"
+            return
+        stamp = time.strftime("%Y%m%d_%H%M%S")
+        sightings: list[tuple[str, list[Any]]] = []
+        views_out: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        centre_pieces: list[dict[str, Any]] = []
+        try:
+            for name, body in SCAN_VIEWS:
+                self.scan_state = f"scan: looking {name}"
+                self.camera.look(pitch, 0.0, body)
+                time.sleep(SCAN_SETTLE_S)
+                frame, sharpness = capture_sharpest(self.camera.get_frame, frames=3)
+                if frame is None:
+                    views_out.append({"view": name, "error": "no frame"})
+                    continue
+                registration = self.board.locate(frame)
+                if registration is None:
+                    views_out.append({"view": name, "error": "board not found"})
+                    continue
+                covered = registration.space_pixels(margin=-30)
+                seen.update(covered)
+                if mode == "baseline":
+                    self.baselines.views[name] = Baseline.capture(
+                        registration, frame, extra=self._more_frames(frame)
+                    )
+                    views_out.append({"view": name, "inliers": registration.inliers, "spaces": len(covered)})
+                    continue
+                baseline = self.baselines.views.get(name)
+                if baseline is None:
+                    views_out.append({"view": name, "error": "no baseline for this view"})
+                    continue
+                pieces = find_pieces(registration, frame, baseline)
+                records = self._pieces_json(registration, pieces, stamp, name)
+                if name == "centre":
+                    centre_pieces = records
+                sightings.append((name, pieces))
+                views_out.append(
+                    {
+                        "view": name,
+                        "inliers": registration.inliers,
+                        "spaces": len(covered),
+                        "pieces": len(pieces),
+                    }
+                )
+                self.scan_state = f"scan: {name} view, {describe(pieces)}"
+        finally:
+            try:
+                self.camera.look(pitch, 0.0, 0.0)
+            except Exception as exc:
+                log.warning("could not return to the centre view: %s", exc)
+        unseen = [space.name for space in SPACES if space.name not in seen]
+        if mode == "baseline":
+            self.baselines.save(self.baseline_dir())
+            self.last_scan = {
+                "ok": True,
+                "mode": mode,
+                "views": views_out,
+                "seen": sorted(seen),
+                "unseen": unseen,
+            }
+            self.scan_state = (
+                f"scan done: baseline of {len(self.baselines.views)} views saved; "
+                f"{len(seen)} spaces covered, {len(unseen)} not"
+            )
+            return
+        merged = merge_pieces(sightings)
+        merged_out = []
+        for piece in merged:
+            record = piece.record()
+            for view_name, pieces in sightings:
+                for i, candidate in enumerate(pieces):
+                    if candidate is piece:
+                        record["crop"] = (
+                            f"/captures/pieces/{stamp}_{view_name}_{i}_"
+                            f"{(piece.space or piece.near or 'between').replace(' ', '_')}.jpg"
+                        )
+                        if view_name == "centre" and i < len(centre_pieces):
+                            record["box"] = centre_pieces[i]["box"]
+            merged_out.append(record)
+        text = describe(merged)
+        self.last_scan = {
+            "ok": True,
+            "mode": mode,
+            "views": views_out,
+            "pieces": merged_out,
+            "centre_pieces": centre_pieces,
+            "seen": sorted(seen),
+            "unseen": unseen,
+            "text": text,
+        }
+        log.info("scan: %s (unseen: %s)", text, ", ".join(unseen) or "none")
+        self.scan_state = f"scan done: {text}"
 
     def rectified_jpeg(self, width: int = 1200) -> bytes:
         registration = self.registration
@@ -581,6 +713,7 @@ class Preview:
                 "yaw": getattr(self.camera, "yaw", None),
                 "body": getattr(self.camera, "body", None),
                 "sweep": self.sweep_state,
+                "scan": self.scan_state,
                 "zoom": self.zoom[0],
                 "board": None if self.registration is None else self.registration.inliers,
                 "warning": "",
@@ -703,6 +836,8 @@ def make_handler(preview: Preview, table_pitch: float = TABLE_PITCH) -> type[Bas
                 self._stream()
             elif self.path.startswith("/board"):
                 self._json(preview.board_json())
+            elif self.path.startswith("/scan_result"):
+                self._json(preview.last_scan or {"ok": False, "error": "no scan yet"})
             elif self.path.startswith("/rectified"):
                 jpeg = preview.rectified_jpeg()
                 if jpeg:
@@ -775,8 +910,20 @@ def make_handler(preview: Preview, table_pitch: float = TABLE_PITCH) -> type[Bas
                         "body": getattr(preview.camera, "body", None),
                     }
                 )
-            elif self.path.startswith("/baseline"):
-                self._json(preview.capture_baseline())
+            elif self.path.startswith("/scan"):
+                try:
+                    body = json.loads(raw or b"{}")
+                    mode = str(body.get("mode", "detect"))
+                    pitch = float(body.get("pitch", TABLE_PITCH))
+                except (ValueError, TypeError) as exc:
+                    self._json({"error": str(exc)}, 400)
+                    return
+                if mode not in ("baseline", "detect"):
+                    self._json({"error": "mode must be baseline or detect"}, 400)
+                elif preview.start_scan(mode, pitch):
+                    self._json({"ok": True, "mode": mode, "views": [v[0] for v in SCAN_VIEWS]})
+                else:
+                    self._json({"error": "a scan is already running"}, 409)
             elif self.path.startswith("/detect"):
                 try:
                     self._json(preview.detect_pieces())
@@ -856,7 +1003,11 @@ def main(argv: list[str] | None = None) -> int:
 
             preview.board = BoardReference()
             if preview.load_baseline():
-                log.info("empty-board baseline loaded from %s", preview.baseline_path())
+                log.info(
+                    "empty-board baselines loaded from %s: %s",
+                    preview.baseline_dir(),
+                    sorted(preview.baselines.views),
+                )
         except Exception as exc:
             log.warning("board registration off: %s", exc)
     preview.start()

@@ -52,3 +52,18 @@ def test_a_piece_next_to_a_space_is_reported_as_near_it():
 
     piece = Piece(10, 10, 5, 5, 400, 70.0, None, 0.06, near="Rome")
     assert "near Rome" in describe([piece]) and piece.record()["near"] == "Rome"
+
+
+def test_merge_pieces_joins_sightings_of_the_same_spot():
+    from src.vision.detect import BaselineSet, Piece, merge_pieces
+
+    a = Piece(100, 100, 20, 20, 400, 60.0, "Rome", 0.01)
+    b = Piece(110, 105, 30, 30, 900, 62.0, "Rome", 0.02)  # the same piece, a better look at it
+    c = Piece(600, 400, 20, 20, 300, 55.0, "Tokyo", 0.01)
+    merged = merge_pieces([("centre", [a]), ("left", [b, c])])
+    assert [(p.space, sorted(p.views), p.area) for p in merged] == [
+        ("Rome", ["centre", "left"], 900),
+        ("Tokyo", ["left"], 300),
+    ]
+    assert merge_pieces([]) == []
+    assert BaselineSet().views == {}

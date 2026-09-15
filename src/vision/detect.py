@@ -55,6 +55,7 @@ class Piece:
     near: str | None = None  # nearest space when not on one
     frame_box: tuple[int, int, int, int] = (0, 0, 0, 0)  # x0, y0, x1, y1 in the original frame
     crop: np.ndarray | None = field(default=None, repr=False)
+    views: list[str] = field(default_factory=list)  # which views of a scan saw it
 
     def record(self) -> dict[str, Any]:
         return {
@@ -68,6 +69,7 @@ class Piece:
             "near": self.near,
             "distance": round(self.distance, 4),
             "frame_box": list(self.frame_box),
+            "views": list(self.views),
         }
 
 
@@ -119,6 +121,53 @@ class Baseline:
             else {}
         )
         return cls(image, coverage, float(meta.get("captured_at", 0.0)))
+
+
+class BaselineSet:
+    """One baseline per view of a scan (centre, left, right), saved as ``<folder>/<view>.jpg``."""
+
+    def __init__(self) -> None:
+        self.views: dict[str, Baseline] = {}
+
+    def save(self, folder: Path) -> Path:
+        folder.mkdir(parents=True, exist_ok=True)
+        for name, baseline in self.views.items():
+            baseline.save(folder / f"{name}.jpg")
+        (folder / "views.json").write_text(json.dumps(sorted(self.views)), encoding="utf-8")
+        return folder
+
+    @classmethod
+    def load(cls, folder: Path) -> BaselineSet:
+        index = folder / "views.json"
+        if not index.exists():
+            raise FileNotFoundError(f"no baseline set in {folder}")
+        result = cls()
+        for name in json.loads(index.read_text(encoding="utf-8")):
+            result.views[name] = Baseline.load(folder / f"{name}.jpg")
+        return result
+
+
+MERGE_RADIUS = 30.0  # rectified-map pixels: sightings closer than this from two views are one piece
+
+
+def merge_pieces(sightings: list[tuple[str, list[Piece]]]) -> list[Piece]:
+    """One list of pieces out of the per-view detections of a scan (the overlaps merged)."""
+    merged: list[Piece] = []
+    for view, pieces in sightings:
+        for piece in pieces:
+            for known in merged:
+                if ((known.x - piece.x) ** 2 + (known.y - piece.y) ** 2) ** 0.5 <= MERGE_RADIUS:
+                    if piece.area > known.area:  # keep the better sighting, remember both views
+                        piece.views = known.views + [view]
+                        merged[merged.index(known)] = piece
+                    else:
+                        known.views.append(view)
+                    break
+            else:
+                piece.views = [view]
+                merged.append(piece)
+    merged.sort(key=lambda p: -p.area)
+    return merged
 
 
 def difference_map(rectified: np.ndarray, baseline: Baseline, *, blur: int = BLUR) -> np.ndarray:
@@ -229,4 +278,13 @@ def describe(pieces: list[Piece]) -> str:
     return "; ".join(parts) + "."
 
 
-__all__ = ["Piece", "Baseline", "difference_map", "find_pieces", "describe", "MAP_WIDTH"]
+__all__ = [
+    "Piece",
+    "Baseline",
+    "BaselineSet",
+    "difference_map",
+    "find_pieces",
+    "merge_pieces",
+    "describe",
+    "MAP_WIDTH",
+]

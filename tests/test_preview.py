@@ -179,7 +179,7 @@ def test_board_endpoints_with_a_synthetic_board(tmp_path):
         preview.stop()
 
 
-def test_baseline_and_detect_endpoints(tmp_path):
+def test_scan_learns_the_empty_board_then_finds_a_token_from_every_view(tmp_path):
     cv2 = pytest.importorskip("cv2")
     from src.vision.board_map import BoardReference
     from src.vision.spaces import BY_NAME
@@ -193,38 +193,65 @@ def test_baseline_and_detect_endpoints(tmp_path):
     busy = cv2.warpPerspective(with_token, true_h, (empty.shape[1], empty.shape[0]))
     current = {"frame": empty}
 
-    class Camera:
+    class Camera:  # the same picture from every pose: three views that fully overlap
         pitch = yaw = body = 0.0
+        looks = []
 
         def get_frame(self):
             return current["frame"].copy()
 
-    preview = Preview(Camera(), stream_width=320, fps=10.0, capture_dir=tmp_path / "board")
+        def look(self, pitch, yaw, body_yaw=None):
+            self.looks.append((pitch, yaw, body_yaw))
+            if body_yaw is not None:
+                self.body = body_yaw
+
+    camera = Camera()
+    preview = Preview(camera, stream_width=320, fps=10.0, capture_dir=tmp_path / "board")
     preview.board = BoardReference(image=board, min_inliers=20)
     preview.start()
     server = serve(preview, port=0)
     port = server.server_address[1]
     threading.Thread(target=server.serve_forever, daemon=True).start()
     base = f"http://127.0.0.1:{port}"
+
+    def post(path, payload=None):
+        data = None if payload is None else json.dumps(payload).encode()
+        req = urllib.request.Request(
+            base + path, data=data, headers={"content-type": "application/json"}, method="POST"
+        )
+        return json.loads(urllib.request.urlopen(req).read())
+
+    def wait_scan():
+        deadline = time.monotonic() + 30.0
+        while time.monotonic() < deadline and not preview.scan_state.startswith("scan done"):
+            time.sleep(0.1)
+        preview._scan_thread.join(5.0)
+        return json.loads(urllib.request.urlopen(base + "/scan_result").read())
+
     try:
         preview.wait_jpeg(0, 3.0)
-
-        def post(path):
-            return json.loads(
-                urllib.request.urlopen(urllib.request.Request(base + path, method="POST")).read()
-            )
-
         assert "error" in post("/detect")  # no baseline yet
-        answer = post("/baseline")
-        assert answer["ok"] and preview.baseline_path().exists()
+        assert post("/scan", {"mode": "baseline"})["ok"]
+        learned = wait_scan()
+        assert (
+            learned["ok"]
+            and learned["mode"] == "baseline"
+            and sorted(preview.baselines.views) == ["centre", "left", "right"]
+        )
+        assert (preview.baseline_dir() / "views.json").exists() and "London" in learned["seen"]
+        assert camera.looks[-1] == (35.0, 0.0, 0.0)  # back to the centre at the end
         current["frame"] = busy
         preview.wait_jpeg(preview.frames, 3.0)
-        time.sleep(0.3)
-        found = post("/detect")
-        assert found["ok"] and found["pieces"], found
-        assert found["pieces"][0]["space"] == "Rome" and "Rome" in found["text"]
-        crop = urllib.request.urlopen(base + found["pieces"][0]["crop"]).read()
+        assert post("/scan", {"mode": "detect"})["ok"]
+        found = wait_scan()
+        assert found["ok"] and len(found["pieces"]) == 1, found
+        piece = found["pieces"][0]
+        assert piece["space"] == "Rome" and sorted(piece["views"]) == ["centre", "left", "right"]
+        assert "Rome" in found["text"] and found["centre_pieces"][0]["space"] == "Rome"
+        crop = urllib.request.urlopen(base + piece["crop"]).read()
         assert crop[:2] == b"\xff\xd8"
+        single = post("/detect")
+        assert single["ok"] and single["view"] == "centre" and single["pieces"][0]["space"] == "Rome"
         assert preview.load_baseline()
     finally:
         server.shutdown()
