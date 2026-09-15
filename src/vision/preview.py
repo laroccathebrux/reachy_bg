@@ -53,6 +53,7 @@ FRAME_WIDTH, FRAME_HEIGHT = 1920, 1080
 LOOK_PX_PER_DEG_BODY = 17.5  # measured: frame pixels a map point moves per degree of body yaw
 LOOK_CENTRE_TOLERANCE = 250.0  # px (horizontal): a closer look is refined once beyond this
 LOOK_RAISE_DEG = 8.0  # head raised by this much for a closer look at the far edge of the board
+MAX_CLOSER_LOOKS = 4  # per scan: bounds the time when the board is full of ambiguous blobs
 
 PAGE = """<!doctype html>
 <html lang="en">
@@ -576,9 +577,16 @@ class Preview:
         from src.vision.detect import closest_to, find_pieces
 
         bodies = dict(SCAN_VIEWS)
+        looks = 0
         for index, piece in enumerate(merged):
             if not piece.needs_closer_look():
                 continue
+            if looks >= MAX_CLOSER_LOOKS:
+                log.info(
+                    "closer looks capped at %d; %s left as seen", MAX_CLOSER_LOOKS, piece.space or piece.near
+                )
+                continue
+            looks += 1
             view = next((v for v in piece.views if v in bodies), None)
             baseline = None if view is None else self.baselines.views.get(view)
             if baseline is None:
@@ -683,11 +691,13 @@ class Preview:
     def _scan(self, mode: str, pitch: float) -> None:
         from src.vision.capture import capture_sharpest
         from src.vision.detect import (
+            LIGHT_CHANGE_MEDIAN,
             Baseline,
             BaselineSet,
             classify_pieces,
             describe,
             find_pieces,
+            light_change,
             merge_pieces,
         )
         from src.vision.spaces import SPACES
@@ -754,6 +764,15 @@ class Preview:
                     views_out.append({"view": name, "inliers": registration.inliers, "slots": len(slots)})
                     self.scan_state = f"scan: {reserve_text}"
                     continue
+                if name == "centre":
+                    change = light_change(registration, frame, baseline)
+                    if change > LIGHT_CHANGE_MEDIAN:
+                        self.scan_state = (
+                            f"scan failed: the light changed since the baseline (median difference {change:.0f}, "
+                            f"limit {LIGHT_CHANGE_MEDIAN:.0f}); clear the board and run the baseline sweep"
+                        )
+                        log.warning("%s", self.scan_state)
+                        return
                 pieces = find_pieces(registration, frame, baseline)
                 for piece in pieces:
                     candidate_names[id(piece)] = piece.space or piece.near

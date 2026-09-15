@@ -215,6 +215,23 @@ def difference_map(rectified: np.ndarray, baseline: Baseline, *, blur: int = BLU
     return np.clip(total, 0, 255 * 3).astype(np.uint16)
 
 
+LIGHT_CHANGE_MEDIAN = 15.0  # median difference over the board above which the baseline is stale
+
+
+def light_change(registration: Any, frame: np.ndarray, baseline: Baseline) -> float:
+    """Median difference between the rectified frame and the baseline where both saw the board.
+
+    Pieces cover a small part of the board, so the median measures the light, not the game:
+    about 2 with the light of the baseline, 28 the morning after an evening baseline.
+    """
+    width = baseline.image.shape[1]
+    rectified = registration.rectify(frame, width=width)
+    covered = registration.rectify(np.full(frame.shape[:2], 255, dtype=np.uint8), width=width)
+    diff = difference_map(rectified, baseline)
+    both = (covered == 255) & (baseline.coverage == 255)
+    return float(np.median(diff[both])) if both.any() else 0.0
+
+
 def find_pieces(
     registration: Registration,
     frame: np.ndarray,
@@ -386,6 +403,7 @@ __all__ = [
     "BaselineSet",
     "difference_map",
     "find_pieces",
+    "light_change",
     "merge_pieces",
     "classify_pieces",
     "closest_to",

@@ -115,3 +115,16 @@ def test_classify_pieces_votes_dice_values():
     assert die.kind == "die" and die.value == 5 and die.kind_confidence > 0.6
     assert token.kind == "piece" and token.value is None
     assert describe([die]).startswith("a die showing 5 at 10")
+
+
+def test_light_change_is_low_for_the_same_light_and_high_for_a_darker_board():
+    from src.vision.detect import light_change
+
+    board = synthetic_board()
+    reference = BoardReference(image=board, min_inliers=20)
+    frame, _ = perspective_frame(board)
+    registration = reference.locate(frame)
+    baseline = Baseline.capture(registration, frame)
+    assert light_change(registration, frame, baseline) < 3
+    darker = (frame.astype(np.float32) * 0.55).astype(np.uint8)
+    assert light_change(reference.locate(darker) or registration, darker, baseline) > 15
