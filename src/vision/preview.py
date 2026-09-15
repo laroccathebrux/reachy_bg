@@ -57,6 +57,7 @@ LOOK_PX_PER_DEG_BODY = 17.5  # measured: frame pixels a map point moves per degr
 LOOK_CENTRE_TOLERANCE = 250.0  # px (horizontal): a closer look is refined once beyond this
 LOOK_RAISE_DEG = 8.0  # head raised by this much for a closer look at the far edge of the board
 MAX_CLOSER_LOOKS = 4  # per scan: bounds the time when the board is full of ambiguous blobs
+MIN_VIEW_INLIERS = 40  # a scan view registered with fewer inliers is not trusted for detection
 
 PAGE = """<!doctype html>
 <html lang="en">
@@ -126,7 +127,8 @@ async function showScan() {
   const j = await (await fetch('/scan_result')).json();
   if (!j.ok) return;
   found = j.centre_pieces || [];
-  msg.textContent = j.text + (j.unseen.length ? `  |  not covered by any view: ${j.unseen.join(', ')}` : '  |  every space covered');
+  const skipped = (j.views || []).filter(v => v.error).map(v => `${v.view}: ${v.error}`);
+  msg.textContent = j.text + (j.unseen.length ? `  |  not covered by any view: ${j.unseen.join(', ')}` : '  |  every space covered') + (skipped.length ? `  |  skipped ${skipped.join('; ')}` : '');
   const box = document.getElementById('pieces'); box.innerHTML = '';
   for (const r of (j.reserve || [])) {
     const fig = document.createElement('figure'); fig.style.margin = '0';
@@ -747,6 +749,22 @@ class Preview:
                 if baseline is None:
                     views_out.append({"view": name, "error": "no baseline for this view"})
                     continue
+                # A view whose frame does not line up with its baseline (few inliers, or the
+                # whole board differing: light change or a bad homography) would turn the map
+                # into false pieces; it is skipped and reported instead.
+                change = light_change(registration, frame, baseline)
+                if registration.inliers < MIN_VIEW_INLIERS or change > LIGHT_CHANGE_MEDIAN:
+                    reason = f"median difference {change:.0f} (limit {LIGHT_CHANGE_MEDIAN:.0f}), {registration.inliers} inliers"
+                    views_out.append({"view": name, "error": f"baseline mismatch: {reason}"})
+                    log.warning("scan: %s view skipped, %s", name, reason)
+                    if name == "centre":
+                        self.scan_state = (
+                            f"scan failed: the centre view does not match its baseline ({reason}); "
+                            "if the light changed, clear the board and run the baseline sweep"
+                        )
+                        return
+                    self.scan_state = f"scan: {name} view skipped ({reason})"
+                    continue
                 if name == RESERVE_VIEW:
                     from src.vision.reserve import describe_reserve, read_reserve
 
@@ -765,15 +783,6 @@ class Preview:
                         reserve_out.append(record)
                     reserve_text = describe_reserve(slots)
                     self.scan_state = f"scan: {reserve_text}"
-                if name == "centre":
-                    change = light_change(registration, frame, baseline)
-                    if change > LIGHT_CHANGE_MEDIAN:
-                        self.scan_state = (
-                            f"scan failed: the light changed since the baseline (median difference {change:.0f}, "
-                            f"limit {LIGHT_CHANGE_MEDIAN:.0f}); clear the board and run the baseline sweep"
-                        )
-                        log.warning("%s", self.scan_state)
-                        return
                 pieces = find_pieces(registration, frame, baseline)
                 for piece in pieces:
                     candidate_names[id(piece)] = piece.space or piece.near
