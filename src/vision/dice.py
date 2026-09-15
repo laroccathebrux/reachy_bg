@@ -23,7 +23,7 @@ from src.logger import get_logger
 log = get_logger(__name__)
 
 UPSCALE = 4
-BODY_GREY_MAX = 100  # a die body is darker than this (0..255) after the blur of the wide lens
+BODY_GREY_MAX = 70  # a die body is darker than this (0..255): black plastic, not the board's dark art
 MIN_BODY_PX = 25  # in original frame pixels: smaller dark blobs are shadows or print
 MAX_BODY_PX = 140
 INNER_FRACTION = 0.22  # of the body size eroded on every side before counting pips
@@ -49,14 +49,20 @@ class DieReading:
 
 
 def _largest_dark_body(grey: np.ndarray) -> tuple[np.ndarray | None, tuple[int, int, int, int]]:
+    """The dark blob nearest to the crop's centre (the crop is centred on the piece), big enough."""
     import cv2
 
     dark = (grey < BODY_GREY_MAX).astype(np.uint8) * 255
     dark = cv2.morphologyEx(dark, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (21, 21)))
-    count, labels, stats, _ = cv2.connectedComponentsWithStats(dark)
+    count, labels, stats, centroids = cv2.connectedComponentsWithStats(dark)
     if count < 2:
         return None, (0, 0, 0, 0)
-    index = 1 + int(np.argmax(stats[1:, cv2.CC_STAT_AREA]))
+    ch, cw = grey.shape[0] / 2, grey.shape[1] / 2
+    smallest = (MIN_BODY_PX * UPSCALE) ** 2 * 0.4
+    candidates = [i for i in range(1, count) if stats[i, cv2.CC_STAT_AREA] >= smallest]
+    if not candidates:
+        return None, (0, 0, 0, 0)
+    index = min(candidates, key=lambda i: (centroids[i][0] - cw) ** 2 + (centroids[i][1] - ch) ** 2)
     x, y, w, h, _ = (int(v) for v in stats[index])
     mask = (labels == index).astype(np.uint8) * 255
     return mask, (x, y, w, h)

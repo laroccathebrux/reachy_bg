@@ -45,8 +45,10 @@ BOUNDARY = "reachyframe"
 BOARD_CAPTURE_DIR = CAPTURE_DIR / "board"
 TABLE_PITCH = 35.0
 # name, body yaw in degrees: the Reserve (bottom-left card slots) needs its own view, centred at 75.
-# The base cannot go past about 64 with the head at pitch 35, so the Reserve view stays at 60.
-SCAN_VIEWS = (("centre", 0.0), ("left", 45.0), ("reserve", 60.0), ("right", -45.0))
+# name, body yaw in degrees. The Reserve (bottom-left card slots) is read from the left view:
+# a view turned further (60-75) shows too much room to register, and the base stalls at 64.
+SCAN_VIEWS = (("centre", 0.0), ("left", 45.0), ("right", -45.0))
+RESERVE_VIEW = "left"
 SCAN_SETTLE_S = 0.6
 BODY_YAW_MAX = 90.0  # degrees either way; the base turns further but the table is in front
 BODY_YAW_SPEED = 60.0  # deg/s asked of the base when turning between views
@@ -745,7 +747,7 @@ class Preview:
                 if baseline is None:
                     views_out.append({"view": name, "error": "no baseline for this view"})
                     continue
-                if name == "reserve":
+                if name == RESERVE_VIEW:
                     from src.vision.reserve import describe_reserve, read_reserve
 
                     slots = read_reserve(registration, frame, baseline)
@@ -762,9 +764,7 @@ class Preview:
                             record["crop"] = f"/captures/reserve/{file.name}"
                         reserve_out.append(record)
                     reserve_text = describe_reserve(slots)
-                    views_out.append({"view": name, "inliers": registration.inliers, "slots": len(slots)})
                     self.scan_state = f"scan: {reserve_text}"
-                    continue
                 if name == "centre":
                     change = light_change(registration, frame, baseline)
                     if change > LIGHT_CHANGE_MEDIAN:

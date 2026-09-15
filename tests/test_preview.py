@@ -242,7 +242,7 @@ def test_scan_learns_the_empty_board_then_finds_a_token_from_every_view(tmp_path
         assert (
             learned["ok"]
             and learned["mode"] == "baseline"
-            and sorted(preview.baselines.views) == ["centre", "left", "reserve", "right"]
+            and sorted(preview.baselines.views) == ["centre", "left", "right"]
         )
         assert (preview.baseline_dir() / "views.json").exists() and "London" in learned["seen"]
         assert camera.looks[-1] == (35.0, 0.0, 0.0)  # back to the centre at the end
