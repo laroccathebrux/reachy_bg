@@ -421,6 +421,35 @@ with the *centre* baseline at a board corner gave a false blob offset (the corne
 lens distortion zone of the centre view), hence the nearest-view baseline. The piece's base
 is the extreme of its blob towards the camera, computed per view.
 
+## Done: Reserve, dice, and the morning after (2026-09-15)
+
+- **Reserve** (`src/vision/reserve.py`): the four card slots (measured on the board picture)
+  are judged on the upper part of each slot, where a card's picture differs strongly from the
+  cream slot (cards 0.6-0.9 of the window above 20, empty slots 0.00). Read from the *left*
+  scan view: a view turned further (60-75) shows too much room to register, and the base
+  stalls at 64 with the head at pitch 35.
+- **Dice** (`src/vision/dice.py`): a die is the black, roughly square blob nearest the centre
+  of a piece's crop (25-140 px); its value is the count of light round spots inside the
+  eroded body, voted across the views that saw it. At 60 px per die the value is a best
+  effort: 6 read as 6 twice, once as 4; confidence is reported and low values should be
+  confirmed by voice.
+- **Daylight**: the evening baseline was useless in the morning (board brightness 138 -> 86,
+  median difference 28 against 2 the night before) and the scan invented pieces. Now every
+  scan view is checked against its baseline (at least 40 inliers, median difference at most
+  15) and skipped, or the scan refused, otherwise; the difference threshold adapts to the
+  frame's own noise (3 x the 95th percentile, clamped to 25-45: 42 in the morning, 45 at
+  night); pieces are found by hysteresis (a core above the threshold, the footprint down to
+  60 % of it), which recovers the standees that differ from the board by only 33-40 in flat
+  daylight; a standing piece's base is its lowest point in the frame, pushed a little lower
+  because its bottom vanishes against dark art; closer looks are capped at four per scan.
+- Live this morning after a new baseline sweep: two standees (Tunguska, Buenos Aires), two
+  dice, one card in the Reserve, nothing false.
+
+Rules that fell: comparing with the *centre* baseline at a corner; a map-space "towards the
+camera" direction (frame pixels above the horizon flip it); a fourth scan view for the
+Reserve; locally normalised differences (noise as high as the signal); the SDK's
+`look_at_image`.
+
 ## Decisions taken
 
 | Topic | Decision | Where |
