@@ -67,3 +67,20 @@ def test_merge_pieces_joins_sightings_of_the_same_spot():
     ]
     assert merge_pieces([]) == []
     assert BaselineSet().views == {}
+
+
+def test_pieces_on_the_reserve_and_the_legend_are_ignored():
+    board = synthetic_board()
+    reference = BoardReference(image=board, min_inliers=20)
+    empty, true_h = perspective_frame(board)
+    registration = reference.locate(empty)
+    baseline = Baseline.capture(registration, empty)
+    busy = board.copy()
+    h, w = board.shape[:2]
+    cv2.rectangle(
+        busy, (int(w * 0.1), int(h * 0.88)), (int(w * 0.18), int(h * 0.97)), (30, 30, 230), -1
+    )  # Reserve
+    cv2.circle(busy, (int(w * 0.08), int(h * 0.6)), 14, (30, 30, 230), -1)  # legend
+    frame = cv2.warpPerspective(busy, true_h, (empty.shape[1], empty.shape[0]))
+    registration = reference.locate(frame)
+    assert find_pieces(registration, frame, baseline, min_area=80) == []

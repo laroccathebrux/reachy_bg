@@ -39,7 +39,9 @@ NEAR_FACTOR = 2.8  # a piece this many radii from a space centre is reported as 
 MAX_AREA = 40000
 MIN_SIDE = 12  # rectified-map pixels: thinner blobs are slivers along the frame or board edges
 BOARD_MARGIN_TOP = 0.09  # fraction of the map height ignored at the top: the Doom track and hands beyond it
-BOARD_MARGIN_BOTTOM = 0.06  # and at the bottom: the Reserve strip
+BOARD_MARGIN_BOTTOM = 0.06  # and at the bottom edge
+RESERVE_BOX = (0.0, 0.82, 0.37, 1.0)  # x0, y0, x1, y1 of the Reserve (cards on it are read separately)
+LEGEND_BOX = (0.0, 0.52, 0.17, 0.71)  # the legend box: nothing is ever placed on it
 
 
 @dataclass
@@ -205,6 +207,13 @@ def find_pieces(
     mask[(covered < 255) | (baseline.coverage < 255)] = 0  # only where both pictures saw the board
     mask[: int(h * BOARD_MARGIN_TOP), :] = 0
     mask[h - int(h * BOARD_MARGIN_BOTTOM) :, :] = 0
+    for x0, y0, x1, y1 in (RESERVE_BOX, LEGEND_BOX):
+        mask[int(h * y0) : int(h * y1), int(w * x0) : int(w * x1)] = 0
+    # Direction "towards the camera" on the map: a standing piece is smeared away from the
+    # camera, so the point where it touches the board is its extreme along this direction.
+    fw, fh = registration.frame_size
+    towards = registration.to_reference([(fw / 2, fh), (fw / 2, 0)])
+    towards = (towards[0] - towards[1]) / (np.linalg.norm(towards[0] - towards[1]) + 1e-6)
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
     mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
     mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (9, 9)))
@@ -219,10 +228,10 @@ def find_pieces(
             continue
         cx, cy = (float(v) for v in centroids[i])
         strength = float(diff[labels == i].mean())
-        # Standees and stacked tokens rise towards the far edge of the map in perspective, so
-        # the point that touches the board is the bottom of the blob (the camera looks from
-        # the bottom edge), not its centroid.
-        base_x, base_y = cx / w, (y + bh - 2) / h
+        ys, xs = np.nonzero(labels == i)
+        along = xs * towards[0] * scale_x + ys * towards[1] * scale_y
+        nearest = along >= np.percentile(along, 92)  # the 8 % of the blob closest to the camera
+        base_x, base_y = float(xs[nearest].mean()) / w, float(ys[nearest].mean()) / h
         space, distance = nearest_space(base_x, base_y)
         near = None
         if space is None:
