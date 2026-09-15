@@ -57,7 +57,7 @@ LOOK_PX_PER_DEG_BODY = 17.5  # measured: frame pixels a map point moves per degr
 LOOK_CENTRE_TOLERANCE = 250.0  # px (horizontal): a closer look is refined once beyond this
 LOOK_RAISE_DEG = 8.0  # head raised by this much for a closer look at the far edge of the board
 MAX_CLOSER_LOOKS = 4  # per scan: bounds the time when the board is full of ambiguous blobs
-MIN_VIEW_INLIERS = 40  # a scan view registered with fewer inliers is not trusted for detection
+MIN_VIEW_INLIERS = 30  # a scan view registered with fewer inliers is not trusted (the left view gives 35-53 in daylight)
 
 PAGE = """<!doctype html>
 <html lang="en">
