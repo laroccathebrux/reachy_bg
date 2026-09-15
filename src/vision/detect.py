@@ -37,7 +37,8 @@ DIFF_THRESHOLD = 45  # summed absolute Lab difference (0..255 scale) that counts
 MIN_AREA = 300  # rectified-map pixels: an investigator marker or a token is 400-1500 at 1200 wide
 NEAR_FACTOR = 2.8  # a piece this many radii from a space centre is reported as "near" it
 MAX_AREA = 40000
-BOARD_MARGIN = 0.06  # fraction of the map height ignored at the top (Doom track) and bottom (Reserve)
+BOARD_MARGIN_TOP = 0.09  # fraction of the map height ignored at the top: the Doom track and hands beyond it
+BOARD_MARGIN_BOTTOM = 0.06  # and at the bottom: the Reserve strip
 
 
 @dataclass
@@ -152,9 +153,8 @@ def find_pieces(
     h, w = diff.shape
     mask = (diff >= threshold).astype(np.uint8) * 255
     mask[(covered < 255) | (baseline.coverage < 255)] = 0  # only where both pictures saw the board
-    band = int(h * BOARD_MARGIN)
-    mask[:band, :] = 0
-    mask[h - band :, :] = 0
+    mask[: int(h * BOARD_MARGIN_TOP), :] = 0
+    mask[h - int(h * BOARD_MARGIN_BOTTOM) :, :] = 0
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
     mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
     mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (9, 9)))
