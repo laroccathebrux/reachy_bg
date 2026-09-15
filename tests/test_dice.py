@@ -27,10 +27,10 @@ def synthetic_die(value, front=3, size=100, margin=30, blur=3):
     top_h = int(size * 0.45)
     for fx, fy in LAYOUTS[value]:
         centre = (int(margin + fx * size), int(margin + fy * top_h))
-        cv2.ellipse(canvas, centre, (size // 16, size // 24), 0, 0, 360, (235, 235, 235), -1)
+        cv2.ellipse(canvas, centre, (size // 14, size // 20), 0, 0, 360, (235, 235, 235), -1)  # same area as below
     for fx, fy in LAYOUTS[front]:
         centre = (int(margin + fx * size), int(margin + top_h + fy * (size - top_h)))
-        cv2.circle(canvas, centre, size // 14, (235, 235, 235), -1)
+        cv2.circle(canvas, centre, size // 16, (235, 235, 235), -1)
     return cv2.GaussianBlur(canvas, (blur | 1, blur | 1), 0)
 
 

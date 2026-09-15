@@ -32,6 +32,12 @@ INNER_FRACTION = 0.12  # of the body size eroded on every side before counting p
 # and with rounder pips. Only the spots above this fraction of the body height are the value.
 TOP_FACE_FRACTION = 0.55
 TOP_FACE_BAND = 0.40  # between this and TOP_FACE_FRACTION a spot must look like a compressed top pip
+# A flat sliver on the top edge looked like a glint but was a pip cut by the edge (four known dice:
+# 4/4 right by vote without this filter, 3/4 with it); the filter stays off.
+EDGE_GLINT_ASPECT = 99.0
+GAP_SEARCH_MIN, GAP_SEARCH_MAX = 0.28, 0.72  # of the body height: where the edge between faces can be
+FRONT_PEEK_BAND = 0.14  # of the body height above the edge where a front pip can still appear
+MIN_FACE_GAP = 0.10  # of the body height: smaller gaps are just the spacing of pips within a face
 MIN_SPOTS = 2  # a die seen from above at an angle shows two faces: one lone spot is a highlight
 MERGED_PIP_AREA = 1.6  # a spot this many times the median pip area is two pips touching
 PIP_MIN_AREA_FRACTION = 0.004  # of the body area (at the upscaled size)
@@ -73,6 +79,22 @@ def _largest_dark_body(grey: np.ndarray) -> tuple[np.ndarray | None, tuple[int, 
     x, y, w, h, _ = (int(v) for v in stats[index])
     mask = (labels == index).astype(np.uint8) * 255
     return mask, (x, y, w, h)
+
+
+def _top_face_limit(rows: list[float]) -> float:
+    """Where the top face ends: the largest vertical gap between spot rows, else a fixed fraction.
+
+    The pips of the top face and of the front face form two groups separated by a gap (the
+    edge between the faces); the gap is looked for in the middle of the body so that a gap
+    inside one face's own rows does not split it.
+    """
+    best_gap, limit = 0.0, TOP_FACE_FRACTION
+    for above, below in zip(rows, rows[1:], strict=False):
+        split = (above + below) / 2
+        gap = below - above
+        if GAP_SEARCH_MIN <= split <= GAP_SEARCH_MAX and gap >= MIN_FACE_GAP and gap > best_gap:
+            best_gap, limit = gap, split
+    return limit
 
 
 def read_die(crop: np.ndarray) -> DieReading:
@@ -119,13 +141,19 @@ def read_die(crop: np.ndarray) -> DieReading:
     if len(spots) < MIN_SPOTS:  # a black block with at most a highlight: a standee's plastic base
         return DieReading(False, None, 0.0, int(size), len(spots))
     median_area = float(np.median([a for _, _, a, _ in spots]))
+    # Highlights on the top edge are flat slivers, smaller than a pip.
+    spots = [sp for sp in spots if not (sp[3] > EDGE_GLINT_ASPECT and sp[2] < 0.75 * median_area)]
+    if len(spots) < MIN_SPOTS:
+        return DieReading(False, None, 0.0, int(size), len(spots))
+    rows = sorted((sy - y) / max(1, h) for _, sy, _, _ in spots)
+    limit = _top_face_limit(rows)
     pips = 0
     for _, sy, area, aspect in spots:
         fy = (sy - y) / max(1, h)
-        if fy >= TOP_FACE_FRACTION:
+        if fy >= limit:
             continue  # front face
-        if fy >= TOP_FACE_BAND and (aspect < 0.95 or area < 0.75 * median_area):
-            continue  # a front-face pip peeking into the band: taller than wide, and smaller
+        if fy >= limit - FRONT_PEEK_BAND and (aspect < 0.95 or area < 0.75 * median_area):
+            continue  # the front face's top pip peeking above the edge: taller than wide, smaller
         pips += 2 if area >= MERGED_PIP_AREA * median_area else 1
     if pips == 0:
         return DieReading(False, None, 0.0, int(size), len(spots))
