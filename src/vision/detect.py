@@ -37,6 +37,7 @@ DIFF_THRESHOLD = 45  # summed absolute Lab difference (0..255 scale) that counts
 MIN_AREA = 300  # rectified-map pixels: an investigator marker or a token is 400-1500 at 1200 wide
 NEAR_FACTOR = 2.8  # a piece this many radii from a space centre is reported as "near" it
 MAX_AREA = 40000
+MIN_SIDE = 12  # rectified-map pixels: thinner blobs are slivers along the frame or board edges
 BOARD_MARGIN_TOP = 0.09  # fraction of the map height ignored at the top: the Doom track and hands beyond it
 BOARD_MARGIN_BOTTOM = 0.06  # and at the bottom: the Reserve strip
 
@@ -165,7 +166,7 @@ def find_pieces(
     fw, fh = registration.frame_size
     for i in range(1, count):
         x, y, bw, bh, area = (int(v) for v in stats[i])
-        if area < min_area or area > max_area:
+        if area < min_area or area > max_area or min(bw, bh) < MIN_SIDE:
             continue
         cx, cy = (float(v) for v in centroids[i])
         strength = float(diff[labels == i].mean())
