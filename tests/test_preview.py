@@ -242,7 +242,7 @@ def test_scan_learns_the_empty_board_then_finds_a_token_from_every_view(tmp_path
         assert (
             learned["ok"]
             and learned["mode"] == "baseline"
-            and sorted(preview.baselines.views) == ["centre", "left", "right"]
+            and sorted(preview.baselines.views) == ["centre", "left", "reserve", "right"]
         )
         assert (preview.baseline_dir() / "views.json").exists() and "London" in learned["seen"]
         assert camera.looks[-1] == (35.0, 0.0, 0.0)  # back to the centre at the end
@@ -253,6 +253,9 @@ def test_scan_learns_the_empty_board_then_finds_a_token_from_every_view(tmp_path
         assert found["ok"] and len(found["pieces"]) == 1, found
         piece = found["pieces"][0]
         assert piece["space"] == "Rome" and sorted(piece["views"]) == ["centre", "left", "right"]
+        assert [r["slot"] for r in found["reserve"]] == [1, 2, 3, 4] and not any(
+            r["occupied"] for r in found["reserve"]
+        )
         assert piece["confirmed"] is True  # the synthetic disc is weak (< 60): it got a closer look
         assert any(look[0] == "at" for look in camera.looks)
         assert "Rome" in found["text"] and found["centre_pieces"][0]["space"] == "Rome"

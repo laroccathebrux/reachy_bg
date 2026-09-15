@@ -44,7 +44,8 @@ STREAM_FPS = 10.0
 BOUNDARY = "reachyframe"
 BOARD_CAPTURE_DIR = CAPTURE_DIR / "board"
 TABLE_PITCH = 35.0
-SCAN_VIEWS = (("centre", 0.0), ("left", 45.0), ("right", -45.0))  # name, body yaw in degrees
+# name, body yaw in degrees: the Reserve (bottom-left card slots) needs its own view, centred at 75.
+SCAN_VIEWS = (("centre", 0.0), ("left", 45.0), ("reserve", 75.0), ("right", -45.0))
 SCAN_SETTLE_S = 0.6
 BODY_YAW_MAX = 90.0  # degrees either way; the base turns further but the table is in front
 BODY_YAW_SPEED = 60.0  # deg/s asked of the base when turning between views
@@ -123,6 +124,12 @@ async function showScan() {
   found = j.centre_pieces || [];
   msg.textContent = j.text + (j.unseen.length ? `  |  not covered by any view: ${j.unseen.join(', ')}` : '  |  every space covered');
   const box = document.getElementById('pieces'); box.innerHTML = '';
+  for (const r of (j.reserve || [])) {
+    const fig = document.createElement('figure'); fig.style.margin = '0';
+    const label = !r.seen ? 'not in view' : (r.occupied ? 'card' : 'empty');
+    fig.innerHTML = `<img src="${r.crop || ''}" style="height:160px;border:2px solid ${r.occupied ? '#fd5' : '#555'};display:block"><figcaption style="font-size:12px;color:#ccc">Reserve slot ${r.slot}: ${label} (${Math.round(r.fraction * 100)}%)</figcaption>`;
+    box.appendChild(fig);
+  }
   for (const p of j.pieces) {
     const fig = document.createElement('figure'); fig.style.margin = '0';
     const where = p.space || (p.near ? 'near ' + p.near : 'between spaces');
@@ -690,6 +697,8 @@ class Preview:
         views_out: list[dict[str, Any]] = []
         seen: set[str] = set()
         centre_pieces: list[dict[str, Any]] = []
+        reserve_out: list[dict[str, Any]] = []
+        reserve_text = ""
         try:
             for name, body in SCAN_VIEWS:
                 self.scan_state = f"scan: looking {name}"
@@ -714,6 +723,26 @@ class Preview:
                 baseline = self.baselines.views.get(name)
                 if baseline is None:
                     views_out.append({"view": name, "error": "no baseline for this view"})
+                    continue
+                if name == "reserve":
+                    from src.vision.reserve import describe_reserve, read_reserve
+
+                    slots = read_reserve(registration, frame, baseline)
+                    folder = self.capture_dir / "reserve"
+                    folder.mkdir(parents=True, exist_ok=True)
+                    for slot in slots:
+                        record = slot.record()
+                        if slot.crop is not None and slot.crop.size:
+                            file = (
+                                folder
+                                / f"{stamp}_slot{slot.index}_{'card' if slot.occupied else 'empty'}.jpg"
+                            )
+                            file.write_bytes(encode_jpeg(slot.crop, quality=92))
+                            record["crop"] = f"/captures/reserve/{file.name}"
+                        reserve_out.append(record)
+                    reserve_text = describe_reserve(slots)
+                    views_out.append({"view": name, "inliers": registration.inliers, "slots": len(slots)})
+                    self.scan_state = f"scan: {reserve_text}"
                     continue
                 pieces = find_pieces(registration, frame, baseline)
                 for piece in pieces:
@@ -770,12 +799,15 @@ class Preview:
                             record["box"] = centre_pieces[i]["box"]
             merged_out.append(record)
         text = describe(merged)
+        if reserve_text:
+            text = f"{text} {reserve_text}"
         self.last_scan = {
             "ok": True,
             "mode": mode,
             "views": views_out,
             "pieces": merged_out,
             "centre_pieces": centre_pieces,
+            "reserve": reserve_out,
             "seen": sorted(seen),
             "unseen": unseen,
             "text": text,
