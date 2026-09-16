@@ -95,3 +95,15 @@ def test_validate_config_requires_a_native_voice_per_language(monkeypatch):
         for name in ("TTS_PROVIDER", "ELEVENLABS_API_KEY", "ELEVENLABS_VOICE_ID_PT_BR"):
             monkeypatch.delenv(name)
         importlib.reload(config)
+
+
+def test_a_setting_whose_value_is_only_a_dotenv_comment_reads_as_empty(monkeypatch):
+    # The shipped .env.example writes `AUDIO_INPUT_DEVICE=      # empty = system default`, and
+    # the loader keeps the comment: the microphone then looked for a device by that name.
+    monkeypatch.setenv("AUDIO_INPUT_DEVICE", "# empty = system default input; or a name")
+    assert config._env_str("AUDIO_INPUT_DEVICE") == ""
+    monkeypatch.setenv("AUDIO_OUTPUT_DEVICE", "Reachy Mini Audio   # the robot speaker")
+    assert config._env_str("AUDIO_OUTPUT_DEVICE") == "Reachy Mini Audio"
+    # A "#" inside the value itself is part of it.
+    monkeypatch.setenv("SOME_URL", "http://host/path#fragment")
+    assert config._env_str("SOME_URL") == "http://host/path#fragment"

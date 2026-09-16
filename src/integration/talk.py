@@ -6,6 +6,7 @@
     uv run python -m src.integration.talk --device "MacBook Pro Microphone"
     uv run python -m src.integration.talk --humans 2          # two people at the table: the gate is on
     uv run python -m src.integration.talk --always-answer     # no gate: the agent hears everything
+    uv run python -m src.integration.talk --demo-game --game-plan   # the robot plays its own investigator
 
 The agent does ASR, LLM, TTS and turn-taking in the cloud (about half a second per turn)
 and calls back into this process for rules and knowledge (Qdrant). Locally, the same
@@ -17,6 +18,12 @@ src/speech/gatekeeper.py). Table talk that is not for the robot never reaches th
 costs no turn and no tokens. With ``--always-answer`` (or one person at the table) the gate
 only watches and its decisions are logged as shadow decisions. Every decision goes to
 data/game_logs/addressee.jsonl; everything heard and said to data/game_logs/conversation.jsonl.
+
+With a game loaded (``--game`` or ``--demo-game``) the robot also plays: when the gate hears its
+own investigator's turn being called, the audio is dropped instead of being released, the move is
+decided locally by src/strategy/decide.py and the robot says the reason out of its own TTS
+(src/integration/turn_taking.py). The agent is never asked to say a move it did not choose, and a
+turn costs no agent minutes at all.
 """
 
 from __future__ import annotations
@@ -32,6 +39,7 @@ import subprocess
 import sys
 import threading
 import time
+import wave
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -47,6 +55,7 @@ from src.config import (
     HEAD_SWAY,
     validate_config,
 )
+from src.integration.turn_taking import TurnTaker
 from src.logger import get_logger
 from src.robot.reachy import AGREE_MOVES, GREETING_MOVES, Robot
 from src.robot.sway import HeadSway
@@ -61,6 +70,7 @@ from src.speech.language import detect_language
 from src.speech.microphone import Segmenter, Utterance, write_wav
 from src.speech.speakers import MIN_ENROLL_S, SpeakerRegistry
 from src.speech.tts import TTSError, synthesize
+from src.strategy.game import GameState
 
 log = get_logger(__name__)
 
@@ -416,6 +426,56 @@ def _say_line(robot: Robot, text: str, language: str, speak: bool) -> None:
         log.warning("%s", exc)
 
 
+def speak_pcm(audio: Any, text: str, language: str, *, table: Any = None) -> None:
+    """Say a line of our own through the agent's own speaker stream.
+
+    The robot has two voices in this process: the agent's, which arrives as PCM over the
+    WebSocket, and this one, synthesized locally for what the robot decided by itself. Both are
+    written to the same output queue, so the echo gate, the barge-in check and the head sway see
+    them as the same voice - which they are, to everybody at the table.
+    """
+    log.info("robot (local): %s", text)
+    try:
+        clip = synthesize(text, language)
+    except TTSError as exc:
+        log.warning("turn: could not synthesize (%s)", exc)
+        return
+    with wave.open(str(clip.path), "rb") as wav:
+        pcm = wav.readframes(wav.getnframes())
+    if table is not None:
+        table.on_agent_response(text)  # the barge-in and echo checks compare against what is said
+    audio.output(pcm)
+
+
+def build_turn_taker(args: Any, audio: Any, table: Any, diary: Diary) -> TurnTaker | None:
+    """The robot's own investigator, if this session was given a game to play."""
+    if not (args.game or args.demo_game):
+        return None
+    if args.game:
+        game = GameState.load(Path(args.game))
+    else:
+        from src.strategy.turn import demo_game
+
+        game = demo_game()
+    plan = None
+    if args.game_plan:
+        from src.strategy import plan as planner
+
+        plan = planner.make_plan(game, language=DEFAULT_LANGUAGE, advice=planner.advice_for(game))
+        log.info("plan for this game:\n%s", plan.as_text())
+        diary.write("game_plan", **plan.record())
+    log.info("playing: %s", game.briefing())
+    diary.write("game_loaded", briefing=game.briefing(), missing=game.missing())
+    taker = TurnTaker(
+        game,
+        say=lambda text, language: speak_pcm(audio, text, language, table=table),
+        language=DEFAULT_LANGUAGE,
+        plan=plan,
+    )
+    taker.on_decision = lambda decision, text: diary.write("turn", said=text, **decision.record())
+    return taker
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
@@ -436,6 +496,13 @@ def main(argv: list[str] | None = None) -> int:
         "--always-answer",
         action="store_true",
         help="no addressee gate: the agent hears everything (decisions logged as shadow)",
+    )
+    parser.add_argument("--game", default="", help="a game saved with GameState.save: the robot plays it")
+    parser.add_argument("--demo-game", action="store_true", help="the demo setup of src.strategy.turn")
+    parser.add_argument(
+        "--game-plan",
+        action="store_true",
+        help="write the plan for the game after loading it, and follow it on every turn",
     )
     args = parser.parse_args(argv)
 
@@ -532,6 +599,7 @@ def main(argv: list[str] | None = None) -> int:
                 audio.muted = False
             humans = args.humans if args.humans is not None else (len(registry.names) or None)
             gate_on = not args.always_answer and humans != 1
+            taker = build_turn_taker(args, audio, table, diary)
             table.keeper = Gatekeeper(
                 audio,
                 transcriber,
@@ -543,6 +611,8 @@ def main(argv: list[str] | None = None) -> int:
                 robot_spoke_at=lambda: table.robot_spoke_at,
                 voice_language=lambda: table.voice_language,
                 on_switch=table.switch_language,
+                my_investigator=(lambda: taker.investigator) if taker is not None else (lambda: ""),
+                on_my_turn=taker.handle if taker is not None else None,
             )
             audio.hold_utterances = gate_on
             ear.on_utterance = table.on_utterance

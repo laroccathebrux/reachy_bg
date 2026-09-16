@@ -123,17 +123,26 @@ class RobotAudioInterface:
         import sounddevice as sd
 
         self._callback = input_callback
-        device = resolve_input_device(self.input_spec, list_input_devices(), sd.default.device[0])
-        self.input_name = device.name
+        # input_spec None is "speak, do not listen": the rehearsal in scripts/speak_turn.py and
+        # anything else that only needs the robot's voice opens no microphone at all.
+        if self.input_spec is None:
+            self.input_name = ""
+        else:
+            device = resolve_input_device(self.input_spec, list_input_devices(), sd.default.device[0])
+            self.input_name = device.name
         out_index = resolve_output_device(self.output_spec)
         self.output_name = str(sd.query_devices(out_index)["name"])
-        self._in = sd.InputStream(
-            device=device.index,
-            channels=1,
-            samplerate=SAMPLE_RATE,
-            dtype="int16",
-            blocksize=INPUT_BLOCK,
-            callback=self._on_input,
+        self._in = (
+            None
+            if self.input_spec is None
+            else sd.InputStream(
+                device=device.index,
+                channels=1,
+                samplerate=SAMPLE_RATE,
+                dtype="int16",
+                blocksize=INPUT_BLOCK,
+                callback=self._on_input,
+            )
         )
         self._out = sd.OutputStream(
             device=out_index, channels=1, samplerate=SAMPLE_RATE, dtype="int16", blocksize=OUTPUT_BLOCK
@@ -142,8 +151,9 @@ class RobotAudioInterface:
         self._player = threading.Thread(target=self._play_loop, name="agent-playback", daemon=True)
         self._out.start()
         self._player.start()
-        self._in.start()
-        log.info("agent audio: %s -> agent -> %s", self.input_name, self.output_name)
+        if self._in is not None:
+            self._in.start()
+        log.info("agent audio: %s -> agent -> %s", self.input_name or "(no microphone)", self.output_name)
 
     def stop(self) -> None:
         self._stop.set()

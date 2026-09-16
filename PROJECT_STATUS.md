@@ -717,6 +717,50 @@ What is still wrong at this size of model: it translates a term now and then ("M
 Mystery) even with an explicit example against it, and once said "Roma" and "Cultista". The
 decision itself has been sound in every run so far.
 
+## Done: the turn is spoken, and the agent never hears it (2026-09-16, night)
+
+"É a vez da Lily Chen" already reached the robot at full confidence, because the addressee rules
+know which investigator it plays (`reason="my_turn"`). Now something happens when it does.
+
+`src/integration/turn_taking.py` takes the turn: the gate drops the audio instead of releasing it
+to the ElevenLabs agent, `decide()` chooses the move locally, and the robot says the reason that
+came out of it - word for word, through its own TTS, on the same output stream the agent uses, so
+the echo gate, the barge-in check and the head sway treat it as the same voice.
+
+**The agent is never asked to say a move.** Not only for the minutes, though a turn now costs
+none: the sentence the decision produced is already finished, in the table's language, with the
+game terms in English, and handing it to a conversational model to "say" is handing it a chance
+to say something the robot did not decide.
+
+Only the model's own question is spoken with it (`Decision.ask`, written in the table's
+language). The other unknowns are the generator's English notes for the log, and a Portuguese
+table should not be read an English sentence. Two lines are fixed text in both languages -
+"I cannot act this turn" and "I do not know which investigator I am playing" - because there is
+no decision behind them to explain.
+
+`scripts/speak_turn.py` rehearses the whole thing without the agent and without the microphone:
+the local model decides, the local TTS speaks, the audio goes to the robot. A rehearsal costs a
+few hundred characters of TTS instead of a session, which is why the live test below could be run
+as often as it needed to be.
+
+Measured on the robot this evening (`--demo`, Portuguese):
+
+| Signal | Value |
+|---|---|
+| Turn call -> decision (model warm) | 2.8 s |
+| Decision -> 17.5 s of speech synthesized | 1.9 s |
+| Turn call -> the robot starts talking | about 5 s |
+| Agent minutes spent on a turn | none |
+
+Two faults found on the way, both outside this feature: `AUDIO_INPUT_DEVICE` in `.env` held the
+example's own comment (`# empty = system default input...`), so the microphone went looking for a
+device by that name - settings now drop a trailing `# comment` the way a .env is meant to read;
+and `RobotAudioInterface` could not open without a microphone, which is all a rehearsal needs
+(`input_device=None` now means "speak, do not listen").
+
+Still to do live, with the owner at the table: say it out loud to the robot and check in
+`conversation.jsonl` that the turn produced no agent turn at all.
+
 ## Decisions taken
 
 | Topic | Decision | Where |
@@ -810,7 +854,9 @@ small and soft for either. Pixels first, recogniser second.
       file, and `bg_rules` is cited rather than queried per candidate.
 - [ ] The owner checks `scripts/draw_map_graph.py`'s picture against the board, then `VERIFIED`
       turns True and the robot may move a piece.
-- [ ] The spoken turn: "é a vez da Lily Chen" -> `decide` -> the ElevenLabs voice.
+- [x] The spoken turn: "é a vez da Lily Chen" -> `decide` -> the robot's own voice, with the
+      agent never hearing the turn call (`src/integration/turn_taking.py`); the live test with
+      the owner speaking is still pending.
 - [ ] Rules Q&A tool returning section and page.
 
 ### Phase 4: end-to-end (weeks 4-5)

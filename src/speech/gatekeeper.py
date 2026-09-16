@@ -38,7 +38,7 @@ ECHO_SLACK_S = 0.5  # an utterance that started this long after playback ended c
 class Verdict:
     """What the gate did with one utterance."""
 
-    route: str  # released | early | discarded | switched | echo_gate | no_speech | passed
+    route: str  # released | early | discarded | switched | echo_gate | no_speech | passed | my_turn
     decision: Decision
     text: str
     language: str
@@ -63,6 +63,7 @@ class Gatekeeper:
         voice_language: Callable[[], str] = lambda: "",
         on_switch: Callable[[str, str, str], None] | None = None,
         my_investigator: Callable[[], str] = lambda: "",
+        on_my_turn: Callable[[str, str], bool] | None = None,
         clock: Callable[[], float] = time.monotonic,
     ):
         self.audio = audio
@@ -78,6 +79,9 @@ class Gatekeeper:
         # Read at decision time, not at construction: the robot is given its investigator
         # during the spoken setup, after the ear is already listening.
         self.my_investigator = my_investigator
+        # The turn call the robot answers itself: src.integration.turn_taking decides the move
+        # locally and speaks it, so the agent is never asked to say a move it did not choose.
+        self.on_my_turn = on_my_turn
         self.clock = clock
         self.asr_lock = threading.Lock()  # one Whisper call at a time (the spotter shares it)
         self.last_addressed = ""
@@ -142,6 +146,18 @@ class Gatekeeper:
                 other_names=[n for n in self.names if n != speaker],
                 my_investigator=self.my_investigator(),
             )
+
+        if decision.addressed and decision.reason == "my_turn" and self.on_my_turn is not None:
+            taken = False
+            try:
+                taken = self.on_my_turn(text, language)
+            except Exception as exc:  # the turn failing must not swallow the utterance silently
+                log.exception("gatekeeper: taking the turn failed (%s)", exc)
+            if taken:
+                dropped = self.audio.discard_utterance(until) if self.active else 0
+                self.last_addressed = speaker
+                verdict = Verdict("my_turn", decision, text, language, 0, dropped, 0, whisper_ms)
+                return self._done(verdict, utterance, speaker, score, label, since)
 
         forwarded = dropped = 0
         confident_switch = (

@@ -9,6 +9,7 @@ runtime data folders.
 from __future__ import annotations
 
 import os
+import re
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -20,6 +21,21 @@ if _dotenv is None:
     load_dotenv(BASE_DIR / ".env")
 elif _dotenv:
     load_dotenv(_dotenv)
+
+
+def _env_str(name: str, default: str = "") -> str:
+    """An environment string with a trailing ``# comment`` dropped, the way .env files read.
+
+    ``AUDIO_INPUT_DEVICE=              # empty = system default`` is what the shipped .env.example
+    looks like, and the loader keeps that comment as part of the value: the microphone then went
+    looking for a device called "# empty = system default input...". A "#" that follows
+    whitespace ends the value; one inside a word (a URL fragment, a name) is left alone.
+    """
+    value = os.getenv(name, default)
+    if not value:
+        return value
+    value = re.split(r"\s+#", value.strip(), maxsplit=1)[0].strip()
+    return "" if value.startswith("#") else value  # the whole value was the comment
 
 
 def _env_int(name: str, default: int) -> int:
@@ -75,7 +91,7 @@ REACHY_MEDIA_BACKEND = os.getenv("REACHY_MEDIA_BACKEND", "default")
 # --------------------------------------------------------------------------- audio
 # The robot's microphone flat cable is broken, so speech input always comes from a Mac
 # input device. Empty string = the system default input device (sounddevice semantics).
-AUDIO_INPUT_DEVICE = os.getenv("AUDIO_INPUT_DEVICE", "")
+AUDIO_INPUT_DEVICE = _env_str("AUDIO_INPUT_DEVICE", "")
 AUDIO_SAMPLE_RATE = _env_int("AUDIO_SAMPLE_RATE", 16000)
 # Energy-based voice activity detection on the Mac input (src/speech/microphone.py). A frame
 # counts as speech when its level exceeds both the absolute floor and the adaptive noise
@@ -151,7 +167,7 @@ ELEVEN_TURN_TIMEOUT_S = float(os.getenv("ELEVEN_TURN_TIMEOUT_S", "300"))
 ELEVEN_MAX_DURATION_S = _env_int("ELEVEN_MAX_DURATION_S", 7200)
 # The robot speaker is a USB audio device on the Mac ("Reachy Mini Audio"); streaming to it
 # directly is the only audible path for streamed audio on macOS.
-AUDIO_OUTPUT_DEVICE = os.getenv("AUDIO_OUTPUT_DEVICE", "Reachy Mini Audio")
+AUDIO_OUTPUT_DEVICE = _env_str("AUDIO_OUTPUT_DEVICE", "Reachy Mini Audio")
 HEAD_SWAY = _env_bool("HEAD_SWAY", True)
 
 

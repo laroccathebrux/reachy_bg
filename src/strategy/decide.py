@@ -319,7 +319,8 @@ class Decision:
 
     plan: TurnPlan | None
     reason: str
-    questions: tuple[str, ...] = ()
+    ask: str = ""  # the model's own question, written in the language the table is speaking
+    questions: tuple[str, ...] = ()  # everything the plan depends on, in English, for the log
     chosen_by: str = "score"  # "model" when the LLM picked it, "score" when it fell back
     considered: tuple[Scored, ...] = ()
     seconds: float = 0.0
@@ -333,6 +334,7 @@ class Decision:
         return {
             "plan": None if self.plan is None else self.plan.record(),
             "reason": self.reason,
+            "ask": self.ask,
             "questions": list(self.questions),
             "chosen_by": self.chosen_by,
             "seconds": round(self.seconds, 2),
@@ -430,6 +432,7 @@ def decide(
     decision = Decision(
         chosen.plan,
         reason.strip(),
+        ask=ask.strip(),
         questions=asked,
         chosen_by=by,
         considered=tuple(sorted(scored, key=lambda s: -s.score)),
