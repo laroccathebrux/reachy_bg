@@ -57,6 +57,8 @@ class InvestigatorState:
     possessions: list[str] = field(default_factory=list)
     conditions: list[str] = field(default_factory=list)
     piece_id: int | None = None  # the tracked piece on the board, once claimed
+    train_tickets: int = 0  # Travel tickets held; two of any kind is the printed maximum
+    ship_tickets: int = 0
 
     def __post_init__(self) -> None:
         self.space = self.space or self.sheet.starting_space
@@ -80,9 +82,15 @@ class InvestigatorState:
 
     def describe(self) -> str:
         who = "you" if self.is_robot else self.controller
+        tickets = []
+        if self.train_tickets:
+            tickets.append(f"{self.train_tickets} Train ticket(s)")
+        if self.ship_tickets:
+            tickets.append(f"{self.ship_tickets} Ship ticket(s)")
+        carried = (", " + " and ".join(tickets)) if tickets else ""
         return (
             f"{self.name} ({who}) at {self.space}, {self.health} health, {self.sanity} sanity, "
-            f"{self.clues} clue(s)"
+            f"{self.clues} clue(s){carried}"
         )
 
     def record(self) -> dict[str, Any]:
@@ -96,6 +104,8 @@ class InvestigatorState:
             "possessions": list(self.possessions),
             "conditions": list(self.conditions),
             "piece_id": self.piece_id,
+            "train_tickets": self.train_tickets,
+            "ship_tickets": self.ship_tickets,
         }
 
 
@@ -303,7 +313,7 @@ class GameState:
             )
             if state is None:
                 continue
-            for key in ("health", "sanity", "clues", "piece_id"):
+            for key in ("health", "sanity", "clues", "piece_id", "train_tickets", "ship_tickets"):
                 if item.get(key) is not None:
                     setattr(state, key, item[key])
             state.possessions = list(item.get("possessions", state.possessions))
