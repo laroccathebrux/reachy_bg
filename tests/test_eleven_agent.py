@@ -18,7 +18,7 @@ def test_agent_config_has_native_voice_per_language_and_local_tools():
     assert cfg["language_presets"]["en"]["overrides"]["tts"]["voice_id"] == "voice-us"
     assert cfg["language_presets"]["en"]["overrides"]["agent"]["language"] == "en"
     names = [t["name"] for t in cfg["agent"]["prompt"]["tools"]]
-    assert names == ["game_rules", "game_knowledge", "language_detection"]
+    assert names == ["game_rules", "game_state", "game_knowledge", "language_detection"]
     assert "llm" not in cfg["agent"]["prompt"]
     assert "Golden rule" in cfg["agent"]["prompt"]["prompt"]
 
@@ -91,3 +91,38 @@ def test_client_tools_stop_searching_once_the_session_is_closing():
     alive["ok"] = False
     assert json.loads(handler({"question": "again?"})) == CLOSING_RESULT
     assert calls == ["how many actions?"]
+
+
+def test_the_agent_can_read_the_game_the_robot_remembers():
+    from src.speech.eleven_agent import game_state_report
+    from src.strategy.game import ROBOT, GameState
+
+    assert game_state_report(None)["known"] is False
+    game = GameState()
+    game.set_ancient_one("Azathoth")
+    game.add_investigator("Lily Chen", controller=ROBOT)
+    game.add_investigator("Jacqueline Fine", controller="Alessandro")
+    game.reserve = ["Bull Whip"]
+    report = game_state_report(game)
+    assert report["ancient_one"] == "Azathoth" and report["doom"] == 15
+    assert report["my_investigator"]["name"] == "Lily Chen"
+    assert {i["player"] for i in report["investigators"]} == {"me", "Alessandro"}
+    assert report["reserve"] == ["Bull Whip"]
+    assert any("Mystery" in m for m in report["still_missing"])
+
+
+def test_the_game_state_tool_reads_the_game_at_call_time():
+    import json
+
+    from src.speech.eleven_agent import client_tools
+    from src.strategy.game import ROBOT, GameState
+
+    game = GameState()
+    tools = client_tools(game=lambda: game)
+    handler, _ = tools.tools["game_state"]
+    before = json.loads(handler({}))
+    game.set_ancient_one("Azathoth")  # the setup happens while the session is already running
+    game.add_investigator("Lily Chen", controller=ROBOT)
+    after = json.loads(handler({}))
+    assert before["ancient_one"] == ""
+    assert after["ancient_one"] == "Azathoth"

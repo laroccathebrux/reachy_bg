@@ -143,7 +143,7 @@ def test_an_extractor_that_crashes_leaves_the_game_alone(tmp_path):
         raise RuntimeError("ollama exploded")
 
     session = _session(tmp_path, said, setup_fn=boom)
-    assert session.handle("o ancião é Azathoth", "pt-BR") == "setup"
+    assert session.handle("o ancião é Azathoth", "pt-BR", reason="name") == "setup"
     assert session.game.ancient_one is None
     assert said.lines == []
 
@@ -158,8 +158,8 @@ def test_a_corrupt_file_starts_a_new_game_instead_of_failing(tmp_path):
 def test_nothing_extracted_still_answers_with_what_it_needs(tmp_path):
     said = _Said()
     session = _session(tmp_path, said, setup_fn=lambda *a, **k: _Reading([], [], []))
-    # It sounds like a briefing, so it is taken as one; the model got nothing out of it.
-    session.handle("o ancião é aquele lá, o da caixa", "pt-BR")
+    # The person named the robot, so it answers even when the model got nothing out of it.
+    session.handle("o ancião é aquele lá, o da caixa", "pt-BR", reason="name")
     assert "Qual Ancient One" in said.last  # it asks again rather than going quiet
 
 
@@ -208,18 +208,45 @@ def test_the_speaker_becomes_the_controller_of_the_investigator_they_claim(tmp_p
     assert "Jacqueline Fine (Alessandro)" in said.last
 
 
-def test_the_setup_ear_stays_open_for_the_mystery(tmp_path):
+def test_the_setup_ear_hears_the_mystery_after_the_rest_is_known(tmp_path):
     # The live session of 17:54: the saved game had the Ancient One and the investigator, so
     # "O mistério atual diz o seguinte" was table talk and was dropped.
     said = _Said()
-    session = _session(tmp_path, said, setup_fn=_setup_fn())
+
+    def read(text, language, game, **kwargs):
+        game.mystery = "The Deep Ones Attack"
+        reading = _Reading(["mystery: The Deep Ones Attack"], [], [])
+        reading.fields = ["mystery"]
+        return reading
+
+    session = _session(tmp_path, said, setup_fn=read)
     session.game.set_ancient_one("Azathoth")
     session.game.add_investigator("Lily Chen", controller=ROBOT)
-    assert session.game.ready is True
+    assert session.game.ready is True  # and yet the Mystery was still missing
     assert session.wants_setup is True
-    assert session.handle("O mistério atual diz o seguinte, ele é o The Deep Ones Attack", "pt-BR") == "setup"
-    session.game.mystery = "The Deep Ones Attack"
+    route = session.handle("O mistério atual diz o seguinte, ele é o The Deep Ones Attack", "pt-BR")
+    assert route == "setup"
+    assert session.game.mystery == "The Deep Ones Attack"
+    assert "The Deep Ones Attack" in said.last
+
+
+def test_a_correction_is_heard_even_when_nothing_is_missing(tmp_path):
+    # A wrong Mystery used to be stuck: the ear only listened while something was missing.
+    said = _Said()
+
+    def read(text, language, game, **kwargs):
+        game.mystery = "The Deep Ones Attack"
+        reading = _Reading(["mystery: The Deep Ones Attack"], [], [])
+        reading.fields = ["mystery"]
+        return reading
+
+    session = _session(tmp_path, said, setup_fn=read)
+    session.game.set_ancient_one("Azathoth")
+    session.game.add_investigator("Lily Chen", controller=ROBOT)
+    session.game.mystery = "Q-Mystery"  # what Whisper left behind in the live session
     assert session.wants_setup is False
+    assert session.handle("não, o Mystery é The Deep Ones Attack", "pt-BR") == "setup"
+    assert session.game.mystery == "The Deep Ones Attack"
 
 
 def test_a_statement_about_anything_else_is_not_hijacked_by_the_setup_ear(tmp_path):

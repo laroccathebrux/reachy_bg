@@ -116,6 +116,23 @@ def _fold(word: str) -> str:
     return "".join(c for c in stripped if unicodedata.category(c) != "Mn")
 
 
+# The rules under which the person was plainly talking to the robot. Anything else that reaches
+# the setup ear is a guess, and a guess never costs the table an answer.
+ADDRESSED_TO_ME = frozenset(
+    {
+        "name",
+        "my_turn",
+        "my_investigator",
+        "turn_call",
+        "holding_the_floor",
+        "follow_up_question",
+        "follow_up_reply",
+        "solo",
+        "second_person_solo",
+    }
+)
+
+
 def _lines(language: str) -> dict[str, str]:
     return LINES.get(language, LINES["en-US"])
 
@@ -279,16 +296,16 @@ class GameSession:
         language = language or self.language
         if self.taker.handle(text, language):
             return "my_turn"
-        if not self.wants_setup or is_question(text, language) or self._busy.locked():
+        if is_question(text, language) or self._busy.locked():
             return None
         if not looks_like_setup(text):
             return None  # a statement about something else belongs to the conversation
-        if reason == "setup_talk":
-            # This sentence reached the robot on a guess - it sounded like the briefing the
-            # robot is waiting for. So the guess is paid for here and now: the extraction runs
-            # before anything is dropped, and if it was not a briefing after all the utterance
-            # goes on to the agent as if this had never happened. "Não, tu não entendeu, esse
-            # foi o mistério que eu comprei" has the word in it and is not a briefing.
+        if reason not in ADDRESSED_TO_ME:
+            # Nobody addressed the robot: this sentence reached it on a guess, because it sounded
+            # like a briefing. So the guess is paid for here and now: the extraction runs before
+            # anything is dropped, and if it was not a briefing after all the utterance goes on to
+            # the agent as if this had never happened. "Não, tu não entendeu, esse foi o mistério
+            # que eu comprei" has the word in it and is not a briefing.
             reading = self._read_setup(text, language, speaker, quiet_if_nothing=True)
             return "setup" if reading is not None and (reading.applied or reading.unknown) else None
         if self.background:
@@ -348,4 +365,13 @@ class GameSession:
         return question or briefing(self.game, language)
 
 
-__all__ = ["ASKS", "LINES", "SETUP_WORDS", "GameSession", "briefing", "looks_like_setup", "next_question"]
+__all__ = [
+    "ADDRESSED_TO_ME",
+    "ASKS",
+    "LINES",
+    "SETUP_WORDS",
+    "GameSession",
+    "briefing",
+    "looks_like_setup",
+    "next_question",
+]

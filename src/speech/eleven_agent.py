@@ -54,7 +54,7 @@ How you talk: you are speaking out loud, so keep it to one to three short senten
 
 Several people sit at the table and talk to each other. Answer when you are addressed (by name, "Reachy", or with a question to you), when someone asks the table a rules question, or when you are asked to continue. Otherwise stay quiet. If someone says "stop", "wait", "hold on" or talks over you, stop at once, without finishing the sentence, and only say you are listening.
 
-Your investigator, the board state and the round history are described below when a game is in progress."""
+You do not remember the game; the robot does, in its own state file, and the game_state tool is how you read it. Call game_state BEFORE asking the table anything about the setup - the Ancient One, who plays which investigator, whose turn it is, the Mystery, the Reserve - and before answering any question about "our game". Never ask for something game_state already knows, and never contradict it. If game_state says something is missing, that is the one thing worth asking for."""
 
 _TOOLS: list[dict[str, Any]] = [
     {
@@ -78,6 +78,19 @@ _TOOLS: list[dict[str, Any]] = [
         "expects_response": True,
         "response_timeout_secs": 20,
         "pre_tool_speech": "auto",
+    },
+    {
+        "type": "client",
+        "name": "game_state",
+        "description": (
+            "The game in progress as the robot itself remembers it: the Ancient One and doom, the "
+            "investigators and who plays each, the robot's own investigator and where it stands, "
+            "the Mystery, the Reserve, the round, and what the robot still has to be told. Call it "
+            "before asking the table about the setup and before answering anything about this game."
+        ),
+        "parameters": {"type": "object", "properties": {}, "required": []},
+        "expects_response": True,
+        "response_timeout_secs": 10,
     },
     {
         "type": "client",
@@ -293,10 +306,55 @@ CLOSING_RESULT: dict[str, Any] = {
 }
 
 
+def game_state_report(game: Any) -> dict[str, Any]:
+    """The state the agent is allowed to speak from: what is known, and what is missing.
+
+    Written as data rather than prose so the agent cannot mistake a summary for a rule, and kept
+    short: it is read on every call and every token of it is paid for in latency.
+    """
+    if game is None:
+        return {"known": False, "note": "No game has been set up yet. Ask the table to describe it."}
+    mine = game.robot_investigator
+    return {
+        "known": True,
+        "ancient_one": game.ancient_one.name if game.ancient_one else "",
+        "doom": game.doom,
+        "mystery": game.mystery,
+        "round": game.round,
+        "my_investigator": None
+        if mine is None
+        else {
+            "name": mine.name,
+            "space": mine.space,
+            "health": mine.health,
+            "sanity": mine.sanity,
+            "clues": mine.clues,
+            "possessions": list(mine.possessions),
+        },
+        "investigators": [
+            {"name": i.name, "player": "me" if i.is_robot else i.controller, "space": i.space}
+            for i in game.investigators
+        ],
+        "reserve": list(game.reserve),
+        "still_missing": game.missing(),
+        "note": (
+            "This is what the robot remembers. Speak from it, do not ask for anything in it, and "
+            "ask only for what still_missing lists."
+        ),
+    }
+
+
 def client_tools(
-    *, retriever: Any = None, on_call: Any = None, active: Callable[[], bool] | None = None
+    *,
+    retriever: Any = None,
+    on_call: Any = None,
+    active: Callable[[], bool] | None = None,
+    game: Callable[[], Any] | None = None,
 ) -> Any:
     """SDK ``ClientTools`` with the local implementations registered.
+
+    ``game`` is read at call time, not at registration, because the robot learns the setup while
+    the session is already running.
 
     ``active`` says whether the session these tools belong to is still the live one; a session
     being closed for a language switch gets :data:`CLOSING_RESULT` instead of a search, so the
@@ -325,8 +383,15 @@ def client_tools(
             on_call("game_knowledge", parameters, result)
         return json.dumps(result, ensure_ascii=False)  # the orchestrator validates the result as text
 
+    def game_state(parameters: dict) -> str:
+        result = game_state_report(game() if game is not None else None)
+        if on_call:
+            on_call("game_state", parameters, result)
+        return json.dumps(result, ensure_ascii=False)
+
     tools.register("game_rules", game_rules)
     tools.register("game_knowledge", game_knowledge)
+    tools.register("game_state", game_state)
     return tools
 
 

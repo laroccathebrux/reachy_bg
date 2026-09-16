@@ -573,6 +573,11 @@ def main(argv: list[str] | None = None) -> int:
             table.transcriber = transcriber
             from elevenlabs.conversational_ai.conversation import ConversationInitiationData
 
+            def current_game() -> Any:
+                """What the agent's game_state tool reads - the robot's own memory, live."""
+                playing = getattr(table, "game_session", None)
+                return playing.game if playing is not None else None
+
             def open_session(language: str) -> Any:
                 alive = threading.Event()  # cleared before the session is closed: its tools stop searching
                 alive.set()
@@ -582,7 +587,7 @@ def main(argv: list[str] | None = None) -> int:
                     requires_auth=True,
                     audio_interface=audio,
                     client_tools=client_tools(
-                        on_call=table.on_tool, active=alive.is_set
+                        on_call=table.on_tool, active=alive.is_set, game=current_game
                     ),  # fresh per session
                     config=ConversationInitiationData(
                         conversation_config_override=session_override(language)
@@ -629,6 +634,7 @@ def main(argv: list[str] | None = None) -> int:
             humans = args.humans if args.humans is not None else (len(registry.names) or None)
             gate_on = ADDRESSEE_GATE and not args.no_gate and humans != 1
             session = build_game_session(args, audio, table, diary)
+            table.game_session = session  # the agent's game_state tool reads it through here
             table.keeper = Gatekeeper(
                 audio,
                 transcriber,

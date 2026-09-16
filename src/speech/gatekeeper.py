@@ -197,7 +197,14 @@ class Gatekeeper:
                 setup_hint=self.wants_setup(text),
             )
 
-        if decision.addressed and self.on_addressed is not None:
+        # With the gate off the robot's own ear looks at everything it hears: it is what keeps
+        # its memory of the game current when the rules would have stayed quiet. It still only
+        # *keeps* an utterance when it did something with it; otherwise the agent gets it.
+        if (
+            self.on_addressed is not None
+            and decision.reason != "self_echo"
+            and (decision.addressed or self.answer_everything)
+        ):
             handled = None
             try:
                 handled = self.on_addressed(text, language, decision.reason, speaker)

@@ -905,6 +905,35 @@ The old ``--always-answer`` flag stays as an alias for ``--no-gate``. What it us
 the gate watching but let the audio stream straight through - is what caused the double answer,
 so it is gone.
 
+## Done: the agent reads the game the robot remembers (2026-09-16, night)
+
+With the gate off, the first session ended with the agent asking "me diga qual é o Ancient One
+que vocês escolheram", while the robot's own greeting two minutes earlier had said "vamos
+enfrentar Azathoth". Both are true from where each of them sits: the state lives in the robot's
+file and the agent had never been shown it.
+
+The agent now has a third client tool, ``game_state``, which returns exactly what the robot
+remembers - Ancient One and doom, who plays which investigator and where, its own investigator's
+Health, Sanity, Clues and possessions, the Mystery, the Reserve, the round, and what is still
+missing - as data rather than prose, so it cannot be mistaken for a rule. The prompt makes it an
+obligation: call it before asking the table anything about the setup, never ask for something it
+already holds, never contradict it, and ask only for what ``still_missing`` lists. The tool reads
+the game at call time, because the robot learns the setup while the session is already running.
+
+The other direction was also shut. The robot's own ear only saw utterances the rules had already
+judged to be for it, so with the gate off - where the rules stop deciding - the local memory
+never updated from conversation at all, and a Mystery Whisper had written as "Q-Mystery" could
+not be corrected, because the ear only listened while something was missing. Now the ear looks at
+every non-echo utterance that sounds like a briefing, keeps it only when it learnt something, and
+otherwise hands it straight to the agent.
+
+**Why there are two at all**, since the question came up: the agent is the conversation and
+nothing else. It is a cloud model that invents when it is out of its depth (which is why the
+rules live in a tool), its session dies after two hours and is restarted deliberately on every
+language switch, and its context cannot be read by the vision, the turn decision, the plan or the
+logs. The game state has to outlive the conversation, be checked against the reference, and be
+usable by things that never speak. So: one memory, the robot's, and the agent reads it.
+
 ## Decisions taken
 
 | Topic | Decision | Where |
@@ -914,7 +943,7 @@ so it is gone.
 | Vector store | Qdrant in the existing Docker container; collections `bg_rules`, `bg_knowledge`, `bg_sessions` | docs/DESIGN_DOCUMENT.md |
 | Speech input | Mac microphone; mlx-whisper; diart + pyannote 3 live in a sidecar; pyannote 4 + WhisperX offline | docs/SPEECH_PIPELINE.md |
 | Speech output | ElevenLabs by default, local TTS optional | src/config.py |
-| Conversation | ElevenLabs agent (cloud) + local client tools; local Whisper + Ollama kept as fallback | docs/SPEECH_PIPELINE.md |
+| Conversation | ElevenLabs agent (cloud) + local client tools; local Whisper + Ollama kept as fallback. The agent talks; the game state is the robot's and the agent reads it through the `game_state` tool | docs/SPEECH_PIPELINE.md |
 | Agent LLM | `gpt-4.1-mini` inside ElevenLabs (owner's decision, 2026-09-14): follows the prompt better than the Gemini default; billed through the ElevenLabs account, no OpenAI key | src/config.py |
 | Turn-taking | the local ear decides speak/stay-quiet before any audio reaches the agent (rules on the local Whisper transcript; a local LLM classifier only if the rules prove insufficient). Switchable: with `ADDRESSEE_GATE=false` the robot answers everything and the rules only watch, which is how the owner is running it for now | src/speech/gatekeeper.py |
 | Game setup | verbal briefing + knowledge base, no card OCR | docs/SETUP_PROTOCOL.md |
