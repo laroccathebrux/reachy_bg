@@ -112,7 +112,7 @@ def test_rest_is_not_offered_at_full_health_and_sanity():
 def test_acquire_admits_it_does_not_know_the_card_values():
     game = _game("Shanghai")
     acquire = next(c for c in moves.candidates(game, _situation(game)) if c.key == moves.ACQUIRE)
-    assert any("printed value" in u for u in acquire.unknowns)
+    assert any("the number printed on them" in u for u in acquire.unknowns)
     assert any("Bull Whip" in u for u in acquire.unknowns)
 
 
@@ -213,7 +213,21 @@ def _sighting(space: str, piece_id: int):
 
 
 @pytest.fixture(autouse=True)
-def _no_cached_cards():
+def _no_cached_cards(monkeypatch):
+    # The versioned card list is part of the repository; what the owner has dictated on this
+    # machine is not, so it is stubbed out rather than read.
     moves._cards.cache_clear()
+    monkeypatch.setattr(moves, "_dictated", lambda: {})
     yield
     moves._cards.cache_clear()
+
+
+def test_a_value_read_from_the_box_stops_being_a_question(monkeypatch):
+    game = _game("Shanghai")
+    game.reserve = ["Bull Whip", "Arcane Scholar"]
+    monkeypatch.setattr(moves, "_dictated", lambda: {"bull whip": {"name": "Bull Whip", "value": 2}})
+    acquire = next(c for c in moves.candidates(game, _situation(game)) if c.key == moves.ACQUIRE)
+    asked = " ".join(acquire.unknowns)
+    assert "Arcane Scholar" in asked  # nobody has read its value
+    assert "Bull Whip" not in asked  # this one has been read
+    assert moves.card_value("Bull Whip") == 2

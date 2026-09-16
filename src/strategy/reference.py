@@ -18,6 +18,8 @@ from __future__ import annotations
 
 import unicodedata
 from dataclasses import dataclass, field
+from functools import lru_cache
+from pathlib import Path
 from typing import Any
 
 SKILLS = ("lore", "influence", "observation", "strength", "will")
@@ -145,6 +147,74 @@ def closest_investigators(name: str, limit: int = 3) -> list[str]:
     return [by_key[h] for h in hits]
 
 
+@dataclass(frozen=True)
+class Mystery:
+    """One of the 16 Mysteries of the box, as data: what it takes and where it happens."""
+
+    name: str
+    ancient_one: str
+    type: str
+    requirement: str
+    spaces: tuple[str, ...] = ()
+    epic_monster: str = ""
+
+    def describe(self) -> str:
+        where = f" It is at {', '.join(self.spaces)}." if self.spaces else ""
+        return f"{self.name} ({self.ancient_one}): {self.requirement}{where}"
+
+
+@lru_cache(maxsize=1)
+def _mysteries() -> tuple[Mystery, ...]:
+    """Read from the versioned file rather than typed here: it carries its own source per card."""
+    import json
+
+    path = Path(__file__).resolve().parents[1] / "rag" / "cards" / "eldritch_base_mysteries.json"
+    try:
+        entries = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):  # pragma: no cover - the file ships with the repository
+        return ()
+    return tuple(
+        Mystery(
+            name=e["name"],
+            ancient_one=e["ancient_one"],
+            type=e["type"],
+            requirement=e["requirement"],
+            spaces=tuple(e.get("spaces") or ()),
+            epic_monster=e.get("epic_monster", ""),
+        )
+        for e in entries
+    )
+
+
+def mysteries(ancient_one_name: str = "") -> tuple[Mystery, ...]:
+    """Every Mystery of the box, or the four of one Ancient One."""
+    found = _mysteries()
+    if not ancient_one_name:
+        return found
+    wanted = _key(ancient_one_name)
+    return tuple(m for m in found if _key(m.ancient_one) == wanted)
+
+
+def mystery(name: str) -> Mystery | None:
+    """One Mystery by name, tolerant of how it is written ("the deep ones attack")."""
+    wanted = _key(name)
+    if not wanted:
+        return None
+    for found in _mysteries():
+        if _key(found.name) == wanted:
+            return found
+    return None
+
+
+def closest_mysteries(name: str, limit: int = 3) -> list[str]:
+    """Names to offer back when a spoken Mystery is not recognised ("Q-Mystery", "Key Mystery")."""
+    import difflib
+
+    by_key = {_key(m.name): m.name for m in _mysteries()}
+    hits = difflib.get_close_matches(_key(name), list(by_key), n=limit, cutoff=0.4)
+    return [by_key[h] for h in hits]
+
+
 def closest_ancient_ones(name: str, limit: int = 3) -> list[str]:
     """The same for the four Ancient Ones: Whisper writes "Azatov", "AsaTot", "Asa Tot"."""
     import difflib
@@ -152,6 +222,27 @@ def closest_ancient_ones(name: str, limit: int = 3) -> list[str]:
     by_key = {_key(one.name): one.name for one in ANCIENT_ONES}
     hits = difflib.get_close_matches(_key(name), list(by_key), n=limit, cutoff=0.4)
     return [by_key[h] for h in hits]
+
+
+# The three Location Encounter decks and the cities they cover (docs/GAME_REFERENCE.md, Board).
+REGIONS: dict[str, tuple[str, ...]] = {
+    "America": ("San Francisco", "Arkham", "Buenos Aires"),
+    "Europe": ("London", "Rome", "Istanbul"),
+    "Asia/Australia": ("Shanghai", "Sydney", "Tokyo"),
+}
+
+
+def region_of(space: str) -> str:
+    """Which Location deck a city belongs to, or "" for a space that has no city encounter.
+
+    It is what lets "saiu a carta 8, lê a parte de Rome" find the card: the deck is not said
+    out loud at a table, it is implied by the city.
+    """
+    wanted = _key(space)
+    for region, cities in REGIONS.items():
+        if any(_key(city) == wanted for city in cities):
+            return region
+    return ""
 
 
 def starting_spaces() -> dict[str, str]:
@@ -176,10 +267,16 @@ __all__ = [
     "SKILLS",
     "AncientOne",
     "Investigator",
+    "Mystery",
     "Unknown",
     "ancient_one",
     "closest_ancient_ones",
     "closest_investigators",
+    "closest_mysteries",
     "investigator",
+    "mysteries",
+    "mystery",
+    "REGIONS",
+    "region_of",
     "starting_spaces",
 ]

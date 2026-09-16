@@ -1,0 +1,178 @@
+[
+ {
+  "name": "Occult Research",
+  "ancient_one": "Azathoth",
+  "type": "research_encounter",
+  "requirement": "Win Clues from Research Encounters and put them on the card, one per investigator.",
+  "spaces": [],
+  "epic_monster": "",
+  "needs": {"clues": true, "spells": false, "eldritch_tokens": false, "item": false, "monster": false},
+  "expansion": "Eldritch Horror",
+  "source_url": "https://eldritchhorror.fandom.com/wiki/Occult_Research"
+ },
+ {
+  "name": "Omen of Devastation",
+  "ancient_one": "Azathoth",
+  "type": "misc",
+  "requirement": "Close Gates that match the current Omen, spending a Clue each time, until half the investigators are marked.",
+  "spaces": [],
+  "epic_monster": "",
+  "needs": {"clues": true, "spells": false, "eldritch_tokens": false, "item": false, "monster": false},
+  "expansion": "Eldritch Horror",
+  "source_url": "https://eldritchhorror.fandom.com/wiki/Omen_of_Devastation"
+ },
+ {
+  "name": "Seed of the Daemon Sultan",
+  "ancient_one": "Azathoth",
+  "type": "misc",
+  "requirement": "Search the fallen meteorite at Tunguska as an encounter, spending 2 Clues for each mark.",
+  "spaces": ["Tunguska"],
+  "epic_monster": "",
+  "needs": {"clues": true, "spells": false, "eldritch_tokens": false, "item": false, "monster": false},
+  "expansion": "Eldritch Horror",
+  "source_url": "https://eldritchhorror.fandom.com/wiki/Seed_of_the_Daemon_Sultan"
+ },
+ {
+  "name": "The True Name",
+  "ancient_one": "Azathoth",
+  "type": "eldritch_tokens",
+  "requirement": "Eldritch tokens land on random spaces; travel to them and spend 2 Clues to bring each one onto the card.",
+  "spaces": [],
+  "epic_monster": "",
+  "needs": {"clues": true, "spells": false, "eldritch_tokens": true, "item": false, "monster": false},
+  "expansion": "Eldritch Horror",
+  "source_url": "https://eldritchhorror.fandom.com/wiki/The_True_Name"
+ },
+ {
+  "name": "R'lyeh Risen",
+  "ancient_one": "Cthulhu",
+  "type": "special_encounter",
+  "requirement": "Resolve R'lyeh Risen Special Encounters on space 3, where the Mystery token sits.",
+  "spaces": ["3"],
+  "epic_monster": "",
+  "needs": {"clues": false, "spells": false, "eldritch_tokens": false, "item": false, "monster": false},
+  "expansion": "Eldritch Horror",
+  "source_url": "https://eldritchhorror.fandom.com/wiki/R%27lyeh_Risen"
+ },
+ {
+  "name": "The Deep Ones Attack!",
+  "ancient_one": "Cthulhu",
+  "type": "eldritch_tokens",
+  "requirement": "An Eldritch token goes on the Sea space nearest each investigator; beat the Deep One that ambushes you there and spend a Clue to take the token.",
+  "spaces": [],
+  "epic_monster": "",
+  "needs": {"clues": true, "spells": false, "eldritch_tokens": true, "item": false, "monster": false},
+  "expansion": "Eldritch Horror",
+  "source_url": "https://eldritchhorror.fandom.com/wiki/The_Deep_Ones_Attack%21"
+ },
+ {
+  "name": "The Stars Are Right!",
+  "ancient_one": "Cthulhu",
+  "type": "research_encounter",
+  "requirement": "Every Clue moves to the nearest Sea space; win them back through Research Encounters and put them on the card.",
+  "spaces": [],
+  "epic_monster": "",
+  "needs": {"clues": true, "spells": false, "eldritch_tokens": false, "item": false, "monster": false},
+  "expansion": "Eldritch Horror",
+  "source_url": "https://eldritchhorror.fandom.com/wiki/The_Stars_Are_Right%21"
+ },
+ {
+  "name": "Watching the Stars",
+  "ancient_one": "Cthulhu",
+  "type": "epic_monster",
+  "requirement": "Defeat the Cthylla Epic Monster, which spawns on space 12.",
+  "spaces": ["12"],
+  "epic_monster": "Cthylla",
+  "needs": {"clues": false, "spells": false, "eldritch_tokens": false, "item": false, "monster": true},
+  "expansion": "Eldritch Horror",
+  "source_url": "https://eldritchhorror.fandom.com/wiki/Watching_The_Stars"
+ },
+ {
+  "name": "Hunting the Thousand",
+  "ancient_one": "Shub-Niggurath",
+  "type": "misc",
+  "requirement": "Spend 2 Clues to put a defeated non-Epic Monster on the card, until their toughness together is twice the number of investigators.",
+  "spaces": [],
+  "epic_monster": "",
+  "needs": {"clues": true, "spells": false, "eldritch_tokens": false, "item": false, "monster": false},
+  "expansion": "Eldritch Horror",
+  "source_url": "https://eldritchhorror.fandom.com/wiki/Hunting_the_Thousand"
+ },
+ {
+  "name": "Nature of the All-Mother",
+  "ancient_one": "Shub-Niggurath",
+  "type": "research_encounter",
+  "requirement": "Every Clue moves to the nearest Wilderness space; win them back through Research Encounters and put them on the card.",
+  "spaces": [],
+  "epic_monster": "",
+  "needs": {"clues": true, "spells": false, "eldritch_tokens": false, "item": false, "monster": false},
+  "expansion": "Eldritch Horror",
+  "source_url": "https://eldritchhorror.fandom.com/wiki/Nature_of_the_All-Mother"
+ },
+ {
+  "name": "Rituals in the Wild",
+  "ancient_one": "Shub-Niggurath",
+  "type": "eldritch_tokens",
+  "requirement": "Eldritch tokens sit on the Wilderness spaces 4, 10, 21 and Tunguska; pass the test there and spend 2 Clues to take each one.",
+  "spaces": ["4", "10", "21", "Tunguska"],
+  "epic_monster": "",
+  "needs": {"clues": true, "spells": false, "eldritch_tokens": true, "item": false, "monster": false},
+  "expansion": "Eldritch Horror",
+  "source_url": "https://eldritchhorror.fandom.com/wiki/Rituals_in_the_Wild"
+ },
+ {
+  "name": "Spawn of the Black Goat",
+  "ancient_one": "Shub-Niggurath",
+  "type": "epic_monster",
+  "requirement": "Defeat the Nug Epic Monster, which spawns on The Amazon.",
+  "spaces": ["The Amazon"],
+  "epic_monster": "Nug",
+  "needs": {"clues": false, "spells": false, "eldritch_tokens": false, "item": false, "monster": true},
+  "expansion": "Eldritch Horror",
+  "source_url": "https://eldritchhorror.fandom.com/wiki/Spawn_of_the_Black_Goat"
+ },
+ {
+  "name": "Arcane Understanding",
+  "ancient_one": "Yog-Sothoth",
+  "type": "misc",
+  "requirement": "Pass a test while resolving a Spell, then spend a Clue and discard that Spell, once per mark.",
+  "spaces": [],
+  "epic_monster": "",
+  "needs": {"clues": true, "spells": true, "eldritch_tokens": false, "item": false, "monster": false},
+  "expansion": "Eldritch Horror",
+  "source_url": "https://eldritchhorror.fandom.com/wiki/Arcane_Understanding"
+ },
+ {
+  "name": "Spawn of Yog-Sothoth",
+  "ancient_one": "Yog-Sothoth",
+  "type": "epic_monster",
+  "requirement": "Defeat the Dunwich Horror Epic Monster, which spawns on Arkham.",
+  "spaces": ["Arkham"],
+  "epic_monster": "Dunwich Horror",
+  "needs": {"clues": false, "spells": false, "eldritch_tokens": false, "item": false, "monster": true},
+  "expansion": "Eldritch Horror",
+  "source_url": "https://eldritchhorror.fandom.com/wiki/Spawn_of_Yog-Sothoth"
+ },
+ {
+  "name": "The Beyond One",
+  "ancient_one": "Yog-Sothoth",
+  "type": "research_encounter",
+  "requirement": "Win Clues from Research Encounters and put them on the card, one per investigator.",
+  "spaces": [],
+  "epic_monster": "",
+  "needs": {"clues": true, "spells": false, "eldritch_tokens": false, "item": false, "monster": false},
+  "expansion": "Eldritch Horror",
+  "source_url": "https://eldritchhorror.fandom.com/wiki/The_Beyond_One"
+ },
+ {
+  "name": "Where the Old Ones Broke Through",
+  "ancient_one": "Yog-Sothoth",
+  "type": "misc",
+  "requirement": "Close a Gate and discard 2 Spells to seal it onto the card, until half the investigators are marked.",
+  "spaces": [],
+  "epic_monster": "",
+  "needs": {"clues": false, "spells": true, "eldritch_tokens": false, "item": false, "monster": false},
+  "expansion": "Eldritch Horror",
+  "source_url": "https://eldritchhorror.fandom.com/wiki/Where_the_Old_Ones_Broke_Through"
+ }
+]

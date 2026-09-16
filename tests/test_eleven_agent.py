@@ -18,7 +18,13 @@ def test_agent_config_has_native_voice_per_language_and_local_tools():
     assert cfg["language_presets"]["en"]["overrides"]["tts"]["voice_id"] == "voice-us"
     assert cfg["language_presets"]["en"]["overrides"]["agent"]["language"] == "en"
     names = [t["name"] for t in cfg["agent"]["prompt"]["tools"]]
-    assert names == ["game_rules", "game_state", "game_knowledge", "language_detection"]
+    assert names == [
+        "game_rules",
+        "game_state",
+        "encounter_card",
+        "game_knowledge",
+        "language_detection",
+    ]
     assert "llm" not in cfg["agent"]["prompt"]
     assert "Golden rule" in cfg["agent"]["prompt"]["prompt"]
 

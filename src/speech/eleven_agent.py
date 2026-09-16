@@ -54,6 +54,8 @@ How you talk: you are speaking out loud, so keep it to one to three short senten
 
 Several people sit at the table and talk to each other. Answer when you are addressed (by name, "Reachy", or with a question to you), when someone asks the table a rules question, or when you are asked to continue. Otherwise stay quiet. If someone says "stop", "wait", "hold on" or talks over you, stop at once, without finishing the sentence, and only say you are listening.
 
+When somebody says a card came up - "saiu a carta 8, lê a parte de Rome" - call encounter_card with that number and that space, and read back what it returns, as it is. If it says nobody has read that card, ask them to read that part of it out once; it is remembered afterwards. Never make up what a card says.
+
 You do not remember the game; the robot does, in its own state file, and the game_state tool is how you read it. Call game_state BEFORE asking the table anything about the setup - the Ancient One, who plays which investigator, whose turn it is, the Mystery, the Reserve - and before answering any question about "our game". Never ask for something game_state already knows, and never contradict it. If game_state says something is missing, that is the one thing worth asking for."""
 
 _TOOLS: list[dict[str, Any]] = [
@@ -89,6 +91,30 @@ _TOOLS: list[dict[str, Any]] = [
             "before asking the table about the setup and before answering anything about this game."
         ),
         "parameters": {"type": "object", "properties": {}, "required": []},
+        "expects_response": True,
+        "response_timeout_secs": 10,
+    },
+    {
+        "type": "client",
+        "name": "encounter_card",
+        "description": (
+            "Read back an Encounter card somebody has already read to the robot, by the number "
+            "printed on it and the city it was drawn for: 'saiu a carta 8, a parte de Rome' is "
+            "number 8, space Rome. Returns the card's text, or says nobody has read that one yet "
+            "- in which case ask the table to read it once and it is remembered."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "number": {"type": "integer", "description": "The number printed on the card."},
+                "space": {"type": "string", "description": "The city whose part is wanted, in English."},
+                "deck": {
+                    "type": "string",
+                    "description": "America, Europe, Asia/Australia, General, Other World, Expedition, Research or Special. Leave empty when the city says it.",
+                },
+            },
+            "required": ["number"],
+        },
         "expects_response": True,
         "response_timeout_secs": 10,
     },
@@ -344,6 +370,39 @@ def game_state_report(game: Any) -> dict[str, Any]:
     }
 
 
+def encounter_report(number: int, space: str = "", deck: str = "") -> dict[str, Any]:
+    """One Encounter card as the table calls it, or an honest miss.
+
+    The encounter decks are not in this repository and will not be: they are the box's own text,
+    hundreds of cards of it. A card the table has read once is remembered
+    (``src/rag/dictate.py``), and one nobody has read is a question, never an invention.
+    """
+    from src.rag.dictate import encounter_key, find_encounter
+    from src.strategy.reference import region_of
+
+    deck = deck or region_of(space)
+    card = find_encounter(number, space=space, deck=deck)
+    if card is None:
+        return {
+            "known": False,
+            "asked_for": encounter_key(deck, number, space) or f"card {number}",
+            "note": (
+                "Nobody has read that card to me. Ask the table to read it out once - the part "
+                "for that space - and I will have it from then on."
+            ),
+        }
+    return {
+        "known": True,
+        "card": card.get("name", ""),
+        "deck": card.get("deck", ""),
+        "number": card.get("number"),
+        "space": card.get("space", ""),
+        "text": card.get("text", ""),
+        "read_by": card.get("source_author", ""),
+        "note": "Read this out as it is. It is the card as somebody at this table read it.",
+    }
+
+
 def client_tools(
     *,
     retriever: Any = None,
@@ -389,6 +448,17 @@ def client_tools(
             on_call("game_state", parameters, result)
         return json.dumps(result, ensure_ascii=False)
 
+    def encounter_card(parameters: dict) -> str:
+        try:
+            number = int(parameters.get("number"))
+        except (TypeError, ValueError):
+            return json.dumps({"known": False, "note": "I need the number printed on the card."})
+        result = encounter_report(number, str(parameters.get("space", "")), str(parameters.get("deck", "")))
+        if on_call:
+            on_call("encounter_card", parameters, result)
+        return json.dumps(result, ensure_ascii=False)
+
+    tools.register("encounter_card", encounter_card)
     tools.register("game_rules", game_rules)
     tools.register("game_knowledge", game_knowledge)
     tools.register("game_state", game_state)

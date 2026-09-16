@@ -44,6 +44,7 @@ from src.logger import get_logger
 from src.strategy import map_graph, moves
 from src.strategy.game import GameState, InvestigatorState
 from src.strategy.moves import Situation, TurnPlan
+from src.strategy.reference import mystery
 
 log = get_logger(__name__)
 
@@ -96,6 +97,11 @@ def goals(game: GameState) -> dict[str, list[str]]:
     Gates and Clues are what an investigator travels for: a Gate closed is doom held back, a Clue
     is what solves a Mystery. Only pieces somebody has actually named count - an unnamed piece is
     a question, and a question is not a destination.
+
+    The active Mystery is a destination too, and the better one: "Rituals in the Wild" happens on
+    4, 10, 21 and Tunguska, "Spawn of Yog-Sothoth" on Arkham. Those spaces are printed on the
+    card and known from ``src/rag/cards/eldritch_base_mysteries.json``, so winning the game is
+    something the robot can walk towards rather than wait for.
     """
     found: dict[str, list[str]] = {}
     for piece in game.board.on_board:
@@ -104,7 +110,25 @@ def goals(game: GameState) -> dict[str, list[str]]:
             continue
         if name.startswith("gate") or name.startswith("clue"):
             found.setdefault(piece.space, []).append(piece.name or "")
+    active = mystery(game.mystery) if game.mystery else None
+    if active is not None:
+        for space in active.spaces:
+            found.setdefault(space, []).append(f"the Mystery {active.name}")
     return found
+
+
+def _goal_words(labels: list[str]) -> str:
+    """ "a Gate", "the Mystery Rituals in the Wild" - what is actually waiting on that space."""
+    words = []
+    for label in labels:
+        kind, _, rest = label.partition(":")
+        if kind.lower() == "gate":
+            words.append("a Gate")
+        elif kind.lower() == "clue":
+            words.append("a Clue")
+        else:
+            words.append(rest.strip() or label)
+    return " and ".join(dict.fromkeys(words)) or "something worth reaching"
 
 
 def _monsters_on(game: GameState, space: str) -> list[str]:
@@ -116,7 +140,8 @@ def score(
 ) -> Scored:
     """A readable number for one turn, and the reasons that made it."""
     value, reasons = 0.0, []
-    goal_spaces = list(goals(game))
+    goal_labels = goals(game)
+    goal_spaces = list(goal_labels)
     before = map_graph.nearest(situation.space, goal_spaces)[1] if goal_spaces else None
     ends_at = plan.ends_at
 
@@ -126,7 +151,10 @@ def score(
             step = (before - after) * weights.approach_goal
             value += step
             where = map_graph.nearest(ends_at, goal_spaces)[0]
-            reasons.append(f"{'closer to' if step > 0 else 'further from'} {where}, where a Gate or Clue is")
+            reasons.append(
+                f"{'closer to' if step > 0 else 'further from'} {where}, "
+                f"where {_goal_words(goal_labels.get(where or '', []))} is"
+            )
 
     for action in plan.actions:
         if action.key == moves.REST:
@@ -216,9 +244,13 @@ def brief(
             f"at 0 {game.ancient_one.name} awakens, so {doom} is how much time is left "
             f"(it started at {game.ancient_one.starting_doom})."
         )
-    lines.append(
-        f"Mystery: {game.mystery or 'not told to me yet'}. Omen: {game.omen or 'not told to me yet'}."
-    )
+    active = mystery(game.mystery) if game.mystery else None
+    if active is not None:
+        where = f" It is at {', '.join(active.spaces)}." if active.spaces else ""
+        lines.append(f"Mystery: {active.name}. To solve it: {active.requirement}{where}")
+    else:
+        lines.append(f"Mystery: {game.mystery or 'not told to me yet'}.")
+    lines.append(f"Omen: {game.omen or 'not told to me yet'}.")
     lines.append(f"Round {game.round or 1}, Action Phase, {game.players} investigators in play.")
     if sheet is not None:
         skills = ", ".join(f"{k.capitalize()} {v}" for k, v in sheet.skills.items())

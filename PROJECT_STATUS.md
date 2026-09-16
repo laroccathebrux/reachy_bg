@@ -934,6 +934,51 @@ language switch, and its context cannot be read by the vision, the turn decision
 logs. The game state has to outlive the conversation, be checked against the reference, and be
 usable by things that never speak. So: one memory, the robot's, and the agent reads it.
 
+## Done: the Mysteries, and a way to read the rest of the box in (2026-09-16, night)
+
+"Nós colocamos como conhecimento todas as cartas pequenas... mas precisamos também das cartas de
+mistério, de portal, de encontros nos locais... enfim, de todo o game."
+
+**The Mysteries are in**, all 16, and they are the ones that matter most: three solved is how the
+table wins, and until now the Mystery in ``GameState`` was free text, so "The Deep Ones Attack!"
+arrived as "Q-Mystery" and meant nothing. They live in
+``src/rag/cards/eldritch_base_mysteries.json`` as **checkable data** - name, Ancient One, which of
+the five kinds it is, one line on what solving it takes, the spaces the card names, the Epic
+Monster it spawns - each with the page it was read from, and the import refuses the list unless
+every Ancient One has exactly four and every space exists on the board.
+
+That last field is why this was worth doing: **the Mystery is now a destination**. "Rituals in
+the Wild" puts Eldritch tokens on 4, 10, 21 and Tunguska; ``decide.goals`` reads those spaces and
+the turn changes because of it (live: with that Mystery the best plan becomes "Prepare for Travel
+Train ticket, then Travel to Tunguska - closer to Tunguska, where the Mystery Rituals in the Wild
+is"). The setup ear also checks a spoken Mystery against the 16 now: "The Deepest One Attack" gets
+"Era The Deep Ones Attack!?" back, and an unrecognised one is a question rather than a stored
+guess.
+
+**The rest of the box is not scraped, it is read.** The encounter decks, the Mythos deck and the
+Other World cards are hundreds of cards of the game's own text; the two places that hold them
+(the Fandom wiki, BoardGameGeek) are the publisher's work reproduced by fans, and copying them
+wholesale into this repository is not something this project will do. ``src/rag/dictate.py`` and
+``scripts/dictate_cards.py`` take them from the box instead: somebody reads a card, the local
+model puts it into fields, the reference checks the names, and it is stored in ``data/cards/``
+(git-ignored, like the picture of the board) and in ``bg_knowledge``.
+
+An Encounter card is filed the way the table calls it - **by its number and its city**. "Saiu a
+carta 8, lê a parte de Rome" is number 8, space Rome, and the deck follows from the city
+(``reference.region_of``). The agent has a new tool, ``encounter_card``, which reads it back
+exactly as it was read in, or says nobody has read that one yet and asks for it once. Live:
+
+    dictate: "Carta de encontro número 8, a parte de Rome: ... Teste Influence ..."
+      -> Encounter card: Europe 8, Rome. You search for a contact in the catacombs. Test
+         Influence. If you succeed, gain 2 Clues; if you fail, lose 1 Sanity.
+    encounter_card(8, "Rome") -> that text, with who read it
+
+Three smaller things fell out of it: a dictated card **corrects** the imported one instead of
+sitting beside it (one id convention, ``store.point_id(game, kind, name)``, and the old payload is
+kept underneath), the knowledge base stays English even when the card is read in Portuguese, and
+the printed **value** of an Asset finally has somewhere to live - ``moves.card_value`` reads it,
+so Acquire Assets stops asking for a number somebody has already read out.
+
 ## Decisions taken
 
 | Topic | Decision | Where |
@@ -947,6 +992,7 @@ usable by things that never speak. So: one memory, the robot's, and the agent re
 | Agent LLM | `gpt-4.1-mini` inside ElevenLabs (owner's decision, 2026-09-14): follows the prompt better than the Gemini default; billed through the ElevenLabs account, no OpenAI key | src/config.py |
 | Turn-taking | the local ear decides speak/stay-quiet before any audio reaches the agent (rules on the local Whisper transcript; a local LLM classifier only if the rules prove insufficient). Switchable: with `ADDRESSEE_GATE=false` the robot answers everything and the rules only watch, which is how the owner is running it for now | src/speech/gatekeeper.py |
 | Game setup | verbal briefing + knowledge base, no card OCR | docs/SETUP_PROTOCOL.md |
+| Card text | the 76 base assets and the 16 Mysteries ship with the repository (effects, and what solving one takes); the encounter, Mythos and Other World decks are read from the owner's own box when the table needs one, never scraped | src/rag/dictate.py |
 | Vision | YOLO-World + image-embedding gallery, SAM not used | docs/DESIGN_DOCUMENT.md |
 | Prior project | read for lessons only; no code copied | CLAUDE.md |
 

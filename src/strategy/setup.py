@@ -33,7 +33,9 @@ from src.strategy.reference import (
     ancient_one,
     closest_ancient_ones,
     closest_investigators,
+    closest_mysteries,
     investigator,
+    mystery,
 )
 
 log = get_logger(__name__)
@@ -135,7 +137,7 @@ def describe_unknown(item: dict[str, Any]) -> str:
     Shane" for Lily Chen, and offering the four real names back is the difference between a
     briefing that recovers in one sentence and one that repeats itself.
     """
-    kind = "Ancient One" if item.get("kind") == "ancient_one" else "investigator"
+    kind = {"ancient_one": "Ancient One", "mystery": "Mystery"}.get(item.get("kind", ""), "investigator")
     suggestions = item.get("suggestions") or []
     hint = f" (did you mean {' or '.join(suggestions)}?)" if suggestions else ""
     return f'the {kind} "{item.get("said", "")}"{hint}'
@@ -215,11 +217,25 @@ def apply_reading(data: dict[str, Any], game: GameState, *, speaker: str = "") -
         reading.applied.append(f"reserve: {', '.join(reserve)}")
         reading.fields.append("reserve")
 
-    mystery = (data.get("mystery") or "").strip()
-    if mystery:
-        game.mystery = mystery
-        reading.applied.append(f"mystery: {mystery}")
-        reading.fields.append("mystery")
+    said_mystery = (data.get("mystery") or "").strip()
+    if said_mystery:
+        # The 16 Mysteries of the box are known (src/rag/cards/eldritch_base_mysteries.json), so
+        # this is checked like an investigator's name rather than believed: Whisper turned
+        # "The Deep Ones Attack!" into "Q-Mystery" in a live session, and a Mystery the robot
+        # cannot name is a goal it cannot plan for.
+        found = mystery(said_mystery)
+        if found is not None:
+            game.mystery = found.name
+            reading.applied.append(f"mystery: {found.name}")
+            reading.fields.append("mystery")
+        else:
+            item = {
+                "kind": "mystery",
+                "said": said_mystery,
+                "suggestions": closest_mysteries(said_mystery),
+            }
+            reading.unknown_items.append(item)
+            reading.unknown.append(describe_unknown(item))
 
     reading.questions = questions_for(game, reading)
     return reading

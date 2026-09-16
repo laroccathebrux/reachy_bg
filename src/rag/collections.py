@@ -20,7 +20,7 @@ Payload contracts (all keys and values in English):
     game_id        "eldritch-horror"
     kind           "investigator" | "ancient_one" | "monster" | "gates" | "faq"
                    | "card_composition" | "flowchart" | "starting_possessions" | "strategy"
-                   | "asset" | "condition" | "task"
+                   | "asset" | "condition" | "task" | "mystery"
     name           entity name or FAQ question
     expansion      product the entity comes from, e.g. "Eldritch Horror (base game)"
     base_game      True when it ships in the 2013 base box
@@ -37,6 +37,16 @@ Payload contracts (all keys and values in English):
     source_author  who wrote it
     confidence     "stated" when the source asserts it plainly, "partial" when this project
                    could only read part of the passage
+
+    A ``mystery`` point is one of the 16 Mysteries of the base box, as data rather than as its
+    printed text: what solving it takes in one line, the spaces the card names (they are the
+    names ``src/vision/spaces.py`` uses, so the robot can walk to them), and the Epic Monster it
+    spawns. See ``ingest_mysteries.py``.
+    ancient_one    whose deck it belongs to
+    mystery_type   "research_encounter" | "epic_monster" | "special_encounter" | "eldritch_tokens" | "misc"
+    spaces         board spaces the card names, or []
+    epic_monster   the Epic Monster it spawns, or ""
+    needs          which resources it asks for (clues, spells, eldritch_tokens, item, monster)
 
     An ``asset`` point is one card. ``confidence`` is "verified" when the effect is recorded
     here, and "effect_unchecked" when only the card's existence is established and its wording
@@ -80,6 +90,7 @@ KNOWLEDGE_KINDS: Final = (
     "asset",
     "condition",
     "task",
+    "mystery",
 )
 
 # Payload fields that get a keyword index so filters stay fast.

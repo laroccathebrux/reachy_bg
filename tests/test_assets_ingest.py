@@ -245,4 +245,5 @@ def test_the_reserve_can_be_looked_up_whole():
 
     found = cards_in_reserve(["Lucky Cigarette Case", "Private Investigator", "Kerosene", "Bull Whip"])
     assert len(found) == 4
-    assert all(c["confidence"] == "verified" for c in found)
+    # "dictated" outranks "verified": somebody read that card off the box (src/rag/dictate.py).
+    assert all(c["confidence"] in ("verified", "dictated") for c in found)

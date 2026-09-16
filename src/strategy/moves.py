@@ -133,6 +133,25 @@ def card_effect(name: str) -> str:
     return str(_cards().get(name.strip().lower(), {}).get("effect") or "")
 
 
+@lru_cache(maxsize=1)
+def _dictated() -> dict[str, dict[str, Any]]:
+    """Cards read off the owner's own copy (``src/rag/dictate.py``), by lowercase name."""
+    from src.rag.dictate import load
+
+    return {str(c.get("name", "")).lower(): c for c in load() if c.get("name")}
+
+
+def card_value(name: str) -> int | None:
+    """The number printed on an Asset card, or None while nobody has read it out.
+
+    The card list in the repository carries what each card *does* and not what it costs, so the
+    value comes from the box: ``scripts/dictate_cards.py`` puts it there. Until then Acquire
+    Assets is a question for the table, which is what the candidate says.
+    """
+    value = _dictated().get(name.strip().lower(), {}).get("value")
+    return value if isinstance(value, int) else None
+
+
 def component_action_text(effect: str) -> str:
     """The "Action:" clause of a printed effect, or "" when the card grants no action.
 
@@ -366,11 +385,15 @@ def candidates(game: GameState, situation: Situation) -> list[Candidate]:
         if monster_doubt:
             unknowns.append(monster_doubt)
         if game.reserve:
-            unknowns.append(
-                "the printed value of each Reserve card: I know what "
-                + ", ".join(game.reserve)
-                + " do, not what they cost"
-            )
+            unpriced = [c for c in game.reserve if card_value(c) is None]
+            if unpriced:
+                # A value somebody has read to me is not a question any more; the rest are.
+                unknowns.append(
+                    "what "
+                    + ", ".join(unpriced)
+                    + (" costs" if len(unpriced) == 1 else " cost")
+                    + ": I know what they do, not the number printed on them"
+                )
         else:
             unknowns.append("which cards are in the Reserve")
         out.append(Candidate(ACQUIRE, f"at {situation.space}", unknowns=tuple(unknowns)))
@@ -501,6 +524,7 @@ __all__ = [
     "TurnPlan",
     "candidates",
     "card_effect",
+    "card_value",
     "component_action_text",
     "monsters_at",
     "others_at",

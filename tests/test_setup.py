@@ -139,8 +139,8 @@ def test_a_briefing_can_arrive_in_pieces():
     assert game.ancient_one.name == "Cthulhu", "the second call wiped the first"
     assert game.robot_investigator.name == "Lily Chen"
 
-    apply_reading({"reserve": ["Bank Loan"], "mystery": "Find the Key"}, game)
-    assert game.reserve == ["Bank Loan"] and game.mystery == "Find the Key"
+    apply_reading({"reserve": ["Bank Loan"], "mystery": "The Stars Are Right!"}, game)
+    assert game.reserve == ["Bank Loan"] and game.mystery == "The Stars Are Right!"
     assert game.ancient_one.name == "Cthulhu" and game.robot_investigator is not None
 
 
@@ -209,3 +209,22 @@ def test_the_board_question_only_appears_once_there_are_pieces():
     game.board = BoardState()
     game.board.seed([Sighting("Tokyo", x=10, y=10)])  # a piece, but not where Lily starts
     assert any("which piece" in q for q in questions_for(game))
+
+
+def test_a_mystery_is_checked_against_the_box_and_spelled_the_way_it_is_printed():
+    game = GameState()
+    game.set_ancient_one("Cthulhu")
+    reading = apply_reading({"mystery": "the deep ones attack"}, game)
+    assert game.mystery == "The Deep Ones Attack!"  # as printed, not as said
+    assert any("mystery" in f for f in reading.fields)
+
+
+def test_a_mystery_nobody_can_name_is_a_question_with_candidates():
+    # Whisper wrote "Q-Mystery" and "The Deepest One Attack" in the live sessions.
+    game = GameState()
+    game.set_ancient_one("Cthulhu")
+    reading = apply_reading({"mystery": "The Deepest One Attack"}, game)
+    assert game.mystery == ""
+    assert reading.unknown_items[0]["kind"] == "mystery"
+    assert "The Deep Ones Attack!" in reading.unknown_items[0]["suggestions"]
+    assert "Mystery" in reading.unknown[0]
