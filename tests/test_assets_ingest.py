@@ -75,3 +75,102 @@ def test_asset_helper_defaults():
     record = asset("X", "item", "A card.")
     assert record["confidence"] == "verified" and record["starting_for"] == ""
     assert record["base_game"] is True
+
+
+# ---- importing a checked list ------------------------------------------------------------
+
+
+def write_list(tmp_path, items):
+    import json as _json
+
+    path = tmp_path / "assets.json"
+    path.write_text(_json.dumps(items), encoding="utf-8")
+    return str(path)
+
+
+def test_an_expansion_card_is_refused(tmp_path):
+    """Nearly every asset list online mixes the eight expansions in; the set is what filters."""
+    from src.rag.ingest_assets import from_file
+
+    records, refused = from_file(
+        write_list(
+            tmp_path,
+            [
+                {
+                    "name": "Bull Whip",
+                    "category": "weapon",
+                    "effect": "+2 Strength.",
+                    "expansion": "Eldritch Horror",
+                },
+                {"name": "Ancient Tome", "category": "item", "effect": "x", "expansion": "Forsaken Lore"},
+                {
+                    "name": "Shrivelling Wand",
+                    "category": "spell",
+                    "effect": "y",
+                    "expansion": "Mountains of Madness",
+                },
+            ],
+        )
+    )
+    assert [r["name"] for r in records] == ["Bull Whip"]
+    assert len(refused) == 2
+    assert any("Forsaken Lore" in r for r in refused)
+
+
+def test_a_card_without_a_set_is_refused(tmp_path):
+    from src.rag.ingest_assets import from_file
+
+    records, refused = from_file(
+        write_list(tmp_path, [{"name": "Dynamite", "category": "weapon", "effect": "boom"}])
+    )
+    assert records == []
+    assert "no expansion" in refused[0]
+
+
+def test_an_effect_makes_an_entry_verified(tmp_path):
+    from src.rag.ingest_assets import from_file
+
+    records, _ = from_file(
+        write_list(
+            tmp_path,
+            [
+                {
+                    "name": "Bull Whip",
+                    "category": "weapon",
+                    "effect": "+2 Strength.",
+                    "expansion": "base game",
+                },
+                {"name": "Rope", "category": "item", "expansion": "base game"},
+            ],
+        )
+    )
+    by_name = {r["name"]: r for r in records}
+    assert by_name["Bull Whip"]["confidence"] == "verified"
+    assert by_name["Rope"]["confidence"] == "effect_unchecked"
+
+
+def test_merging_only_upgrades_entries_that_gain_an_effect(tmp_path):
+    """An import must not overwrite a known card with a vaguer version of itself."""
+    from src.rag.ingest_assets import ENTRIES, from_file, merge
+
+    incoming, _ = from_file(
+        write_list(
+            tmp_path,
+            [
+                {"name": "Kerosene", "category": "item", "expansion": "base game"},  # no effect
+                {
+                    "name": "Bull Whip",
+                    "category": "weapon",
+                    "effect": "+2 Strength.",
+                    "expansion": "base game",
+                },
+                {"name": "Dynamite", "category": "weapon", "effect": "boom", "expansion": "base game"},
+            ],
+        )
+    )
+    merged = {r["name"]: r for r in merge(ENTRIES, incoming)}
+    assert "starting possession of Mark Harrigan" in merged["Kerosene"]["text"], (
+        "an effectless import overwrote what was already known"
+    )
+    assert merged["Bull Whip"]["confidence"] == "verified"
+    assert merged["Dynamite"]["text"] == "boom", "a new card should come in"

@@ -21,8 +21,16 @@ Nothing here is invented. A card whose effect is not known is entered as a card 
 not known, because a plausible wrong effect would be worse than a gap: the reasoning layer
 would spend Influence on a card that does not do what it was told.
 
-The remaining base-game assets are not in this file. The honest way to add them is to read the
-cards - photographed close up, where OCR actually works - rather than to recall them.
+The remaining base-game assets are not in this file. The honest ways to add them are to read the
+cards - photographed close up, where OCR actually works - or to import a checked list::
+
+    uv run python -m src.rag.ingest_assets --from data/assets.json --dry-run
+
+The file is a JSON list of objects with ``name``, ``category``, ``effect`` and ``expansion``.
+``expansion`` is required and is the point of the exercise: nearly every asset list online
+covers the game with all eight expansions mixed in, and this project is base game only, so a
+card whose set is not the 2013 box is refused rather than imported. An entry with an effect
+becomes "verified"; one without keeps "effect_unchecked".
 """
 
 from __future__ import annotations
@@ -38,6 +46,8 @@ from src.rag.embeddings import embed_texts
 from src.rag.store import count, ensure_collection, get_client, point_id, upsert
 
 log = get_logger(__name__)
+
+CATEGORIES = ("item", "weapon", "ally", "spell", "trinket", "service")
 
 BASE = {
     "game_id": GAME_ID,
@@ -224,30 +234,104 @@ ENTRIES: list[dict[str, Any]] = [
 ]
 
 
+BASE_SET_NAMES = ("eldritch horror", "base", "base game", "core", "core set", "2013")
+
+
+def from_file(path: str) -> tuple[list[dict[str, Any]], list[str]]:
+    """Read a checked asset list; returns the records and the reasons entries were refused.
+
+    Every online list this project has met covers the game with its expansions, so the set each
+    card belongs to is required and anything outside the 2013 box is refused. A card already in
+    ENTRIES is upgraded when the file supplies an effect, and left alone when it does not.
+    """
+    from pathlib import Path
+
+    items = json.loads(Path(path).read_text(encoding="utf-8"))
+    if isinstance(items, dict):
+        items = items.get("assets") or items.get("cards") or []
+    records: list[dict[str, Any]] = []
+    refused: list[str] = []
+    for item in items:
+        if not isinstance(item, dict):
+            refused.append(f"not an object: {item!r:.60}")
+            continue
+        name = str(item.get("name") or "").strip()
+        expansion = str(item.get("expansion") or item.get("set") or "").strip()
+        if not name:
+            refused.append(f"no name: {item!r:.60}")
+            continue
+        if not expansion:
+            refused.append(f"{name}: no expansion given, so it cannot be checked")
+            continue
+        if expansion.lower().strip() not in BASE_SET_NAMES:
+            refused.append(f"{name}: from {expansion}, not the base game")
+            continue
+        effect = str(item.get("effect") or item.get("text") or "").strip()
+        category = str(item.get("category") or item.get("type") or "item").strip().lower()
+        if category not in CATEGORIES:
+            category = "item"
+        records.append(
+            asset(
+                name,
+                category,
+                effect or f"{name} is a base-game asset whose effect has not been read yet.",
+                confidence="verified" if effect else "effect_unchecked",
+                starting_for=str(item.get("starting_for") or "").strip(),
+                source=str(item.get("source") or path),
+            )
+        )
+    return records, refused
+
+
+def merge(base: list[dict[str, Any]], incoming: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Incoming entries win only where they actually add an effect."""
+    by_name = {r["name"]: dict(r) for r in base}
+    for record in incoming:
+        existing = by_name.get(record["name"])
+        if existing is None or record["confidence"] == "verified":
+            by_name[record["name"]] = record
+    return list(by_name.values())
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--dry-run", action="store_true", help="print the records, write nothing")
+    parser.add_argument(
+        "--from",
+        dest="source",
+        default="",
+        metavar="FILE",
+        help="a JSON asset list with name, category, effect and expansion",
+    )
     args = parser.parse_args(argv)
 
-    for record in ENTRIES:
+    entries = ENTRIES
+    if args.source:
+        incoming, refused = from_file(args.source)
+        for reason in refused:
+            log.warning("asset refused: %s", reason)
+        entries = merge(ENTRIES, incoming)
+        log.info("%s: %d accepted, %d refused", args.source, len(incoming), len(refused))
+
+    for record in entries:
         if record["confidence"] not in ("verified", "effect_unchecked"):
             raise ValueError(f"{record['name']}: unknown confidence {record['confidence']}")
 
-    unchecked = sum(1 for r in ENTRIES if r["confidence"] == "effect_unchecked")
-    log.info("%d assets, %d of them with the effect still unread", len(ENTRIES), unchecked)
+    unchecked = sum(1 for r in entries if r["confidence"] == "effect_unchecked")
+    log.info("%d assets, %d of them with the effect still unread", len(entries), unchecked)
 
     if args.dry_run:
-        for r in ENTRIES:
+        for r in entries:
             print(json.dumps(r, ensure_ascii=False))
         return 0
 
     client = get_client()
-    ids = [point_id(GAME_ID, r["kind"], r["name"]) for r in ENTRIES]
+    ids = [point_id(GAME_ID, r["kind"], r["name"]) for r in entries]
     if len(set(ids)) != len(ids):
         raise ValueError("two assets share a name")
-    vectors = embed_texts(r["text"] for r in ENTRIES)
+    vectors = embed_texts(r["text"] for r in entries)
     ensure_collection(client, KNOWLEDGE)
-    written = upsert(client, KNOWLEDGE, ids, vectors, ENTRIES)
+    written = upsert(client, KNOWLEDGE, ids, vectors, entries)
     log.info("wrote %d asset points to %s (total now %d)", written, KNOWLEDGE, count(client, KNOWLEDGE))
     return 0
 
