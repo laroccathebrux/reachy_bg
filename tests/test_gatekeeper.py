@@ -208,3 +208,34 @@ def test_name_spotter_ignores_sentences_without_the_name(tmp_path):
     assert spot() is None and audio.calls == [] and asr.calls == 1
     mic.voice_ms = 1500
     assert spot() is None and asr.calls == 1  # not enough new voice for a recheck
+
+
+def test_the_gate_lets_through_a_turn_call_for_the_robots_investigator():
+    """ "É a vez da Lily Chen" must reach the robot when it is playing Lily Chen."""
+    from src.speech.addressee import decide
+
+    called = decide(
+        "é a vez da Lily Chen",
+        "pt-BR",
+        humans_present=2,
+        other_names=["Bruno"],
+        my_investigator="Lily Chen",
+    )
+    assert called.addressed and called.reason == "my_turn"
+
+    # and the same sentence means nothing special before setup has told it who it plays
+    unset = decide("é a vez da Lily Chen", "pt-BR", humans_present=2, other_names=["Bruno"])
+    assert unset.reason != "my_turn"
+
+
+def test_the_gatekeeper_reads_its_investigator_at_decision_time():
+    """Setup happens while the ear is already listening, so the name cannot be bound early."""
+    import inspect
+
+    from src.speech.gatekeeper import Gatekeeper
+
+    signature = inspect.signature(Gatekeeper.__init__)
+    assert "my_investigator" in signature.parameters
+    assert callable(signature.parameters["my_investigator"].default), (
+        "it must be a callable read per utterance, not a fixed string"
+    )

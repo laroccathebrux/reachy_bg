@@ -6,6 +6,8 @@
 The rules, in order of confidence:
 
 1. The robot's name (or what Whisper hears instead of it) appears: addressed.
+1b. The investigator the robot is playing is named ("it is Lily Chen's turn"): addressed, and
+   with full confidence when the sentence hands over the turn.
 2. Another player is named as the vocative ("Bruno, what do you think?"): not for the robot.
 3. A question or a short reply within ``FOLLOW_UP_WINDOW_S`` after the robot spoke: follow-up.
 4. A question about the rules or the game while it is the robot's turn: probably for it.
@@ -90,6 +92,46 @@ def mentions_person(text: str, names: Iterable[str]) -> bool:
     """Someone else at the table is named as the vocative (first names, accents ignored)."""
     people = {_strip_accents(n.strip().lower().split()[0]) for n in names if n and n.strip()}
     return _vocative(text, people)
+
+
+# "It's Lily Chen's turn" is addressed to the robot when the robot is playing Lily Chen. The
+# owner should not have to say the robot's name to hand it its own turn.
+_TURN_PHRASES = {
+    "pt-BR": (
+        r"\b(?:e|eh)?\s*(?:a|sua|tua)?\s*vez\b",
+        r"\bvez\s+d[oa]\b",
+        r"\bpode\s+jogar\b",
+        r"\bjoga\s+a[ií]\b",
+        r"\bt[au]\s+na\s+sua\s+vez\b",
+    ),
+    "en-US": (
+        r"\b(?:it'?s\s+)?(?:your|his|her|their)\s+turn\b",
+        r"\bturn\s+now\b",
+        r"\b\w+'s\s+turn\b",
+        r"\byou'?re\s+up\b",
+        r"\bgo\s+ahead\b",
+    ),
+}
+
+
+def is_turn_call(text: str, language: str) -> bool:
+    """Does the sentence hand the turn to somebody?"""
+    flat = _strip_accents(text.lower())
+    patterns = _TURN_PHRASES.get(language) or _TURN_PHRASES["en-US"]
+    return any(re.search(p, flat) for p in patterns)
+
+
+def names_investigator(text: str, investigator_name: str) -> bool:
+    """Is this investigator named anywhere in the sentence?
+
+    Unlike a vocative, the name can sit in the middle ("it is Lily Chen's turn now"), and any
+    part of it counts, because that is how people speak: "Lily", "Chen", "Lily Chen".
+    """
+    if not investigator_name.strip():
+        return False
+    words = set(_words(text))
+    parts = {_strip_accents(p.lower()) for p in investigator_name.split() if len(p) > 2}
+    return bool(parts & words)
 
 
 _LEADING = frozenset("e ai entao mas ok ta hey ei oi ola and so but then well".split())
@@ -184,6 +226,7 @@ def decide(
     humans_present: int | None = None,
     follow_up_ok: bool = True,
     other_names: Iterable[str] = (),
+    my_investigator: str = "",
 ) -> Decision:
     """Decide whether the utterance is for the robot.
 
@@ -192,11 +235,23 @@ def decide(
     (a stranger's cough right after an answer is not a follow-up); ``other_names`` are the
     other players at the table (the speaker excluded), so that naming one of them means the
     sentence is not for the robot.
+
+    ``my_investigator`` is the investigator the robot is playing. Handing the robot its turn by
+    naming its investigator - "it is Lily Chen's turn" - counts exactly like calling its own
+    name, which is how people actually pass the turn at a table.
     """
     if mentions_robot(text):
         return Decision(True, "name", 0.95)
+    if my_investigator and names_investigator(text, my_investigator):
+        # The robot's own investigator was named. A turn call is unambiguous; anything else
+        # naming it is still far more likely to be for the robot than not.
+        if is_turn_call(text, language):
+            return Decision(True, "my_turn", 0.95)
+        return Decision(True, "my_investigator", 0.8)
     if mentions_person(text, other_names):
         return Decision(False, "other_person", 0.85)
+    if is_turn_call(text, language) and (mentions_robot(text) or humans_present == 1):
+        return Decision(True, "turn_call", 0.75)
     if humans_present == 1 and len(_words(text)) >= 2:
         # One person at the table: whatever they say out loud is for the robot (a second-person
         # form makes it certain, anything else is still far more likely than talking alone).

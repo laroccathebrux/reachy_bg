@@ -145,3 +145,67 @@ def test_naming_another_player_is_not_for_the_robot():
     )
     # The robot's name wins over another name in the same sentence.
     assert decide("Reachy, o Bruno pode viajar?", "pt-BR", other_names=others).reason == "name"
+
+
+# ---- the robot's own investigator: "it is Lily Chen's turn" means "your turn" -------------
+
+MINE = "Lily Chen"
+
+
+def test_naming_the_robots_investigator_in_a_turn_call_is_for_the_robot():
+    for text, language in (
+        ("é a vez da Lily Chen", "pt-BR"),
+        ("agora é a vez da Lily", "pt-BR"),
+        ("vez do Chen", "pt-BR"),
+        ("it's Lily Chen's turn", "en-US"),
+        ("Lily, your turn", "en-US"),
+    ):
+        d = decide(text, language, my_investigator=MINE, other_names=["Bruno"])
+        assert d.addressed, f"{text!r} was not taken as the robot's turn"
+        assert d.reason in ("my_turn", "name", "my_investigator"), f"{text!r}: {d.reason}"
+
+
+def test_a_turn_call_for_another_investigator_is_not_for_the_robot():
+    for text, language in (
+        ("é a vez do Leo Anderson", "pt-BR"),
+        ("it's Leo Anderson's turn", "en-US"),
+    ):
+        d = decide(text, language, my_investigator=MINE, other_names=["Leo Anderson"])
+        assert not d.addressed, f"{text!r} was taken as the robot's turn"
+
+
+def test_the_robot_is_still_called_by_its_own_name():
+    d = decide("Reachy, é a sua vez", "pt-BR", my_investigator=MINE)
+    assert d.addressed and d.confidence >= 0.9
+
+
+def test_mentioning_the_robots_investigator_outside_a_turn_call_still_reaches_it():
+    d = decide("quanto de vida a Lily Chen tem?", "pt-BR", my_investigator=MINE)
+    assert d.addressed and d.reason == "my_investigator"
+
+
+def test_without_an_investigator_set_nothing_changes():
+    """The rule must not fire for a table where the robot is not playing anyone."""
+    d = decide("é a vez da Lily Chen", "pt-BR", other_names=["Bruno"])
+    assert d.reason != "my_turn"
+
+
+def test_is_turn_call_recognises_how_people_pass_the_turn():
+    from src.speech.addressee import is_turn_call
+
+    for text in ("é a sua vez", "agora é a vez da Lily", "pode jogar", "vez do Leo"):
+        assert is_turn_call(text, "pt-BR"), text
+    for text in ("your turn", "it's Lily's turn", "you're up", "go ahead"):
+        assert is_turn_call(text, "en-US"), text
+    for text in ("quantas ações eu tenho?", "olha esse monstro"):
+        assert not is_turn_call(text, "pt-BR"), text
+
+
+def test_names_investigator_matches_any_part_of_the_name():
+    from src.speech.addressee import names_investigator
+
+    assert names_investigator("é a vez da Lily", "Lily Chen")
+    assert names_investigator("vez do Chen", "Lily Chen")
+    assert names_investigator("it is Lily Chen's turn", "Lily Chen")
+    assert not names_investigator("é a vez do Leo", "Lily Chen")
+    assert not names_investigator("é a vez da Lily", "")

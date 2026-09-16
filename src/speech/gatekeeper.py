@@ -1,6 +1,7 @@
 """Local addressee gate: hold each utterance, transcribe it here, decide, then release or discard.
 
-    keeper = Gatekeeper(audio, transcriber, TurnLogger(), humans=2, names=registry.names, ...)
+    keeper = Gatekeeper(audio, transcriber, TurnLogger(), humans=2, names=registry.names,
+                        my_investigator=lambda: game.robot_investigator.name, ...)
     ...                                     # the local ear closes an utterance:
     verdict = keeper.judge(utterance, speaker_name, score)     # audio released to the agent or dropped
 
@@ -61,6 +62,7 @@ class Gatekeeper:
         robot_spoke_at: Callable[[], float | None] = lambda: None,
         voice_language: Callable[[], str] = lambda: "",
         on_switch: Callable[[str, str, str], None] | None = None,
+        my_investigator: Callable[[], str] = lambda: "",
         clock: Callable[[], float] = time.monotonic,
     ):
         self.audio = audio
@@ -73,6 +75,9 @@ class Gatekeeper:
         self.robot_spoke_at = robot_spoke_at
         self.voice_language = voice_language
         self.on_switch = on_switch
+        # Read at decision time, not at construction: the robot is given its investigator
+        # during the spoken setup, after the ear is already listening.
+        self.my_investigator = my_investigator
         self.clock = clock
         self.asr_lock = threading.Lock()  # one Whisper call at a time (the spotter shares it)
         self.last_addressed = ""
@@ -135,6 +140,7 @@ class Gatekeeper:
                 humans_present=self.humans,
                 follow_up_ok=bool(speaker) and speaker == self.last_addressed,
                 other_names=[n for n in self.names if n != speaker],
+                my_investigator=self.my_investigator(),
             )
 
         forwarded = dropped = 0
