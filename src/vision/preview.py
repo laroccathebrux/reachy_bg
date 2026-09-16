@@ -90,8 +90,15 @@ PAGE = """<!doctype html>
 
   #main { flex: 1; display: grid; grid-template-columns: minmax(0, 1fr) 296px; min-height: 0; }
   #stage { position: relative; padding: 10px; min-width: 0; }
-  #wrap { position: relative; display: block; width: 100%; }
-  #cam { display: block; width: 100%; max-height: calc(100vh - 210px); object-fit: contain; background: #000; }
+  /* The wrapper shrinks to the picture, so the overlay canvas covers exactly the pixels the
+     image occupies. An earlier version stretched the image with width:100% + object-fit:contain,
+     which letterboxes it on a wide window: the canvas then drew the board over the whole
+     element, pushing every space sideways the further it sat from the centre. */
+  /* The width is capped by the height that is left, so the image fills the wrapper exactly and
+     is never letterboxed: the canvas then covers the same pixels the picture does. */
+  #wrap { position: relative; display: block; line-height: 0;
+          width: min(100%, calc((100vh - 215px) * 16 / 9)); }
+  #cam { display: block; width: 100%; height: auto; background: #000; }
   #guides { position: absolute; left: 0; top: 0; pointer-events: none; }
   .corner { position: absolute; width: 22px; height: 22px; border: 2px solid var(--accent); pointer-events: none; }
   .tl { left: 0; top: 0; border-right: 0; border-bottom: 0; }
@@ -144,7 +151,7 @@ PAGE = """<!doctype html>
                      cursor: pointer; }
   input[type=checkbox] { accent-color: var(--accent); }
 
-  #log { margin: 10px 4px 0; border: 1px solid var(--line); background: var(--panel); }
+  #log { margin: 10px 0 0; border: 1px solid var(--line); background: var(--panel); max-width: 100%; }
   .loghead { display: flex; align-items: center; justify-content: space-between;
              padding: 7px 10px; border-bottom: 1px solid var(--line);
              letter-spacing: .16em; color: var(--dim); }

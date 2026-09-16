@@ -330,3 +330,21 @@ def test_the_page_carries_the_board_log_and_polls_it():
     assert "BOARD LOG" in PAGE and 'id="logitems"' in PAGE
     assert "pollMoves" in PAGE and "'/moves'" in PAGE
     assert "setInterval(pollMoves, 1000)" in PAGE
+
+
+def test_the_camera_is_never_letterboxed_under_the_overlay():
+    """The overlay canvas covers the element, so the picture must fill the element exactly.
+
+    A redesign once set `width: 100%` with `object-fit: contain`, which letterboxes the image on
+    a wide window: the canvas kept drawing over the whole element, so every space was pushed
+    sideways the further it sat from the centre, and the board spaces looked misregistered when
+    the registration was in fact good to about 1.4 px.
+    """
+    from src.vision.preview import PAGE
+
+    style = PAGE[PAGE.index("<style>") : PAGE.index("</style>")]
+    cam_rule = [line for line in style.splitlines() if line.strip().startswith("#cam {")]
+    assert cam_rule, "no rule for the camera image"
+    assert "object-fit" not in cam_rule[0], "object-fit letterboxes the image under the canvas"
+    # The wrapper's width is capped by the height left over, so the image always fills it.
+    assert "#wrap {" in style and "min(100%," in style
