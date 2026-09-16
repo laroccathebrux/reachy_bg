@@ -523,6 +523,57 @@ Two facts found the hard way, both worth keeping:
   venv but is not in `pyproject.toml` yet: it upgrades `transformers` to 5.x, and the 160 tests
   pass with it.
 
+## Done: the robot sees a move as it happens (2026-09-16, live with the owner)
+
+`src/vision/motion.py` watches one fixed view and reports moves as they happen; the watcher runs
+inside the preview, so nothing competes for the camera, and the page carries a **BOARD LOG**
+panel fed by `GET /moves`. Live on the real board, six moves in a row, no false verdict:
+
+| Time | Reported |
+|---|---|
+| 10:45:36 | a piece moved from Rome to Istanbul |
+| 10:46:26 | a piece moved from Istanbul to Tunguska |
+| 10:46:55 | a piece moved from The Himalayas to The Heart of Africa |
+| 10:47:06 | a piece moved from The Heart of Africa to The Amazon |
+
+Four of six came out as one clean sentence; two were the same move split into two verdicts
+(2.8 s and 3.6 s of disturbance) with one spurious blob, which is the settling rule being
+generous rather than a detection failure.
+
+Measured, not guessed (960x540 live stream):
+
+| Signal | Value |
+|---|---|
+| Frame-to-frame noise, board untouched | median 2.24, p95 4.58, max 14.7 (a piece is 33-60) |
+| Activity, board untouched | exactly 0.0000 (no pixel clears 30 grey levels) |
+| Activity, a hand moving pieces | 0.006 to 0.039 |
+| Activity, a body sweep | 0.036 to 0.100 (overlaps the hand: magnitude cannot tell them apart) |
+| Registration accuracy, rectified vs reference art | 1.4 px median over 27 tiles |
+| Registration jitter, board corners | up to **145.6 px** (extrapolated far outside the frame) |
+| Registration jitter, visible space centres | up to **6.5 px** |
+
+Four rules fell on the way, each after it broke something live:
+
+- **The trigger was guessed and never fired.** `DISTURBED_FRACTION` was 0.04 from an estimate
+  that "an arm covers an order of magnitude more of the frame than a piece"; a real move topped
+  out at 0.0386. The floor is what matters and the floor is zero, so it sits at 0.005 now.
+- **A frame difference is symmetric**, so neither direction can say which frame holds the piece.
+  Local contrast (`stands_out`) gets it wrong over the board's own art: a piece landing on the
+  dark "The Heart of Africa" card was called a departure. `occupancy` asks the absolute question
+  against the empty-board baseline instead. The baseline only *arbitrates* and never triggers, so
+  a stale one degrades direction but cannot make the watcher fire.
+- **The stale-view guard measured pure noise.** Comparing board *corners* between registrations
+  refused every real move ("the view moved by 112 px") because those corners sit outside the
+  frame; it compares the visible space centres now.
+- **Half a second of stillness is not enough.** A hand pauses mid-move, and those pauses read as
+  quiet; settling takes a full second.
+
+The preview page was also rebuilt to the owner's teleop-console design. One bug came with it:
+the image was stretched with `width:100%` + `object-fit:contain`, which letterboxes it on a wide
+window while the overlay canvas kept covering the whole element, pushing every space sideways in
+proportion to its distance from the centre. The board looked misregistered when the registration
+was good to 1.4 px. The wrapper's width is capped by the height left over now.
+
 ## Decisions taken
 
 | Topic | Decision | Where |
@@ -573,9 +624,7 @@ Naming a piece from a crop was going to come first (normalise the gallery labels
 wrong: on the current crops the gallery gets 2/13 and a VLM 0/13, because the crops are too
 small and soft for either. Pixels first, recogniser second.
 
-1. **Live test of `motion.py`** with the owner at the board: does a real move on the real
-   table produce one verdict, and is the space right? (The synthetic tests pass; the robot
-   has not seen a real move yet.)
+1. ~~Live test of `motion.py`~~ done (section above): six moves, four as one clean sentence.
 2. **Bigger, sharper crops**: a piece is about 250 px of 1920 today. The closer look should
    fill the frame with the piece before anything tries to name it.
 3. **Clean the gallery**: remove the byte-identical crop filed under two labels, then
