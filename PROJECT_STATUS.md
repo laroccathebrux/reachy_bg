@@ -1,6 +1,6 @@
 # Project Status
 
-Updated 2026-09-14 (Phase 2b).
+Updated 2026-09-16 (Phase 3: the robot plays its own turn).
 
 ## Done: Phase 0, foundation
 
@@ -642,6 +642,81 @@ Community strategy is also in `bg_knowledge` under `kind: "strategy"` - 11 entri
 Ludopedia dossier, in English, each carrying its source and phrased as advice, with a test that
 fails if one starts reading like a rule.
 
+## Done: the robot chooses a turn and says why (2026-09-16, evening)
+
+Everything before this was perception and memory. The robot could see the board, follow a move
+and hold the whole game state, and it had no turn of its own. Four pieces closed that, and the
+first of them was a hole nobody had noticed.
+
+**`src/strategy/map_graph.py`** - the paths. `spaces.py` knew *where* the 36 spaces are and
+nothing about which touches which, so Travel, tickets and Prepare for Travel were all
+impossible. The table is 56 paths of the three printed kinds (Train, Ship, Uncharted), with the
+three that cross the edge of the map marked as wrapping: 1/19 the Bering Strait, 2/Tokyo the
+northern crossing, 3/Sydney the southern one. `travel_options()` is the printed rule and nothing
+more - one free move along any path, then one extra move per ticket spent, a ticket only along
+its own kind, and an Uncharted path walked but never bought.
+
+Every path was traced on `data/imgs/World_Map.webp` at 4-7x, region by region; nothing came from
+memory, and colour segmentation was tried first and abandoned (in that photo a Train dot is hue
+12 and an Uncharted dot hue 17). `scripts/draw_map_graph.py` draws the table back over the
+picture, which is how the owner checks it; `VERIFIED` stays False until he has, and while it is
+False `decide` refuses any turn that moves a piece.
+
+Two things the tracing found: space 8 was typed `city` in `spaces.py` and the board prints a
+blue Sea token (`docs/GAME_REFERENCE.md` had it right all along), which would have offered
+Acquire Assets and Prepare for Travel where the rules forbid them; and three spaces are
+dead ends with a single path each (9, 13, 21), which is worth the owner's eye.
+
+**`src/strategy/moves.py`** - every legal turn. The unit is the whole turn, up to two distinct
+actions, the second judged from where the first one leaves the investigator: "Travel to Tokyo,
+then Acquire Assets at Tokyo" is an idea a one-action-at-a-time generator cannot have. The six
+actions and their conditions live in a table, because the reference card cannot change while the
+box is the 2013 box; everything that does vary is read rather than written, and a Component
+Action is simply a card whose printed text begins "Action:", straight from
+`src/rag/cards/eldritch_base_game.json`, offline.
+
+What the robot cannot know stays a question: an unnamed piece on the space is "is any of them a
+Monster?", not a Monster, and the Reserve cards are known by what they do and not by the value
+printed on them. Only a piece somebody named as a Monster removes Rest and Acquire Assets.
+`refusals()` explains what is missing in the rule's own words, because a silent omission looks
+like a mistake to the table.
+
+**`src/strategy/decide.py`** - the choice. An ordinary turn has 40 to 200 legal plans. A
+readable score (every term in `Weights`) prunes to eight, keeping the best plan of *every* first
+action so no whole idea is lost; the model then picks one number from that shortlist and writes
+the sentence. Anything that is not a number from the list is asked again once, and a model that
+does not answer at all leaves the best-scored plan standing with the score's own words: the
+robot always plays. Every plan that was cut stays in `Decision.considered`.
+
+**`src/strategy/plan.py`** - the plan for the whole game, written after the setup and revised
+when something actually happened, so the turns add up to something. It is labelled everywhere as
+the robot's intention, never a rule. The eleven community strategy entries are fetched here
+rather than per turn: advice about which investigator suits which Ancient One is advice about a
+game, not about a move.
+
+`uv run python -m src.strategy.turn --demo --plan` runs the whole thing on the screen, no
+microphone and no ElevenLabs.
+
+Measured on the work Mac, model warm, the owner's two-player setup:
+
+| Signal | Value |
+|---|---|
+| Candidates and plans at Shanghai, no tickets | 11 actions, 40 turn plans (57 when hurt) |
+| Turn decision, `think=False` | 1.9-8.5 s |
+| Turn decision, `think=True` | 114 s, and it was the answer that invented a rule |
+| Plan for the game (once, with advice) | 15 s |
+| First call of the session (model load) | +40 s |
+
+`think` is therefore off by default. Three faults the live runs exposed, all fixed: "doom at 15
+of 15" was read as "time is nearly up" (the brief now says doom moves towards 0 and what that
+means); a Gate rendered as "Rome: Rome" (now "Rome has a Gate and the Monster Cultist"); and the
+model explained a choice by the Clues it would spend, so the printed rule of every offered action
+now travels with the shortlist, including that a Clue rerolls a die and buys nothing.
+
+What is still wrong at this size of model: it translates a term now and then ("Mistérios" for
+Mystery) even with an explicit example against it, and once said "Roma" and "Cultista". The
+decision itself has been sound in every run so far.
+
 ## Decisions taken
 
 | Topic | Decision | Where |
@@ -728,8 +803,14 @@ small and soft for either. Pixels first, recogniser second.
 
 ### Phase 3: strategic reasoning (weeks 3-4)
 
-- [ ] Ollama client with JSON-schema outputs; prompt templates in English.
-- [ ] Candidate generation, legality checks against `bg_rules` and the board map, evaluation, justification.
+- [x] Ollama client with JSON-schema outputs; prompt templates in English.
+- [x] Candidate generation, legality checks, evaluation, justification (`map_graph`, `moves`,
+      `decide`, `plan`, `turn`). Legality is code and data, not a vector search: the six actions
+      are printed on the reference card and fixed, card effects come from the versioned card
+      file, and `bg_rules` is cited rather than queried per candidate.
+- [ ] The owner checks `scripts/draw_map_graph.py`'s picture against the board, then `VERIFIED`
+      turns True and the robot may move a piece.
+- [ ] The spoken turn: "é a vez da Lily Chen" -> `decide` -> the ElevenLabs voice.
 - [ ] Rules Q&A tool returning section and page.
 
 ### Phase 4: end-to-end (weeks 4-5)
@@ -749,6 +830,9 @@ small and soft for either. Pixels first, recogniser second.
 
 ## Open items
 
+- **The path table has not been checked against the board** (`scripts/draw_map_graph.py`).
+  Until it is, the robot will not choose a turn that moves a piece. Worth the owner's eye:
+  spaces 9, 13 and 21 came out with a single path each, and London with no Train path at all.
 - Calibration numbers (riser height, head pitch, exposure) are placeholders until measured.
 - Latency figures in docs/SPEECH_PIPELINE.md come from published benchmarks, not this Mac.
 - The two unverified facts in docs/GAME_REFERENCE.md (Doom track maximum, token counts).
