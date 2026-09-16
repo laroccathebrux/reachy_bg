@@ -20,6 +20,7 @@ Payload contracts (all keys and values in English):
     game_id        "eldritch-horror"
     kind           "investigator" | "ancient_one" | "monster" | "gates" | "faq"
                    | "card_composition" | "flowchart" | "starting_possessions" | "strategy"
+                   | "asset"
     name           entity name or FAQ question
     expansion      product the entity comes from, e.g. "Eldritch Horror (base game)"
     base_game      True when it ships in the 2013 base box
@@ -36,6 +37,12 @@ Payload contracts (all keys and values in English):
     source_author  who wrote it
     confidence     "stated" when the source asserts it plainly, "partial" when this project
                    could only read part of the passage
+
+    An ``asset`` point is one card. ``confidence`` is "verified" when the effect is recorded
+    here, and "effect_unchecked" when only the card's existence is established and its wording
+    has not been read - never a guess at what it does. See ``ingest_assets.py``.
+    category       "item" | "weapon" | "ally" | "spell" | "trinket" | "service"
+    starting_for   the investigator who begins the game holding it, or ""
 
 ``bg_sessions`` - one point per round summary of a played game
     game_id        "eldritch-horror"
@@ -70,6 +77,7 @@ KNOWLEDGE_KINDS: Final = (
     "flowchart",
     "starting_possessions",
     "strategy",
+    "asset",
 )
 
 # Payload fields that get a keyword index so filters stay fast.

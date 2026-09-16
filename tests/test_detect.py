@@ -139,3 +139,32 @@ def test_adaptive_threshold_follows_the_noise():
     assert adaptive_threshold(quiet, valid) == DIFF_THRESHOLD_MIN
     assert adaptive_threshold(noisy, valid) == DIFF_THRESHOLD
     assert adaptive_threshold(quiet, np.zeros((100, 100), dtype=bool)) == DIFF_THRESHOLD
+
+
+def test_doubtful_keeps_the_pieces_and_drops_the_glare():
+    """Measured on the owner's real two-player setup (2026-09-16).
+
+    Every real piece was either seen from two views or confirmed by a closer look. The two
+    false positives were glare running along the printed banners at San Francisco and Arkham,
+    and they were the only sightings that were neither.
+    """
+    from src.vision.detect import Piece, doubtful, split_doubtful
+
+    def sighting(space, w, h, *, views, confirmed):
+        return Piece(0, 0, w, h, int(w * h), 40.0, space, 0.0, views=list(views), confirmed=confirmed)
+
+    lily = sighting("Shanghai", 140, 97, views=["centre", "right"], confirmed=True)
+    portal = sighting("Rome", 63, 64, views=["centre", "left", "right"], confirmed=True)
+    jacqueline = sighting("4", 66, 58, views=["left"], confirmed=True)  # one view, but confirmed
+    monster = sighting("Rome", 51, 46, views=["centre", "left", "right"], confirmed=False)
+    glare_sf = sighting("San Francisco", 103, 57, views=["centre"], confirmed=False)
+    glare_arkham = sighting("Arkham", 95, 27, views=["centre"], confirmed=False)
+
+    for piece in (lily, portal, jacqueline, monster):
+        assert doubtful(piece) == "", f"{piece.space} was thrown away"
+    assert "one view" in doubtful(glare_sf)
+    assert "thin" in doubtful(glare_arkham), "a 3.5:1 smear should fail on shape alone"
+
+    good, weak = split_doubtful([lily, portal, jacqueline, monster, glare_sf, glare_arkham])
+    assert [p.space for p in good] == ["Shanghai", "Rome", "4", "Rome"]
+    assert sorted(p.space for p, _ in weak) == ["Arkham", "San Francisco"]

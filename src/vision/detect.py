@@ -377,6 +377,37 @@ def find_pieces(
     return pieces
 
 
+# A blob this much wider than it is tall (on the rectified map) is not a game piece: the pieces
+# are discs, cards and standees, while a smear of glare along a printed banner is long and thin.
+MAX_PIECE_ASPECT = 2.5
+
+
+def doubtful(piece: Piece) -> str:
+    """Why this sighting is too thin to report, or "" when it is worth believing.
+
+    Measured on the owner's two-player setup: every real piece was either seen from two views
+    or confirmed by a closer look, and the two false positives - glare along the printed
+    banners at San Francisco and Arkham - were the only ones that were neither. Reporting them
+    as pieces is worse than silence, because the state would carry a token that is not there.
+    """
+    width, height = max(piece.width, 1.0), max(piece.height, 1.0)
+    if max(width, height) / min(width, height) > MAX_PIECE_ASPECT:
+        return "too long and thin to be a piece"
+    if not piece.confirmed and len(piece.views) <= 1:
+        return "seen from one view only and never confirmed"
+    return ""
+
+
+def split_doubtful(pieces: list[Piece]) -> tuple[list[Piece], list[tuple[Piece, str]]]:
+    """Separate what is worth putting in the state from what is only worth mentioning."""
+    good: list[Piece] = []
+    weak: list[tuple[Piece, str]] = []
+    for piece in pieces:
+        why = doubtful(piece)
+        (weak.append((piece, why)) if why else good.append(piece))
+    return good, weak
+
+
 def closest_to(pieces: list[Piece], x: float, y: float, max_distance: float = 120.0) -> Piece | None:
     """The piece whose map position is nearest to (x, y), within ``max_distance`` map pixels."""
     best, best_d = None, max_distance

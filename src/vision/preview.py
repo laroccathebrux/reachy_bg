@@ -796,7 +796,9 @@ class Preview:
                     continue
                 baseline = None if self.baselines is None else self.baselines.views.get("centre")
                 self.watcher = MotionWatcher(registration, baseline=baseline, reference=self.board)
-                self.motion_state = "watching" + ("" if baseline is not None else " (no baseline: direction is a guess)")
+                self.motion_state = "watching" + (
+                    "" if baseline is not None else " (no baseline: direction is a guess)"
+                )
                 log.info("motion: watching, %d inliers", registration.inliers)
             try:
                 move = self.watcher.feed(frame)
@@ -1128,6 +1130,7 @@ class Preview:
             find_pieces,
             light_change,
             merge_pieces,
+            split_doubtful,
         )
         from src.vision.spaces import SPACES
 
@@ -1277,14 +1280,26 @@ class Preview:
                         if view_name == "centre" and i < len(centre_pieces):
                             record["box"] = centre_pieces[i]["box"]
             merged_out.append(record)
-        text = describe(merged)
+        # A sighting seen from one view and never confirmed, or shaped like a smear rather than
+        # a piece, is mentioned but kept out of the state: a token that is not there is worse
+        # than a gap. Measured on the owner's board, this is exactly the two glare blobs along
+        # the printed banners at San Francisco and Arkham, and none of the four real pieces.
+        believed, weak = split_doubtful(merged)
+        text = describe(believed)
+        if weak:
+            text += "  |  not sure about: " + "; ".join(
+                f"{p.space or p.near or 'somewhere'} ({why})" for p, why in weak
+            )
         if reserve_text:
             text = f"{text} {reserve_text}"
+        doubtful_out = [{**p.record(), "why": why} for p, why in weak]
         self.last_scan = {
             "ok": True,
             "mode": mode,
             "views": views_out,
             "pieces": merged_out,
+            "believed": [p.record() for p in believed],
+            "doubtful": doubtful_out,
             "centre_pieces": centre_pieces,
             "reserve": reserve_out,
             "seen": sorted(seen),
@@ -1292,8 +1307,10 @@ class Preview:
             "text": text,
         }
         log.info("scan: %s (unseen: %s)", text, ", ".join(unseen) or "none")
+        for piece, why in weak:
+            log.info("scan: not reporting %s: %s", piece.space or piece.near or "?", why)
         try:
-            self.state.seed(merged)
+            self.state.seed(believed)
             self.state.save(self.state_path())
         except Exception as exc:
             log.warning("state: seeding from the scan failed: %s", exc)
