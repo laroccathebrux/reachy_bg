@@ -6,6 +6,7 @@
     uv run python -m src.integration.talk --device "MacBook Pro Microphone"
     uv run python -m src.integration.talk --humans 2          # two people at the table: the gate is on
     uv run python -m src.integration.talk --always-answer     # no gate: the agent hears everything
+    uv run python -m src.integration.talk --new-game          # forget the saved game and set up again
     uv run python -m src.integration.talk --demo-game --game-plan   # the robot plays its own investigator
 
 The agent does ASR, LLM, TTS and turn-taking in the cloud (about half a second per turn)
@@ -19,11 +20,18 @@ costs no turn and no tokens. With ``--always-answer`` (or one person at the tabl
 only watches and its decisions are logged as shadow decisions. Every decision goes to
 data/game_logs/addressee.jsonl; everything heard and said to data/game_logs/conversation.jsonl.
 
-With a game loaded (``--game`` or ``--demo-game``) the robot also plays: when the gate hears its
-own investigator's turn being called, the audio is dropped instead of being released, the move is
-decided locally by src/strategy/decide.py and the robot says the reason out of its own TTS
-(src/integration/turn_taking.py). The agent is never asked to say a move it did not choose, and a
-turn costs no agent minutes at all.
+The robot also plays, and remembers the game it is playing between runs
+(src/integration/game_session.py). The setup is heard rather than typed: while it still does not
+know the Ancient One or which investigator is its own, a sentence that is not a question goes to
+the local extractor instead of to the agent, the robot says back what it wrote down and asks for
+the next missing thing, and every change is written to ``--game`` (data/game_logs/game_state.json
+by default) at once. Starting again reads the file back and the robot says what it remembers, so
+a stale game announces itself; ``--new-game`` forgets it and ``--no-game`` is conversation only.
+
+When the gate hears its own investigator's turn being called, the audio is dropped instead of
+being released, the move is decided locally by src/strategy/decide.py and the robot says the
+reason out of its own TTS. The agent is never asked to say a move it did not choose, and neither
+the setup nor a turn costs any agent minutes.
 """
 
 from __future__ import annotations
@@ -55,7 +63,7 @@ from src.config import (
     HEAD_SWAY,
     validate_config,
 )
-from src.integration.turn_taking import TurnTaker
+from src.integration.game_session import GameSession
 from src.logger import get_logger
 from src.robot.reachy import AGREE_MOVES, GREETING_MOVES, Robot
 from src.robot.sway import HeadSway
@@ -447,33 +455,43 @@ def speak_pcm(audio: Any, text: str, language: str, *, table: Any = None) -> Non
     audio.output(pcm)
 
 
-def build_turn_taker(args: Any, audio: Any, table: Any, diary: Diary) -> TurnTaker | None:
-    """The robot's own investigator, if this session was given a game to play."""
-    if not (args.game or args.demo_game):
+def build_game_session(args: Any, audio: Any, table: Any, diary: Diary) -> GameSession | None:
+    """The game this session is playing: read back from its file, or started from nothing.
+
+    The file is the memory. It is written every time the robot learns something, so closing the
+    conversation loses nothing, and reopening makes the robot say what it remembers - which is
+    also how a stale game gets caught: it tells the table it is still playing yesterday's, and
+    the table says otherwise.
+    """
+    if args.no_game:
         return None
-    if args.game:
-        game = GameState.load(Path(args.game))
-    else:
+    path = Path(args.game)
+
+    def say(text: str, language: str) -> None:
+        speak_pcm(audio, text, language, table=table)
+
+    if args.demo_game:
         from src.strategy.turn import demo_game
 
-        game = demo_game()
-    plan = None
-    if args.game_plan:
+        session = GameSession(demo_game(), say=say, path=path, language=DEFAULT_LANGUAGE)
+    elif args.new_game:
+        session = GameSession(GameState(), say=say, path=path, language=DEFAULT_LANGUAGE)
+    else:
+        session = GameSession.open(path, say=say, language=DEFAULT_LANGUAGE)
+    if args.game_plan and session.game.ready:
         from src.strategy import plan as planner
 
-        plan = planner.make_plan(game, language=DEFAULT_LANGUAGE, advice=planner.advice_for(game))
+        plan = planner.make_plan(
+            session.game, language=DEFAULT_LANGUAGE, advice=planner.advice_for(session.game)
+        )
+        session.taker.plan = plan
         log.info("plan for this game:\n%s", plan.as_text())
         diary.write("game_plan", **plan.record())
-    log.info("playing: %s", game.briefing())
-    diary.write("game_loaded", briefing=game.briefing(), missing=game.missing())
-    taker = TurnTaker(
-        game,
-        say=lambda text, language: speak_pcm(audio, text, language, table=table),
-        language=DEFAULT_LANGUAGE,
-        plan=plan,
-    )
-    taker.on_decision = lambda decision, text: diary.write("turn", said=text, **decision.record())
-    return taker
+    session.taker.on_decision = lambda decision, text: diary.write("turn", said=text, **decision.record())
+    session.on_setup = lambda reading, text: diary.write("setup", heard=text, **reading.record())
+    log.info("game: %s", session.game.briefing())
+    diary.write("game_opened", briefing=session.game.briefing(), missing=session.game.missing())
+    return session
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -497,7 +515,13 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="no addressee gate: the agent hears everything (decisions logged as shadow)",
     )
-    parser.add_argument("--game", default="", help="a game saved with GameState.save: the robot plays it")
+    parser.add_argument(
+        "--game",
+        default=str(Path(GAME_LOG_DIR) / "game_state.json"),
+        help="the file the game is remembered in; read at the start, written at every change",
+    )
+    parser.add_argument("--new-game", action="store_true", help="forget the saved game and start again")
+    parser.add_argument("--no-game", action="store_true", help="conversation only: the robot does not play")
     parser.add_argument("--demo-game", action="store_true", help="the demo setup of src.strategy.turn")
     parser.add_argument(
         "--game-plan",
@@ -599,7 +623,7 @@ def main(argv: list[str] | None = None) -> int:
                 audio.muted = False
             humans = args.humans if args.humans is not None else (len(registry.names) or None)
             gate_on = not args.always_answer and humans != 1
-            taker = build_turn_taker(args, audio, table, diary)
+            session = build_game_session(args, audio, table, diary)
             table.keeper = Gatekeeper(
                 audio,
                 transcriber,
@@ -611,8 +635,8 @@ def main(argv: list[str] | None = None) -> int:
                 robot_spoke_at=lambda: table.robot_spoke_at,
                 voice_language=lambda: table.voice_language,
                 on_switch=table.switch_language,
-                my_investigator=(lambda: taker.investigator) if taker is not None else (lambda: ""),
-                on_my_turn=taker.handle if taker is not None else None,
+                my_investigator=(lambda: session.taker.investigator) if session is not None else (lambda: ""),
+                on_addressed=session.handle if session is not None else None,
             )
             audio.hold_utterances = gate_on
             ear.on_utterance = table.on_utterance
@@ -634,6 +658,10 @@ def main(argv: list[str] | None = None) -> int:
                 target=table.watch_voice, args=(transcriber, stop_watch), name="voice-watch", daemon=True
             ).start()
             log.info("talking (Ctrl+C to stop); players: %s", ", ".join(registry.names) or "unknown voices")
+            if session is not None:
+                greeting = session.greeting()
+                if greeting:
+                    speak_pcm(audio, greeting, DEFAULT_LANGUAGE, table=table)
             diary.write(
                 "session_start", agent_id=agent_id, players=registry.names, humans=humans, gate=gate_on
             )
@@ -653,6 +681,11 @@ def main(argv: list[str] | None = None) -> int:
         if diarizer is not None:
             diarizer.stop()
         stop_sidecar(sidecar)
+        try:
+            if session is not None:
+                session.save()
+        except NameError:
+            pass
         diary.write("session_end")
     return 0
 

@@ -145,6 +145,15 @@ def closest_investigators(name: str, limit: int = 3) -> list[str]:
     return [by_key[h] for h in hits]
 
 
+def closest_ancient_ones(name: str, limit: int = 3) -> list[str]:
+    """The same for the four Ancient Ones: Whisper writes "Azatov", "AsaTot", "Asa Tot"."""
+    import difflib
+
+    by_key = {_key(one.name): one.name for one in ANCIENT_ONES}
+    hits = difflib.get_close_matches(_key(name), list(by_key), n=limit, cutoff=0.4)
+    return [by_key[h] for h in hits]
+
+
 def starting_spaces() -> dict[str, str]:
     """Investigator name -> the space it starts on, which is how setup names pieces on the board."""
     return {s.name: s.starting_space for s in INVESTIGATORS}
@@ -169,6 +178,7 @@ __all__ = [
     "Investigator",
     "Unknown",
     "ancient_one",
+    "closest_ancient_ones",
     "closest_investigators",
     "investigator",
     "starting_spaces",

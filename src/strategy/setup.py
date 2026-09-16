@@ -29,7 +29,12 @@ from typing import Any
 from src.llm.ollama_client import chat
 from src.logger import get_logger
 from src.strategy.game import ROBOT, GameState
-from src.strategy.reference import ancient_one, closest_investigators, investigator
+from src.strategy.reference import (
+    ancient_one,
+    closest_ancient_ones,
+    closest_investigators,
+    investigator,
+)
 
 log = get_logger(__name__)
 
@@ -84,7 +89,10 @@ class SetupReading:
 
     applied: list[str] = field(default_factory=list)
     questions: list[str] = field(default_factory=list)
-    unknown: list[str] = field(default_factory=list)  # names the reference does not have
+    unknown: list[str] = field(default_factory=list)  # names the reference does not have, in English
+    # The same names as data (kind, what was said, what it might have been), so the robot can ask
+    # about them in the language of the table instead of reading an English sentence out loud.
+    unknown_items: list[dict[str, Any]] = field(default_factory=list)
     raw: dict[str, Any] = field(default_factory=dict)
     seconds: float = 0.0
 
@@ -109,9 +117,23 @@ class SetupReading:
             "applied": self.applied,
             "questions": self.questions,
             "unknown": self.unknown,
+            "unknown_items": self.unknown_items,
             "seconds": round(self.seconds, 2),
             "text": self.describe(),
         }
+
+
+def describe_unknown(item: dict[str, Any]) -> str:
+    """One unrecognised name, in English, for the log and for an English table.
+
+    The suggestions matter more than they look: Whisper writes "Azatov" for Azathoth and "Lily
+    Shane" for Lily Chen, and offering the four real names back is the difference between a
+    briefing that recovers in one sentence and one that repeats itself.
+    """
+    kind = "Ancient One" if item.get("kind") == "ancient_one" else "investigator"
+    suggestions = item.get("suggestions") or []
+    hint = f" (did you mean {' or '.join(suggestions)}?)" if suggestions else ""
+    return f'the {kind} "{item.get("said", "")}"{hint}'
 
 
 def extract(text: str, language: str, *, chat_fn: Any = chat) -> dict[str, Any]:
@@ -140,7 +162,13 @@ def apply_reading(data: dict[str, Any], game: GameState, *, speaker: str = "") -
     if said_ancient:
         found = ancient_one(said_ancient)
         if found is None:
-            reading.unknown.append(f'the Ancient One "{said_ancient}"')
+            item = {
+                "kind": "ancient_one",
+                "said": said_ancient,
+                "suggestions": closest_ancient_ones(said_ancient),
+            }
+            reading.unknown_items.append(item)
+            reading.unknown.append(describe_unknown(item))
         elif game.ancient_one is None or game.ancient_one.name != found.name:
             game.set_ancient_one(found.name)
             reading.applied.append(f"facing {found.name}, doom starts at {found.starting_doom}")
@@ -159,9 +187,9 @@ def apply_reading(data: dict[str, Any], game: GameState, *, speaker: str = "") -
             continue
         sheet = investigator(said)
         if sheet is None:
-            suggestions = closest_investigators(said)
-            hint = f" (did you mean {' or '.join(suggestions)}?)" if suggestions else ""
-            reading.unknown.append(f'the investigator "{said}"{hint}')
+            item = {"kind": "investigator", "said": said, "suggestions": closest_investigators(said)}
+            reading.unknown_items.append(item)
+            reading.unknown.append(describe_unknown(item))
             continue
         if controller.lower() in ("reachy", "robot", "you", "robo", "robô"):
             controller = ROBOT
@@ -187,23 +215,49 @@ def apply_reading(data: dict[str, Any], game: GameState, *, speaker: str = "") -
     return reading
 
 
-def questions_for(game: GameState, reading: SetupReading | None = None) -> list[str]:
-    """What to ask next, most important first, phrased to be said out loud."""
-    asks: list[str] = []
-    if reading is not None and reading.unknown:
-        asks.append(f"I do not know {reading.unknown[0]}. Which one is it?")
+def pending(game: GameState, reading: SetupReading | None = None) -> list[tuple[str, Any]]:
+    """What is still missing, most important first, as ``(what, detail)`` pairs.
+
+    The pairs are the questions without their words, so that the same list can be asked out
+    loud in Portuguese or in English (``src/integration/game_session.py`` says them; this
+    module renders the English for the log).
+    """
+    asks: list[tuple[str, Any]] = []
+    if reading is not None and reading.unknown_items:
+        asks.append(("unknown_name", reading.unknown_items[0]))
+    elif reading is not None and reading.unknown:
+        asks.append(("unknown_name", {"kind": "", "said": reading.unknown[0], "suggestions": []}))
     if game.ancient_one is None:
-        asks.append("Which Ancient One are we facing?")
+        asks.append(("ancient_one", ""))
     if not game.investigators:
-        asks.append("Which investigators are in play, and who plays each one?")
+        asks.append(("investigators", ""))
     elif game.robot_investigator is None:
-        asks.append("Which investigator am I playing?")
+        asks.append(("mine", ""))
     if game.investigators and not game.mystery:
-        asks.append("What does the current Mystery ask for?")
+        asks.append(("mystery", ""))
     unclaimed = [i.name for i in game.investigators if i.piece_id is None]
     if unclaimed and game.board.pieces:
-        asks.append(f"I cannot tell which piece on the board is {unclaimed[0]}. Where is it?")
+        asks.append(("which_piece", unclaimed[0]))
     return asks
+
+
+ENGLISH_ASKS = {
+    "unknown_name": "I do not know {detail}. Which one is it?",
+    "ancient_one": "Which Ancient One are we facing?",
+    "investigators": "Which investigators are in play, and who plays each one?",
+    "mine": "Which investigator am I playing?",
+    "mystery": "What does the current Mystery ask for?",
+    "which_piece": "I cannot tell which piece on the board is {detail}. Where is it?",
+}
+
+
+def questions_for(game: GameState, reading: SetupReading | None = None) -> list[str]:
+    """What to ask next, most important first, phrased to be said out loud (English)."""
+    out = []
+    for what, detail in pending(game, reading):
+        text = describe_unknown(detail) if what == "unknown_name" else str(detail)
+        out.append(ENGLISH_ASKS[what].format(detail=text))
+    return out
 
 
 def read_setup(
@@ -230,7 +284,10 @@ __all__ = [
     "SCHEMA",
     "SetupReading",
     "apply_reading",
+    "describe_unknown",
     "extract",
+    "pending",
+    "ENGLISH_ASKS",
     "questions_for",
     "read_setup",
 ]

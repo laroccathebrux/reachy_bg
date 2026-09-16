@@ -198,7 +198,7 @@ def test_the_gate_keeps_a_turn_call_away_from_the_agent(tmp_path):
         TurnLogger(tmp_path / "addressee.jsonl"),
         humans=2,
         my_investigator=lambda: "Lily Chen",
-        on_my_turn=lambda text, language: taken.append(text) or True,
+        on_addressed=lambda text, language, reason, speaker: (taken.append(text), "my_turn")[1],
         clock=lambda: 20.0,
     )
     verdict = keeper.judge(_Utterance())
@@ -216,7 +216,7 @@ def test_a_turn_the_robot_cannot_take_still_reaches_the_agent(tmp_path):
         TurnLogger(tmp_path / "addressee.jsonl"),
         humans=2,
         my_investigator=lambda: "Lily Chen",
-        on_my_turn=lambda text, language: False,  # no game loaded, say
+        on_addressed=lambda text, language, reason, speaker: None,  # no game loaded, say
         clock=lambda: 20.0,
     )
     verdict = keeper.judge(_Utterance())

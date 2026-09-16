@@ -43,12 +43,21 @@ from src.config import (
     ROBOT_NAME_ALIASES,
 )
 
+# Single words that open a question. "o que" and "por que" are pairs and live below: split on
+# whitespace they leave a bare "o", and then every Portuguese sentence starting with "o" - "o
+# ancião é Azathoth", "O Mystery é esse" - was read as a question.
 _INTERROGATIVES = {
-    "pt-BR": (
-        "quantas quantos quanto qual quais como quando onde por que porque o que oque pode posso podemos "
-        "consigo dá da tem existe precisa devo deve".split()
+    "pt-BR": frozenset(
+        "quantas quantos quanto qual quais como quando onde quem porque oque pode posso podemos "
+        "consigo da tem existe precisa devo deve".split()
     ),
-    "en-US": "how what which when where why who can could may should do does is are am will would".split(),
+    "en-US": frozenset(
+        "how what which when where why who can could may should do does is are am will would".split()
+    ),
+}
+_INTERROGATIVE_PAIRS = {
+    "pt-BR": frozenset({("o", "que"), ("por", "que"), ("pra", "que"), ("para", "que"), ("de", "que")}),
+    "en-US": frozenset({("how", "many"), ("how", "much"), ("what", "about")}),
 }
 _RULES_WORDS = {
     "pt-BR": (
@@ -153,7 +162,12 @@ def is_question(text: str, language: str) -> bool:
     words = _words(text)
     while len(words) > 1 and words[0] in _LEADING:
         words = words[1:]
-    return bool(words) and words[0] in _INTERROGATIVES.get(language, ())
+    if not words:
+        return False
+    if words[0] in _INTERROGATIVES.get(language, frozenset()):
+        return True
+    pair = tuple(words[:2])
+    return len(pair) == 2 and pair in _INTERROGATIVE_PAIRS.get(language, frozenset())
 
 
 _GAME_TERMS = frozenset(

@@ -38,7 +38,8 @@ ECHO_SLACK_S = 0.5  # an utterance that started this long after playback ended c
 class Verdict:
     """What the gate did with one utterance."""
 
-    route: str  # released | early | discarded | switched | echo_gate | no_speech | passed | my_turn
+    route: str  # released | early | discarded | switched | echo_gate | no_speech | passed,
+    # or what the robot handled itself: my_turn | setup
     decision: Decision
     text: str
     language: str
@@ -63,7 +64,7 @@ class Gatekeeper:
         voice_language: Callable[[], str] = lambda: "",
         on_switch: Callable[[str, str, str], None] | None = None,
         my_investigator: Callable[[], str] = lambda: "",
-        on_my_turn: Callable[[str, str], bool] | None = None,
+        on_addressed: Callable[..., str | None] | None = None,
         clock: Callable[[], float] = time.monotonic,
     ):
         self.audio = audio
@@ -79,9 +80,11 @@ class Gatekeeper:
         # Read at decision time, not at construction: the robot is given its investigator
         # during the spoken setup, after the ear is already listening.
         self.my_investigator = my_investigator
-        # The turn call the robot answers itself: src.integration.turn_taking decides the move
-        # locally and speaks it, so the agent is never asked to say a move it did not choose.
-        self.on_my_turn = on_my_turn
+        # What the robot answers by itself, before the agent is given anything: taking its own
+        # turn, and writing down a spoken setup (src/integration/game_session.py). It is given
+        # the transcript, the language, the rule that addressed it and the speaker, and returns
+        # the route it handled the utterance as - or None, and the agent hears it as usual.
+        self.on_addressed = on_addressed
         self.clock = clock
         self.asr_lock = threading.Lock()  # one Whisper call at a time (the spotter shares it)
         self.last_addressed = ""
@@ -176,16 +179,16 @@ class Gatekeeper:
                 seconds_since_addressed=self._floor_seconds(speaker, label),
             )
 
-        if decision.addressed and decision.reason == "my_turn" and self.on_my_turn is not None:
-            taken = False
+        if decision.addressed and self.on_addressed is not None:
+            handled = None
             try:
-                taken = self.on_my_turn(text, language)
-            except Exception as exc:  # the turn failing must not swallow the utterance silently
-                log.exception("gatekeeper: taking the turn failed (%s)", exc)
-            if taken:
+                handled = self.on_addressed(text, language, decision.reason, speaker)
+            except Exception as exc:  # handling it must not swallow the utterance silently
+                log.exception("gatekeeper: handling %r failed (%s)", decision.reason, exc)
+            if handled:
                 dropped = self.audio.discard_utterance(until) if self.active else 0
                 self._floor_opened(speaker, label)
-                verdict = Verdict("my_turn", decision, text, language, 0, dropped, 0, whisper_ms)
+                verdict = Verdict(handled, decision, text, language, 0, dropped, 0, whisper_ms)
                 return self._done(verdict, utterance, speaker, score, label, since)
 
         forwarded = dropped = 0

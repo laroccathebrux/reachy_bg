@@ -250,3 +250,13 @@ def test_a_reply_right_after_the_robot_spoke_is_still_a_follow_up():
         seconds_since_addressed=3.0,
     )
     assert verdict.reason == "follow_up_reply"
+
+
+def test_a_portuguese_sentence_starting_with_o_is_not_a_question():
+    # "o que" is a pair; split on whitespace it left a bare "o", and every sentence that began
+    # with it - "o ancião é Azathoth" - was read as a question and answered as one.
+    assert not is_question("o ancião é Azathoth e tu joga com a Lily Chen", "pt-BR")
+    assert not is_question("O Mystery é esse aqui", "pt-BR")
+    assert is_question("O que é um Gate?", "pt-BR")
+    assert is_question("por que o doom subiu", "pt-BR")
+    assert is_question("quantos investigadores a gente usa", "pt-BR")

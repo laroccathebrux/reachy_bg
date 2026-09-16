@@ -797,6 +797,52 @@ knowledge lookups may not); and the owner reading the Reserve out loud right aft
 those same card names was marked `self_echo`, which is the one case where the echo check and a
 person quoting the robot are genuinely the same signal.
 
+## Done: the robot remembers the game between runs (2026-09-16, night)
+
+The owner asked the obvious question after the first live turn: "se eu fechar e rodar
+novamente, ele vai manter o que já conversamos?" The answer was no, and worse than no -
+`src/strategy/setup.py` could turn a spoken briefing into a `GameState` and **nothing in the
+running conversation ever called it**. Everything he narrated lived in the ElevenLabs session
+and died with it; the only game the robot could play was one loaded from a file by hand.
+
+`src/integration/game_session.py` is the memory. While the robot does not yet know what it needs
+to play - the Ancient One, or which investigator is its own - a sentence that is not a question
+goes to the local extractor instead of to the agent, the reference checks the names, the robot
+says back what it wrote down and asks for the next missing thing, and the state is written to
+`data/game_logs/game_state.json` at once. Opening again reads it back and the robot says what it
+remembers, which is also how a stale game announces itself.
+
+Live, with the sentences exactly as Whisper wrote them in that session:
+
+    "Nós vamos jogar contra o ancião Azatov."
+      -> Não conheço o Ancient One "Azatov". Era Azathoth? Qual é?
+    "Ok, eu vou controlar Jacqueline Fine e tu vai controlar a Lily Shane."
+      -> Anotado. Com você: Jacqueline Fine (Alessandro). Não conheço o investigador
+         "Lily Shane". Era Lily Chen ou Lola Hayes ou Charlie Kane? Qual é?
+    "É a Lily Chen mesmo."
+      -> Anotado. Eu jogo com Lily Chen, começando em Shanghai. [...]
+    (closed, reopened)
+      -> Continuando a partida. Eu jogo com Lily Chen, começando em Shanghai. Com você:
+         Jacqueline Fine (Alessandro). O Mystery é Find the Way In. Qual Ancient One a gente
+         vai enfrentar?
+
+8.7 s for the first reading (cold), 3-4 s afterwards. Nothing is guessed: a name the reference
+refuses is asked about with the names it might have been (`closest_ancient_ones` is new, the
+investigator one already existed), and the question is built from data so it is asked in the
+language of the table rather than read out of an English sentence.
+
+Three faults this exposed, all of them older:
+
+- **Every Portuguese sentence starting with "o" was a question.** The interrogative list held
+  "o que" split on whitespace, which left a bare "o": "o ancião é Azathoth" and "O Mystery é
+  esse" were both classified as questions and answered as such. Interrogatives are now words
+  plus pairs ("o que", "por que", "how many").
+- **The speaker's own name never reached the extractor**, so "eu vou controlar a Jacqueline"
+  ended up with a controller called "me". The gate knows whose voice it is and now passes it.
+- The gate's hook was specific to taking a turn; it is now "what the robot handled itself",
+  which is what let the setup ear sit beside the turn taker without a second path through the
+  audio.
+
 ## Decisions taken
 
 | Topic | Decision | Where |
