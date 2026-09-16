@@ -80,7 +80,13 @@ MIN_MOVE_AREA = 300  # rectified-map pixels, as in detect.MIN_AREA
 # A sweep of the body scored 0.036 to 0.100 per frame and a hand 0.006 to 0.039: the two ranges
 # overlap, so how much moved cannot say whether it was the camera. Where the board sits in the
 # frame can, and that is what VIEW_SHIFT_PX checks before a verdict is trusted.
-VIEW_SHIFT_PX = 25.0  # board corners may wander this far in the frame before the view is stale
+#
+# Measured which points to compare, on a still board, between consecutive registrations: the
+# board's *corners* jitter by up to 145 px, because the homography puts them far outside the
+# frame (one at x=1737 and one at x=-424 of a 960-wide picture) and extrapolation magnifies a
+# pixel of noise into a hundred. The centres of the spaces actually in view move at most 6.5 px.
+# The first version compared corners and refused every real move as "the view moved by 112 px".
+VIEW_SHIFT_PX = 25.0  # visible space centres may wander this far before the view is stale
 MAX_PIECES_PER_MOVE = 4  # a verdict naming more than this is not a person moving pieces
 
 
@@ -285,8 +291,10 @@ class MotionWatcher:
         """Has the board moved within the frame since the registration was taken?
 
         How *much* of the picture changed cannot answer this: a hand reaches 0.039 and a body
-        sweep starts at 0.036. Where the board's corners sit can, so the frame is registered
-        again and the outlines compared. Without a ``reference`` to register with, the watcher
+        sweep starts at 0.036. Where the board sits can, so the frame is registered again and the
+        two registrations compared - at the centres of the spaces *in view*, never at the board's
+        corners, which the homography places far outside the frame where extrapolation turns a
+        pixel of noise into a hundred. Without a ``reference`` to register with, the watcher
         trusts its view and leans on ``max_pieces`` to catch the damage instead.
         """
         if self.reference is None:
@@ -295,12 +303,20 @@ class MotionWatcher:
         if fresh is None:
             log.warning("motion: the board is no longer recognised in this view")
             return True
-        shift = float(np.abs(self.registration.outline() - fresh.outline()).max())
+        before, after = self.registration.space_pixels(), fresh.space_pixels()
+        common = sorted(set(before) & set(after))
+        if not common:
+            log.warning("motion: no space is in view in both registrations")
+            return True
+        shift = float(
+            np.median([np.hypot(before[n][0] - after[n][0], before[n][1] - after[n][1]) for n in common])
+        )
         if shift <= self.view_shift_px:
             return False
         log.warning(
-            "motion: the view moved (board corners by %.0f px); the registration is stale, "
+            "motion: the view moved (%d spaces by %.0f px); the registration is stale, "
             "not reading a move until it is renewed",
+            len(common),
             shift,
         )
         return True

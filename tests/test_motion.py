@@ -302,3 +302,31 @@ def test_the_baseline_decides_direction_over_busy_board_art(view):
     piece = move.arrived[0]
     assert occupancy(rect_after, base_of_card, piece) > 0.0
     assert occupancy(rect_after, baseline, piece) > 0.0
+
+
+def test_registration_noise_on_a_still_board_is_not_taken_for_a_moved_view(view):
+    """The live failure: every real move was refused as "the view moved by 112 px".
+
+    The guard compared the board's corners, which the homography puts far outside the frame,
+    where a pixel of noise is magnified into a hundred: measured on a still board, corners
+    jittered up to 145 px between consecutive registrations while the spaces in view moved at
+    most 6.5 px. Here the same board is re-registered from a slightly noisier picture.
+    """
+    board, reference, registration, empty, _, _ = view
+    watcher = MotionWatcher(registration, min_area=MIN_AREA, reference=reference)
+
+    rng = np.random.default_rng(7)
+    noisy = np.clip(empty.astype(np.int16) + rng.normal(0, 4, empty.shape), 0, 255).astype(np.uint8)
+    assert not watcher.view_shifted(noisy), "registration noise was mistaken for the robot turning"
+
+    fresh = reference.locate(noisy)
+    assert fresh is not None
+    corner_jitter = float(np.abs(registration.outline() - fresh.outline()).max())
+    before, after = registration.space_pixels(), fresh.space_pixels()
+    common = sorted(set(before) & set(after))
+    space_jitter = float(
+        np.median([np.hypot(before[n][0] - after[n][0], before[n][1] - after[n][1]) for n in common])
+    )
+    assert space_jitter <= corner_jitter + 1e-6, (
+        f"spaces ({space_jitter:.1f} px) should never be noisier than corners ({corner_jitter:.1f} px)"
+    )
