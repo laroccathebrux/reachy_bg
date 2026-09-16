@@ -20,7 +20,7 @@ Payload contracts (all keys and values in English):
     game_id        "eldritch-horror"
     kind           "investigator" | "ancient_one" | "monster" | "gates" | "faq"
                    | "card_composition" | "flowchart" | "starting_possessions" | "strategy"
-                   | "asset"
+                   | "asset" | "condition" | "task"
     name           entity name or FAQ question
     expansion      product the entity comes from, e.g. "Eldritch Horror (base game)"
     base_game      True when it ships in the 2013 base box
@@ -78,6 +78,8 @@ KNOWLEDGE_KINDS: Final = (
     "starting_possessions",
     "strategy",
     "asset",
+    "condition",
+    "task",
 )
 
 # Payload fields that get a keyword index so filters stay fast.

@@ -1,0 +1,458 @@
+[
+ {
+  "name": "Arcane Scholar",
+  "category": "ally",
+  "effect": "Gain +1 Lore. You may reroll 1 die when resolving a Lore test.",
+  "expansion": "Eldritch Horror"
+ },
+ {
+  "name": "Cat Burglar",
+  "category": "ally",
+  "effect": "Action: Roll 1 die. On a 5 or 6, gain 1 Item or Trinket Asset from the reserve. On a 1, discard this card.",
+  "expansion": "Eldritch Horror"
+ },
+ {
+  "name": "Hired Muscle",
+  "category": "ally",
+  "effect": "Gain +1 Strength. You may reroll 1 die when resolving a Strength test.",
+  "expansion": "Eldritch Horror"
+ },
+ {
+  "name": "Lodge Researcher",
+  "category": "ally",
+  "effect": "If you defeat a Monster during a Combat Encounter, recover 1 Sanity and gain 1 Clue.",
+  "expansion": "Eldritch Horror"
+ },
+ {
+  "name": "Personal Assistant",
+  "category": "ally",
+  "effect": "Gain +1 Influence. You may reroll 1 die when resolving a Influence test.",
+  "expansion": "Eldritch Horror"
+ },
+ {
+  "name": "Private Investigator",
+  "category": "ally",
+  "effect": "Gain +1 Observation. You may reroll 1 die when resolving a Observation test.",
+  "expansion": "Eldritch Horror"
+ },
+ {
+  "name": "Urban Guide",
+  "category": "ally",
+  "effect": "If you are on a City space, investigators on your space roll 1 additional die when resolving tests except when resolving Other World Encounters.",
+  "expansion": "Eldritch Horror"
+ },
+ {
+  "name": "Vatican Missionary",
+  "category": "ally",
+  "effect": "Gain +1 Will. You may reroll 1 die when resolving a Will test.",
+  "expansion": "Eldritch Horror"
+ },
+ {
+  "name": "Witch Doctor",
+  "category": "ally",
+  "effect": "Investigators on your space may recover 1 additional Health or discard a Cursed Condition when performing a Rest action.",
+  "expansion": "Eldritch Horror"
+ },
+ {
+  "name": "Amnesia",
+  "category": "condition",
+  "effect": "When you perform a Rest action, you may roll 1 die. On a 5 or 6, discard this card. | Reckoning: Test Will. If you fail, flip this card. | [Forgotten Crimes] Gain a Detained Condition. Then discard this card. | [The Terrible Truth] Gain a Dark Pact Condition. Then discard this card. | [Unexplained Debts] Gain a Debt Condition. Then discard this card. | [Forbidden Words] Gain a Cursed Condition. Then discard this card. | [Forgotten Danger] Lose 1 Sanity and gain a Pursuit Condition. Then discard this card. | [Forgotten Talents] Impair Lore, Influence, and Will. Then discard this card.",
+  "expansion": "Eldritch Horror"
+ },
+ {
+  "name": "Back Injury",
+  "category": "condition",
+  "effect": "When you perform a Rest action, you may roll 1 die. On a 5 or 6, discard this card. | Reckoning: Test Strength. If you fail, flip this card. | [Fractured Spine] Discard all but 1 of your Item possessions. Then discard this card. | [Muscle Spasms] Discard 1 Item possession and become Delayed. Then discard this card. | [Nerve Damage] Discard 1 Item possession. Then flip this card. | [Unnatural Scars] Lose 2 Health and 2 Sanity. In the morning, you discover your back has been scarred with ancient hieroglyphs (Lore-1). If you pass, gain 1 Clue. Then discard this card. | [Crippling Injury] Impair Observation, Strength, and Will. Then discard this card.",
+  "expansion": "Eldritch Horror"
+ },
+ {
+  "name": "Blessed",
+  "category": "condition",
+  "effect": "4, 5, and 6's count as successes on your tests. If you would gain another Blessed Condition, flip this card instead. If you would gain a Cursed Condition, discard this card instead. | Reckoning: Roll 1 die. On a 1 or 2, discard this card. | [Beloved of Bast] Recover 2 Health and 2 Sanity. Then, flip this card. | [Blessing of Nodens] You may discard one Monster of your choice. Then flip this card. | [Visions of Hypnos] Gain 2 Clue. Then flip this card. | [Anointed] Another investigator of your choice that does not have a Blessed Condition gains a Blessed Condition. Then flip this card. | [Light of Kthanid] Retreat Doom by 1. Then flip this card. | [Reading the Stars] Move the Omen token to any space of the track without advancing Doom. Then flip this card. | [Blessed Luck] Gain a Funding Condition. Then flip this card. | [Favored] You or another investigator of your choice on any space gain 1 Boon Condition. Then flip this card.",
+  "expansion": "Eldritch Horror"
+ },
+ {
+  "name": "Cursed",
+  "category": "condition",
+  "effect": "Only 6's count as successes on your tests. If you would gain another Cursed Condition, flip this card instead. If you would gain a Blessed Condition, discard this card instead. | Reckoning: Roll 1 die. On a 4, 5, or 6, discard this card. | [Harried] A Monster ambushes you. Then, flip this card. | [Karmic Justice] Discard this card. | [The Innsmouth Look] If you are on a Sea space, your body begins to change horribly into a fish-like creature, you are devoured. If you are not on a Sea space, the change cripples you; lose 3 Health and discard this card. | [A Dark Betrayal] Spawn the Doppelganger Epic Monster on the nearest space containing a Gate. If the Doppelganger Epic Monster spawned on your space, you are devoured. Then discard this card. | [Curse of the Serpent] If you are on a Wilderness space, there's no escape from the serpents; you are devoured. If you are not on a Wilderness space, one of the serpents bites you; gain a Poisoned Condition and discard this card. | [Tainted] Another investigator of your choice that does not have a Cursed Condition gains a Cursed Condition. Then flip this card. | [Beastly Hunger] If you have a Hunger Condition, you are transformed into a bloodthirsty beast; you are devoured. If you are not devoured, lose 2 Sanity, gain a Hunger Condition, and discard this card. | [Cosmic Instability] If the Omen is on the Red space of the track, you are devoured. If the Omen is not on the red space of the track, spawn 2 Gates; then discard this card.",
+  "expansion": "Eldritch Horror"
+ },
+ {
+  "name": "Dark Pact",
+  "category": "condition",
+  "effect": "Reckoning: Roll 1 die. On a 1, it is time to fulfil your part of the bargain; flip this card. | [One of the Thousand] Another investigator of your choice is devoured. Then discard this card. | [Pact with the Dark Manlovecraft=Black Man name=black_man] You are devoured. | [Pact with Yog-Sothoth] Spawn 1 Gate for each Spell you have, then advance the Omen by 1. Then discard this card. | [All is Lost] Discard all of your possessions and Improvement tokens and lose all but 1 Health and all but 1 Sanity. Then discard this card. | [Pact with Eibon] Shuffle 1 yellow and 1 green Mythos card from the game box into the Mythos deck. Then discard the top 3 cards of the Mythos Deck. Then discard this card. | [Nightmare Meeting] Each other investigator gains a Cursed Condition unless he gains a Dark Pact Condition. Then discard this card. | [Unbreakable Oath] Impair each of your skills twice. Then discard this card. | [To The Abyss] Each investigator spawns 1 Gate unless he gains a Lost in Time and Space Condition. Then discard this card.",
+  "expansion": "Eldritch Horror"
+ },
+ {
+  "name": "Debt",
+  "category": "condition",
+  "effect": "Action: Test Influence. If you pass, discard this card. | Reckoning: Some men have come to collect on your debt. Flip this card. | [Beyond Riches] If you fail, a fragment of your soul is ripped away; lose 3 Sanity. Then discard this card. | [Debt Collector] If you fail, discard 2 Item possessions. Then discard this card. | [Hitmen] If you fail, lose 3 Health. Then discard this card. | [Local Authorities] If you fail, move to the nearest City space and gain a Detained Condition unless you discard 1 Ally asset. Then discard this card. | [Make a Deal] You may gain a Dark Pact Condition. If you do not, the ticking noise begins to hypnotize you, advance Doom by 1.lovecraft=Tick-Tock Man name=tick_tock Then discard this card. | [Unwilling Servant] If you fail, you have no recollection of your actions; gain an Amnesia Condition. Then discard this card. | [Bag Man] You may spend 1 Clue. If you do not spend the Clue, move to a random space and become Delayed. Then discard this card. | [Poisoned Meal] Gain a Poisoned Condition. Then discard this card.",
+  "expansion": "Eldritch Horror"
+ },
+ {
+  "name": "Detained",
+  "category": "condition",
+  "effect": "You cannot move or perform actions other than the action on this card. Instead of resolving an encounter, flip this card. | Action: Test Influence. If you pass, discard this card. | [Cruel and Unusual] Spend 1 Clue or test Will-1. If you fail, lose 3 Sanity and gain a Paranoia Condition. Then, discard this card. | [Holding Cell] Spend 1 Clue or test Influence-1. If you fail, they beat you and leave you to die; lose 2 Health and 2 Sanity. Then, discard this card. | [Starvation] Spend 1 Clue or test Strength-1. If you fail, lose 3 Health and gain an Internal Injury Condition. Then, discard this card. | [Contaminated Water] Spend 1 Clue or test Observation-1. If you fail, gain a Poisoned Condition and a Hallucinations Condition and become Delayed. Then, discard this card. | [Starved for Weeks] Spend 1 1 Clue or test Strength-1. If you fail, when you are finally released, you are ravenous; lose 2 Health and gain a Hunger Condition. Then, discard this card.",
+  "expansion": "Eldritch Horror"
+ },
+ {
+  "name": "Hallucinations",
+  "category": "condition",
+  "effect": "When you perform a Rest action, you may roll 1 die. On a 5 or 6, discard this card. | Reckoning: Test Will. If you fail, flip this card. | [Delusions] Discard all of your Clues. Then discard this card. | [Swarming] Lose 3 Sanity. Then discard this card. | [The Voices] Lose 1 Sanity. Then flip this card. | [Abducted] Gain a Lost in Time and Space Condition. Then discard this card. | [Surreal Dreams] Draw and resolve an Other World Encounter. If the effect allows you to \"close this Gate\", close 1 Gate of your choice. Otherwise, gain a Lost in Time and Space Condition. Then discard this card.",
+  "expansion": "Eldritch Horror"
+ },
+ {
+  "name": "Internal Injury",
+  "category": "condition",
+  "effect": "When you perform a Rest action, you may roll 1 die. On a 5 or 6, discard this card. | Reckoning: Test Strength. If you fail, flip this card. | [Cracked Rib] Lose 1 Health. Then flip this card. | [Excruciating Pain] Lose 3 Health. Then discard this card. | [Internal Bleeding] Lose 1 Health and become Delayed. Then discard this card. | [Fading Health] Gain an Illness Condition. Then discard this card. | [Blood Loss] Gain a Hypothermia Condition. Then discard this card.",
+  "expansion": "Eldritch Horror"
+ },
+ {
+  "name": "Leg Injury",
+  "category": "condition",
+  "effect": "When you perform a Rest action, you may roll 1 die. On a 5 or 6, discard this card. | Reckoning: Test Strength. If you fail, flip this card. | [Stabbing Pain] Become Delayed. Then flip this card. | [Strange Remedy] Lose 1 Health. You may become Delayed to discard this card. If you do not discard it, flip this card. | [Twisted Knee] Lose 2 Health unless you become Delayed. Then flip this card. | [Infected Wound] Gain an Illness Condition. Then discard this card.",
+  "expansion": "Eldritch Horror"
+ },
+ {
+  "name": "Paranoia",
+  "category": "condition",
+  "effect": "When you perform a Rest action, you may roll 1 die. On a 5 or 6, discard this card. | Reckoning: Test Will. If you fail, flip this card. | [Agoraphobia] If you are on a City space, the presence of other people erodes your reason; lose 2 Sanity. Then flip this card. | [Kleptomania] Gain 1 random Item Asset from the deck. Then, you must hide from the authorities (Observation). If your test result is less than the value of the Asset you gained, discard that Asset and gain a Detained Condition. Then discard this card. | [Violent Outbursts] Each other investigator on your space loses 2 Health and you discard 1 Ally Asset. Then flip this card. | [Self-Doubt] Discard all of your Improvement tokens. Then discard this card.",
+  "expansion": "Eldritch Horror"
+ },
+ {
+  "name": "Bandages",
+  "category": "item",
+  "effect": "You may discard this card to prevent an investigator on your space from losing up to 2 Health.",
+  "expansion": "Eldritch Horror"
+ },
+ {
+  "name": "Fine Clothes",
+  "category": "item",
+  "effect": "Each 6 you roll when performing an Acquire Assets action counts as 2 successes.",
+  "expansion": "Eldritch Horror"
+ },
+ {
+  "name": "Fishing Net",
+  "category": "item",
+  "effect": "You may reroll 1 die when resolving a Strength test during a Combat Encounter. Reduce the damage of Monsters you encounter by 1 to a minimum of 1.",
+  "expansion": "Eldritch Horror"
+ },
+ {
+  "name": "Grotesque Statue",
+  "category": "item",
+  "effect": "When you gain this card from the deck, gain 5 Clue. Once per round, you may spend 1 Clue to prevent all Sanity loss from a single effect.",
+  "expansion": "Eldritch Horror"
+ },
+ {
+  "name": "Holy Cross",
+  "category": "item",
+  "effect": "Gain +2 Will during Combat Encounters.",
+  "expansion": "Eldritch Horror"
+ },
+ {
+  "name": "Kerosene",
+  "category": "item",
+  "effect": "You may discard this card to gain +5 Strength during a Combat Encounter.",
+  "expansion": "Eldritch Horror"
+ },
+ {
+  "name": "Protective Amulet",
+  "category": "item",
+  "effect": "Gain +1 Will during Combat Encounters.",
+  "expansion": "Eldritch Horror"
+ },
+ {
+  "name": "Whiskey",
+  "category": "item",
+  "effect": "You may discard this card to prevent an investigator on your space from losing up to 2 Sanity.",
+  "expansion": "Eldritch Horror"
+ },
+ {
+  "name": "Flute of the Outer Gods",
+  "category": "magical",
+  "effect": "Action: Spend 2 Health and 2 Sanity to defeat all Monsters on your space.",
+  "expansion": "Eldritch Horror"
+ },
+ {
+  "name": "Gate Box",
+  "category": "magical",
+  "effect": "Investigators on your space roll 1 additional die when resolving tests during Other World Encounters. If you close a Gate during an Other World Encounter, gain 1 Clue.",
+  "expansion": "Eldritch Horror"
+ },
+ {
+  "name": "Glass of Mortlan",
+  "category": "magical",
+  "effect": "Each 6 you roll when resolving a Spell effect counts as 2 successes. You may prevent the loss of 1 Sanity when resolving your Spell effects.",
+  "expansion": "Eldritch Horror"
+ },
+ {
+  "name": "Holy Water",
+  "category": "magical",
+  "effect": "You may discard this card to gain +5 Will and +5 Strength during a Combat Encounter. Action: You may discard this card to choose an investigator on your space. That investigator gains a Blessed Condition.",
+  "expansion": "Eldritch Horror"
+ },
+ {
+  "name": "Mi-go Brain Case",
+  "category": "magical",
+  "effect": "Action: You and another investigator may trade possessions. In addition, he may move to your space; if he does, move to his previous space. === Rulings, clarifications, and reminders === None of the exchanged possessions are considered \"gained\" or \"discarded\" as part of Mi-go Brain Case's ability.faq=9 name=faq9bgg=thread/1961234/article/28635646 name=Trade",
+  "expansion": "Eldritch Horror"
+ },
+ {
+  "name": "Pallid Mask",
+  "category": "magical",
+  "effect": "During the Encounter Phase, you may choose an encounter as if there are no Monsters on your space.",
+  "expansion": "Eldritch Horror"
+ },
+ {
+  "name": "Ruby of R'lyeh",
+  "category": "magical",
+  "effect": "Once per round, during the Action Phase, you may spend 1 Sanity and perform 1 additional action.",
+  "expansion": "Eldritch Horror"
+ },
+ {
+  "name": "The Silver Key",
+  "category": "magical",
+  "effect": "Once per round, you may spend 1 less Clue to pay for an effect. You may reroll 1 die when resolving a test during an Other World Encounter.",
+  "expansion": "Eldritch Horror"
+ },
+ {
+  "name": "Agency Quarantine",
+  "category": "service",
+  "effect": "When you gain this card, immediately choose a space. Each Monster on the chosen space loses 4 Health. Then discard this card.",
+  "expansion": "Eldritch Horror"
+ },
+ {
+  "name": "Bank Loan",
+  "category": "service",
+  "effect": "When performing an Acquire Assets action, you may gain a Debt Condition to immediately add 2 successes to your test result.",
+  "expansion": "Eldritch Horror"
+ },
+ {
+  "name": "Charter Flight",
+  "category": "service",
+  "effect": "When you gain this card, immediately move up to 2 spaces. Then discard this card.",
+  "expansion": "Eldritch Horror"
+ },
+ {
+  "name": "Delivery Service",
+  "category": "service",
+  "effect": "When you gain this card, immediately give any number of Item possessions to another investigator on any space. Then discard this card.",
+  "expansion": "Eldritch Horror"
+ },
+ {
+  "name": "Private Care",
+  "category": "service",
+  "effect": "When you gain this card, immediately recover all Health and Sanity. Then discard this card.",
+  "expansion": "Eldritch Horror"
+ },
+ {
+  "name": "Sanctuary",
+  "category": "service",
+  "effect": "When you gain this card, you may immediately discard 1 Condition. Then discard this card.",
+  "expansion": "Eldritch Horror"
+ },
+ {
+  "name": "Silver Twilight Ritual",
+  "category": "service",
+  "effect": "When you gain this card, immediately retreat Doom by 1. Then discard this card.",
+  "expansion": "Eldritch Horror"
+ },
+ {
+  "name": "Wireless Report",
+  "category": "service",
+  "effect": "When you gain this card, immediately give any number of Clues to another investigator on any space.",
+  "expansion": "Eldritch Horror"
+ },
+ {
+  "name": "Blessing of Isis",
+  "category": "spell",
+  "effect": "Action: Test Lore-1. If you pass, choose an investigator on your space that does not have a Blessed Condition to gain a Blessed Condition. Then flip this card. | [1] Resolve the effect based on your test result: 0:The goddess has been angered, and her wrath is terrible to behold. The chosen investigator gains 1 Cursed Condition. 1: You feel an almighty power surge through you and it is too much for your mind to handle. Lose 1 Sanity. 2+: The goddess smiles upon your cause. No additional effects. Then, flip this card. | [2] Resolve the effect based on your test result: 0-2: Your chanting fills the air with ancient voices, and you fear the invocation has drained part of your life away. Lose 1 Health. 3+: The goddess smiles upon your cause. Each investigator on your space that does not have a Blessed Condition may gain a Blessed Condition. Then flip this card. | [3] Resolve the effect based on your test result: 0-1: The voice of the great being Isis echoes in your mind. Lose 1 Sanity. 2+: Visions of distant places and times flood your mind. The chosen investigator gains 1 Clue. Then flip this card. | [4] Resolve the effect based on your test result: 0: The words of the ritual escape you, and for a moment, you cannot recall them. If you rolled any 1's, discard this card. 1: A glowing spirit circles you, warding disaster. The chosen investigator loses 1 Sanity. 2+: A warmth fills you and eases our pain and worries. The chosen investigator recovers 1 Health and 1 Sanity. Then flip this card.",
+  "expansion": "Eldritch Horror"
+ },
+ {
+  "name": "Clairvoyance",
+  "category": "spell",
+  "effect": "During the Encounter Phase, you may test Lore. If you pass, you may choose to encounter a Clue as if you are on its space, ignoring Monsters on that space. Then flip this card. | [1] Resolve the effect based on your test result: 0: Opening your mind wreaks havoc on your psyche. Discard this card unless you gain a Paranoia Condition. 1-2: Your mind travels across the world, and the knowledge becomes clear. No additional effect. 3+: The journey becomes clear to you, and the answer seems so simple. You may roll 1 additional die when resolving tests during the Research Encounter. Then flip this card. | [2] Resolve the effect based on your test result: 0: The knowledge gets lost in the void. Discard the chosen Clue. 1-2: The knowledge is too great for one mind to contain. Lose 1 Sanity. 3+: Suddenly, the images and ideas coalesce into a new realization. Gain 1 Clue. Then flip this card. | [3] Resolve the effect based on your test result: 0: You unknowingly call upon a wrathful spirit that destroys the target of your scrying. If you rolled any 1's, discard the nearest Clue on the game board. 1-2: The visions are clouded and murky. Roll 1 less die when resolving tests during the Research Encounter. 3+: The visions become clear as if you are there in the flesh. No additional effect. Then flip this card. | [4] Resolve the effect based on your test result: 0: You can see nothing but darkness. If you rolled any 1's, discard this card. 1: You peer through the eyes of vengeful spirits that whisper horrible secrets to you. Lose 1 Sanity unless you gain a Paranoia Condition. 2+: As you scry, your sight falls upon a previously hidden source of knowledge. Spawn 1 Clue. Then flip this card.",
+  "expansion": "Eldritch Horror"
+ },
+ {
+  "name": "Conjuration",
+  "category": "spell",
+  "effect": "Action: Test Lore+1. If you pass, you may gain 1 Item or Trinket Asset from the reserve with value equal to or less than your test result. Then flip this card. | [1] Resolve the effect based on your test result: 0: What could you have possibly forgotten? Why didn't the spell work? If you did not roll any 4's, discard this card. 1-3: For a moment, your mind is exposed to a powerful intelligence, dwelling between worlds. Lose 1 Sanity. 4+: The magic is powerful and beyond your expectations. Gain 1 additional Item or Trinket Asset from the reserve. Then, flip this card. | [2] Resolve the effect based on your test result: 0: You can feel that the spell has not worked the way you hoped. Discard this card unless you discard 1 Item Asset. 1: Something unnatural tries to pull the object away from you. Lose 1 Sanity. 2+: All of your wishes materialize before your eyes. You may gain any number of Item or Trinket Assets from the reserve with total value equal to or less than your test result. Then flip this card. | [3] Resolve the effect based on your test result: 0: The magic surges and tears through solid matter. Discard this card and each Item possession you have. 1-3: For a moment, your mind melds with the object of your desire. Lose 1 Sanity. 4+: The ritual proves stronger than you ever imagined. You may gain 1 Artifact instead of gaining an Asset. Then flip this card. | [4] Resolve the effect based on your test result: 0: Your stutter causes the item to form from your own flesh and bone. Discard this card unless you lose 3 Health. 1: A payment of blood is required to complete the ritual. Lose 1 Health. 2+: Matter bends to your will and reshapes itself as you desire. No additional effect. Then flip this card.",
+  "expansion": "Eldritch Horror"
+ },
+ {
+  "name": "Feed the Mind",
+  "category": "spell",
+  "effect": "Action: Test Lore-1. If you pass, choose an investigator on your space to improve 1 skill of his choice. Then flip this card. | [1] Resolve the effect based on your test result: 0-2: Casting the spell, you open yourself to terrible knowledge. Your mind is filled with gibberish, repeating endlessly. Discard this card unless you lose 2 Sanity. 3+: You manipulate memories and potential knowledge with a practiced ease. The chosen investigator may improve 1 additional skill of his choice. Then, flip this card. | [2] Resolve the effect based on your test result: 0: You were unable to sufficiently focus your mind. You wonder if you simply lack the mental discipline this spell requires. If you did not roll any 4's, discard this card. 1+: Casting your thought into the ether, your mind returns with strange knowledge. You may not entirely be the same person you were before. Lose 1 Sanity. Then flip this card. | [3] Resolve the effect based on your test result: 0: The gateway to the mind is a two-way portal, and your memories begin to scatter. Discard this card unless you gain an Amnesia Condition. 1: A wealth of knowledge overwhelms your mind. The chosen investigator loses 1 Sanity. 2+: Your previous training suddenly becomes clear to you. No additional effect. Then flip this card. | [4] Resolve the effect based on your test result: 0: Your magic goes awry and wreaks havoc on your mind. Discard all Improvement tokens unless you discard this card. 1-2: Accessing one's memories requires unhinging the mind. The chosen investigator loses 1 Sanity. 3+: Suddenly, everything you've learned has formed a greater picture in your mind's eye. The chosen investigator gains 1 Clue. Then flip this card.",
+  "expansion": "Eldritch Horror"
+ },
+ {
+  "name": "Flesh Ward",
+  "category": "spell",
+  "effect": "Once per round, when an investigator would lose Health, you may test Lore. If you pass, prevent that investigator from losing up to 2 Health. Then flip this card. | [1] Resolve the effect based on your test result: 0: The spell's energy twists around you and locks your jaw shut as if it were forbidding you from speaking. You don't know if you will be allowed to speak those words again. If you did not roll any 4's, discard this card. 1+: It is unpleasant to watch this transformation, even when it succeeds. Lose 1 Sanity. Then flip this card. | [2] Resolve the effect based on your test result: 0: Something inside your chest shifts painfully. The chosen investigator loses 1 Health unless he gains an Internal Injury Condition. 1-2: The spell causes skin to writhe and reform like a living being. No additional effect. 3+: Flesh and bone mend themselves and harden against attack. Prevent that investigator from losing Health up to your test result instead. Then flip this card. | [3] Resolve the effect based on your test result: 0: The malformed magic inflicts the subject with a terrible illness. That investigator gains 1 Illness Condition. 1: Stitching together flesh and bone takes a toll on your fragile mind. Lose 1 Sanity. 2+: Your flesh hardens and repels pain and wounds with ease. No additional effect. Then flip this card. | [4] Resolve the effect based on your test result: 0: The incantation slips from your memory, and you are unsure if it will return. If you rolled any 1's, discard this card. 1-2: Flesh and bone writhe and reform as your wounds are mended. That investigator loses 1 Sanity. 3+: The magic wards you from physical harm, rendering you nearly immortal. Prevent that investigator from losing up to 4 Health instead. Then flip this card.",
+  "expansion": "Eldritch Horror"
+ },
+ {
+  "name": "Instill Bravery",
+  "category": "spell",
+  "effect": "Once per round, when an investigator would lose Sanity, you may test Lore. If you pass, prevent that investigator from losing up to 2 Sanity. Then flip this card. | [1] Resolve the effect based on your test result: 0: Your malformed magic lashes against your mind, and you fear your memories have been altered. If you did not roll any 4's, discard this card. 1+: Your incantation inspires courage in the face of madness, but at the cost of your own blood. Lose 1 Health. Then flip this card. | [2] Resolve the effect based on your test result: 0: The magic warps your mind and thoughts until you can no longer tell reality from delusion. The chosen investigator loses 1 Sanity unless he gains a Hallucinations Condition. 1-2: The spell prevents any lingering effects of the traumatic experience. No additional effect. 3+: The spell inspires and invigorates. Prevent that investigator from losing Sanity up to your test result instead. Then flip this card. | [3] Resolve the effect based on your test result: 0: You feel your consciousness being altered in some way. That investigator gains 1 Madness Condition. 1: Casting the magic requires a payment of blood. Lose 1 Health. 2+: The chant echoes in your mind and heart, inspiring your courage. No additional effect. Then flip this card. | [4] Resolve the effect based on your test result: 0: Fear overwhelms you and shatters the weak magic. If you rolled any 1's, discard this card. 1-2: The magic binds itself to your body, preventing you from fleeing. That investigator loses 1 Health. 3+: The magic alters your mind, allowing you to stand against your greatest fears. Prevent that investigator from losing up to 4 Sanity instead. Then flip this card.",
+  "expansion": "Eldritch Horror"
+ },
+ {
+  "name": "Mists of Releh",
+  "category": "spell",
+  "effect": "During the Encounter Phase, you may test Lore. If you pass, you may choose an encounter as if there are no Monsters on your space. Then flip this card. | [1] Resolve the effect based on your test result: 0-1: A thick, black fog engulfs you, choking your lungs and stinging your eyes. Lose 1 Health and 1 Sanity. 2+: You walk forward boldly, knowing the mists will keep you hidden. No additional effects. Then flip this card. | [2] Resolve the effect based on your test result: 0: You see a monstrous form vanish into the fog. Whatever it was, you fear it may return the next time you recite the incantation. Discard this card unless you gain a Hallucinations Condition. 1+: Although you are hidden by the darkness, you feel unnatural tendrils of fog wrapping around your body. Lose 1 Sanity. Then flip this card. | [3] Resolve the effect based on your test result: 0: You utter the words incorrectly. If you rolled any 1's, discard this card. 1+: The mist fills the air and clouds your mind. Lose 1 Sanity. Then flip this card. | [4] Resolve the effect based on your test result: 0-1: The mist clouds your vision and hinders your actions. Roll 1 less die when resolving tests during the Encounter Phase this round. 2+: Walking through the mist hides your presence from watchful eyes. No additional effect. Then flip this card.",
+  "expansion": "Eldritch Horror"
+ },
+ {
+  "name": "Plumb the Void",
+  "category": "spell",
+  "effect": "Action: Test Lore-1. If you pass, an investigator of your choice may move to any space. Then flip this card. | [1] Resolve the effect based on your test result: 0: The portal closes abruptly, nearly severing you in half. The chosen investigator loses 3 Health. 1-2: The ritual requires an exhausting amount of concentration. Lose 1 Sanity. 3+: More than just warping space, you also manipulate time. You may perform an additional action. Then, flip this card. | [2] Resolve the effect based on your test result: 0-1: You remember that a swirling passage to an unknown world opened before you, but did you travel through it? If you did, where did you go? Discard this card unless you gain an Amnesia Condition. 2+: You bend the fabric of space to your will, transporting the subject across the globe. No additional effect. Then flip this card. | [3] Resolve the effect based on your test result: 0: You misspeak the words, opening the portal in the wrong place. The chosen investigator loses 1 Sanity and moves to a random space. 1+: Traveling through the void takes a toll on your mind. The chosen investigator loses 1 Sanity. Then flip this card. | [4] Resolve the effect based on your test result: 0: The portal closes abruptly, trapping you in the space between worlds. The chosen investigator gains a Lost in Time and Space Condition. 1-2: Your mind leaves your body as the portal opens, and you fear you may become lost. Lose 1 Sanity. 3+: The magic folds the fabric of reality, allowing you to step between continents with ease. No additional effect. Then flip this card.",
+  "expansion": "Eldritch Horror"
+ },
+ {
+  "name": "Shriveling",
+  "category": "spell",
+  "effect": "Action: Test Lore. If you pass, choose a Monster on your space to lose 2 Health. Then flip this card. | [1] Resolve the effect based on your test result: 0-1: The ritual echoes in your head until it becomes gibberish. Discard this card unless you lose 2 Sanity. 2: The enemy's flesh boils and peels away. No additional effect. 3+: Flames and thick smoke envelop your target. The chosen Monster loses Health equal to your test result instead. Then, flip this card. | [2] Resolve the effect based on your test result: 0: The spell backfires, searing your hands. Lose 2 Health. 1: The distinct smell of burning flesh lets you know the spell has been cast correctly. Lose 1 Sanity. 2+: The magic spreads, and the burning flesh peels from your enemies' bodies. Each other Monster on your space also loses 2 Health. Then flip this card. | [3] Resolve the effect based on your test result: 0: The magic backfires, assailing your flesh with blisters and pox. Discard this card unless you gain a Poisoned Condition. 1-2: The harmful magic lingers in your body. Lose 1 Health. 3+: Your target's flesh writhes and boils, shedding off in a molten husk. The chosen Monster loses 4 Health instead. Then flip this card. | [4] Resolve the effect based on your test result: 0-1: Your magic calls attention to your location. Immediately resolve a Combat Encounter against each Monster on your space in the order of your choice. 2+: The beast before you cowers and coils up, shrinking and growing weak. No additional effect. Then flip this card.",
+  "expansion": "Eldritch Horror"
+ },
+ {
+  "name": "Wither",
+  "category": "spell",
+  "effect": "When resolving a Combat Encounter, you may test Lore. If you pass, gain +3 Strength during that encounter. Then flip this card. | [1] Resolve the effect based on your test result: 0-1: The spell's dark energy turns against you, flooding your mind with madness. Discard this card unless you lose 2 Sanity. 2+: The incantation takes effect with horrifying success. Lose 1 Sanity and gain +5 Strength during that encounter instead. Then flip this card. | [2] Resolve the effect based on your test result: 0: The words must have been wrong. You suffer the damage you had hoped to inflict. Discard this card unless you gain an Internal Injury Condition. 1: The spell compacts and twists the target's body. Lose 1 Sanity. 2+: The magic ripples and surges through the target once more. You may reroll 1 die during the Strength test. Then flip this card. | [3] Resolve the effect based on your test result: 0: You misspeak the incantation, causing the magic to dissipate. If you rolled any 1's, discard this card. 1: The harmful magic lingers in your body. Lose 1 Health. 2+: The magic takes hold in your target's body. No additional effect. Then flip this card. | [4] Resolve the effect based on your test result: 0: The magic backfires, infecting your lungs and invading your blood stream. Gain 1 Illness Condition. 1: Completing the incantation requires a blood sacrifice. Lose 1 Health. 2+: Your target's body withers into a weakened, malformed shape. Reduce the Monster's damage by 1 to a minimum of 1. Then flip this card.",
+  "expansion": "Eldritch Horror"
+ },
+ {
+  "name": "Arcane Manuscripts",
+  "category": "tome",
+  "effect": "Gain +1 Lore when resolving Spell effects.",
+  "expansion": "Eldritch Horror"
+ },
+ {
+  "name": "Arcane Tome",
+  "category": "tome",
+  "effect": "Gain +2 Lore when resolving Spell effects. When you perform a Rest action, you may test Lore. If you pass, gain 1 Spell.",
+  "expansion": "Eldritch Horror"
+ },
+ {
+  "name": "Cultes des Goules",
+  "category": "tome",
+  "effect": "Action: Test Lore. If you pass, you may spend 1 Sanity to gain 2 Clue.",
+  "expansion": "Eldritch Horror"
+ },
+ {
+  "name": "De Vermis Mysteriis",
+  "category": "tome",
+  "effect": "Action: Test Lore. If you pass, you may spend 1 Sanity to improve 1 skill of your choice.",
+  "expansion": "Eldritch Horror"
+ },
+ {
+  "name": "King James Bible",
+  "category": "tome",
+  "effect": "You may reroll 1 die when resolving a Will test during a Combat Encounter. When you perform a Rest action, recover 1 additional Sanity.",
+  "expansion": "Eldritch Horror"
+ },
+ {
+  "name": "Necronomicon",
+  "category": "tome",
+  "effect": "Action: Test Lore. If you pass, you may spend 1 Sanity to gain 2 Spells.",
+  "expansion": "Eldritch Horror"
+ },
+ {
+  "name": "T'tka Halot",
+  "category": "tome",
+  "effect": "Action: Test Lore. If you pass, you may spend 1 Sanity to choose 1 Monster on your space to lose 3 Health.",
+  "expansion": "Eldritch Horror"
+ },
+ {
+  "name": "Lucky Cigarette Case",
+  "category": "trinket",
+  "effect": "Once per round, you may add 1 to the result of 1 die when resolving a test.",
+  "expansion": "Eldritch Horror"
+ },
+ {
+  "name": "Lucky Rabbit's Foot",
+  "category": "trinket",
+  "effect": "Once per round, you may reroll 1 die when resolving a test.",
+  "expansion": "Eldritch Horror"
+ },
+ {
+  "name": "Pocket Watch",
+  "category": "trinket",
+  "effect": "You cannot become Delayed unless you choose to.",
+  "expansion": "Eldritch Horror"
+ },
+ {
+  "name": "Puzzle Box",
+  "category": "trinket",
+  "effect": "When you perform a Rest action, you may attempt to open the puzzle box (Observation-2). If you pass, you may discard this card to gain 1 Artifact.",
+  "expansion": "Eldritch Horror"
+ },
+ {
+  "name": ".18 Derringer",
+  "category": "weapon",
+  "effect": "You may add 1 to the result of 1 die when resolving a Strength test during a Combat Encounter.",
+  "expansion": "Eldritch Horror"
+ },
+ {
+  "name": ".38 Revolver",
+  "category": "weapon",
+  "effect": "Gain +2 Strength during Combat Encounters.",
+  "expansion": "Eldritch Horror"
+ },
+ {
+  "name": ".45 Automatic",
+  "category": "weapon",
+  "effect": "Gain +3 Strength during Combat Encounters.",
+  "expansion": "Eldritch Horror"
+ },
+ {
+  "name": "Axe",
+  "category": "weapon",
+  "effect": "Gain +2 Strength during Combat Encounters. You may spend 2 Sanity to reroll any number of dice when resolving a Strength test during a Combat Encounter.",
+  "expansion": "Eldritch Horror"
+ },
+ {
+  "name": "Bull Whip",
+  "category": "weapon",
+  "effect": "Gain +1 Strength during Combat Encounters. You may reroll 1 die when resolving a Strength test during a Combat Encounter.",
+  "expansion": "Eldritch Horror"
+ },
+ {
+  "name": "Carbine Rifle",
+  "category": "weapon",
+  "effect": "Once per round, you may gain +5 Strength during a Combat Encounter.",
+  "expansion": "Eldritch Horror"
+ },
+ {
+  "name": "Double-barreled Shotgun",
+  "category": "weapon",
+  "effect": "Gain +4 Strength during Combat Encounters. Each 6 you roll when resolving a Strength test during a Combat Encounter counts as 2 successes.",
+  "expansion": "Eldritch Horror"
+ },
+ {
+  "name": "Dynamite",
+  "category": "weapon",
+  "effect": "Action: You may discard this card to cause each Monster on your space to lose 3 Health.",
+  "expansion": "Eldritch Horror"
+ },
+ {
+  "name": "Lightning Gun",
+  "category": "weapon",
+  "effect": "Gain +6 Strength when resolving a Combat Encounter. Action: You and each Monster on your space lose 1 Health.",
+  "expansion": "Eldritch Horror"
+ },
+ {
+  "name": "Spirit Dagger",
+  "category": "weapon",
+  "effect": "Gain +1 Will and +2 Strength during Combat Encounters.",
+  "expansion": "Eldritch Horror"
+ },
+ {
+  "name": "Sword of Saint Jerome",
+  "category": "weapon",
+  "effect": "Gain +2 Will and +5 Strength when resolving Combat Encounters. If you defeat a Monster during a Combat Encounter, recover 1 Sanity.",
+  "expansion": "Eldritch Horror"
+ }
+]

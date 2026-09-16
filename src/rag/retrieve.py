@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from typing import Any
 
 from qdrant_client import QdrantClient
 
+from src.logger import get_logger
 from src.rag.collections import GAME_ID, KNOWLEDGE, RULES
 from src.rag.embeddings import embed_text
 from src.rag.store import build_filter, get_client, search
+
+log = get_logger(__name__)
 
 
 def retrieve(
@@ -44,3 +48,48 @@ def retrieve(
 
 
 __all__ = ["retrieve"]
+
+
+def card(name: str, *, client: Any = None) -> dict[str, Any] | None:
+    """One card by its exact name, without going near the embeddings.
+
+    "What does Bull Whip do?" is the commonest question about a card, and a vector search is
+    the wrong tool for it: asked that way it returned Vatican Missionary at 0.32, because a
+    card's *name* says almost nothing about its meaning while its effect text dominates the
+    embedding. The name is a keyword-indexed payload field, so it is looked up as one.
+    """
+    from qdrant_client.http.models import FieldCondition, Filter, MatchValue
+
+    from src.strategy.reference import _key  # the same folding used for investigator names
+
+    client = client or get_client()
+    wanted = _key(name)
+    for kind in ("asset", "condition", "task"):
+        points, _ = client.scroll(
+            KNOWLEDGE,
+            scroll_filter=Filter(
+                must=[
+                    FieldCondition(key="game_id", match=MatchValue(value=GAME_ID)),
+                    FieldCondition(key="kind", match=MatchValue(value=kind)),
+                ]
+            ),
+            limit=500,
+            with_payload=True,
+        )
+        for point in points:
+            payload = dict(point.payload or {})
+            if _key(str(payload.get("name", ""))) == wanted:
+                return payload
+    return None
+
+
+def cards_in_reserve(names: Iterable[str], *, client: Any = None) -> list[dict[str, Any]]:
+    """What each card in the reserve does, for deciding whether any is worth buying."""
+    found = []
+    for name in names:
+        payload = card(name, client=client)
+        if payload is not None:
+            found.append(payload)
+        else:
+            log.info("card not in the knowledge base: %s", name)
+    return found

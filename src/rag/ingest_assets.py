@@ -38,6 +38,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from pathlib import Path
 from typing import Any
 
 from src.logger import get_logger
@@ -47,7 +48,22 @@ from src.rag.store import count, ensure_collection, get_client, point_id, upsert
 
 log = get_logger(__name__)
 
-CATEGORIES = ("item", "weapon", "ally", "spell", "trinket", "service")
+# The card types the base box actually uses. "magical", "tome", "relic" and "unique asset" are
+# kinds of Asset in the game's own vocabulary, so they belong here; a Condition is not an Asset
+# at all (it is something that happens *to* an investigator) and gets its own knowledge kind.
+CATEGORIES = (
+    "item",
+    "weapon",
+    "ally",
+    "spell",
+    "trinket",
+    "service",
+    "tome",
+    "magical",
+    "relic",
+    "unique asset",
+)
+NOT_ASSETS = {"condition": "condition", "task": "task"}
 
 BASE = {
     "game_id": GAME_ID,
@@ -77,161 +93,32 @@ def asset(
     }
 
 
-# Starting possessions: every one of these is named in docs/GAME_REFERENCE.md against the
-# investigator who begins holding it, so the card is certainly in the base box.
-ENTRIES: list[dict[str, Any]] = [
-    asset(
-        "Mists of Releh",
-        "spell",
-        "Mists of Releh is a Spell and the starting possession of Akachi Onyele, the Shaman. It is "
-        "an evade-type Spell used to avoid monsters rather than fight them, which suits an "
-        "investigator whose job is reaching and sealing gates rather than winning combats. The "
-        "exact wording on the card has not been read by this project.",
-        confidence="effect_unchecked",
-        starting_for="Akachi Onyele",
-    ),
-    asset(
-        "Personal Assistant",
-        "ally",
-        "Personal Assistant is an Ally and the starting possession of Charlie Kane, the Politician. "
-        "Allies stay with an investigator and add to skills or grant effects. The exact wording has "
-        "not been read by this project.",
-        confidence="effect_unchecked",
-        starting_for="Charlie Kane",
-    ),
-    asset(
-        "Arcane Manuscripts",
-        "item",
-        "Arcane Manuscripts is a starting possession of Diana Stanley, the Redeemed Cultist, whose "
-        "strongest skill is Lore 4. The exact wording has not been read by this project.",
-        confidence="effect_unchecked",
-        starting_for="Diana Stanley",
-    ),
-    asset(
-        "Wither",
-        "spell",
-        "Wither is a Spell and a starting possession of Diana Stanley. It is an attack Spell, used "
-        "with Lore instead of Strength in combat, which matters for an investigator with Lore 4 and "
-        "Strength 3. The exact wording has not been read by this project.",
-        confidence="effect_unchecked",
-        starting_for="Diana Stanley",
-    ),
-    asset(
-        "Flesh Ward",
-        "spell",
-        "Flesh Ward is a Spell and the starting possession of Jacqueline Fine, the Psychic. It is a "
-        "protective Spell that prevents damage, which matters for an investigator with only 4 "
-        "Health. The exact wording has not been read by this project.",
-        confidence="effect_unchecked",
-        starting_for="Jacqueline Fine",
-    ),
-    asset(
-        "Shriveling",
-        "spell",
-        "Shriveling is a Spell and the starting possession of Jim Culver, the Musician. It is an "
-        "attack Spell cast with Lore. The exact wording has not been read by this project.",
-        confidence="effect_unchecked",
-        starting_for="Jim Culver",
-    ),
-    asset(
-        "Hired Muscle",
-        "ally",
-        "Hired Muscle is an Ally and the starting possession of Leo Anderson, the Expedition Leader. "
-        "Allies of this sort add to combat. The exact wording has not been read by this project.",
-        confidence="effect_unchecked",
-        starting_for="Leo Anderson",
-    ),
-    asset(
-        "Protective Amulet",
-        "trinket",
-        "Protective Amulet is a starting possession of Lily Chen, the Martial Artist. The exact "
-        "wording has not been read by this project.",
-        confidence="effect_unchecked",
-        starting_for="Lily Chen",
-    ),
-    asset(
-        "Lucky Rabbit's Foot",
-        "trinket",
-        "Lucky Rabbit's Foot is a starting possession of Lily Chen, the Martial Artist. Trinkets of "
-        "this kind help with rerolls or luck. The exact wording has not been read by this project.",
-        confidence="effect_unchecked",
-        starting_for="Lily Chen",
-    ),
-    asset(
-        ".18 Derringer",
-        "weapon",
-        ".18 Derringer is a Weapon and the starting possession of Lola Hayes, the Actress. It is the "
-        "smallest of the base-game firearms, giving a small bonus to Strength in a Combat Encounter. "
-        "The exact bonus has not been read off the card by this project.",
-        confidence="effect_unchecked",
-        starting_for="Lola Hayes",
-    ),
-    asset(
-        ".38 Revolver",
-        "weapon",
-        ".38 Revolver is a Weapon and a starting possession of Mark Harrigan, the Soldier. It adds to "
-        "Strength in a Combat Encounter. The exact bonus has not been read off the card by this "
-        "project.",
-        confidence="effect_unchecked",
-        starting_for="Mark Harrigan",
-    ),
-    asset(
-        "Kerosene",
-        "item",
-        "Kerosene is an Item and a starting possession of Mark Harrigan, the Soldier. It was in the "
-        "reserve during the owner's setup on 2026-09-16. The exact wording has not been read off the "
-        "card by this project.",
-        confidence="effect_unchecked",
-        starting_for="Mark Harrigan",
-    ),
-    asset(
-        "Feed the Mind",
-        "spell",
-        "Feed the Mind is a Spell and the starting possession of Norman Withers, the Astronomer, "
-        "whose Lore is 3 and Will 4. The exact wording has not been read by this project.",
-        confidence="effect_unchecked",
-        starting_for="Norman Withers",
-    ),
-    asset(
-        "Fishing Net",
-        "item",
-        "Fishing Net is an Item and the starting possession of Silas Marsh, the Sailor. The exact "
-        "wording has not been read by this project.",
-        confidence="effect_unchecked",
-        starting_for="Silas Marsh",
-    ),
-    asset(
-        ".45 Automatic",
-        "weapon",
-        ".45 Automatic is a Weapon and the starting possession of Trish Scarborough, the Spy. The "
-        "community guide in bg_knowledge names it as what makes Trish strong in combat alongside her "
-        "extra die. The exact bonus has not been read off the card by this project.",
-        confidence="effect_unchecked",
-        starting_for="Trish Scarborough",
-    ),
-    # Seen in the reserve on the owner's table, 2026-09-16. Existence observed, effects unread.
-    asset(
-        "Lucky Cigarette Case",
-        "trinket",
-        "Lucky Cigarette Case is a base-game asset seen in the reserve during the owner's setup on "
-        "2026-09-16. Its effect has not been read off the card by this project.",
-        confidence="effect_unchecked",
-    ),
-    asset(
-        "Private Investigator",
-        "ally",
-        "Private Investigator is a base-game Ally seen in the reserve during the owner's setup on "
-        "2026-09-16. Its effect has not been read off the card by this project.",
-        confidence="effect_unchecked",
-    ),
-    asset(
-        "Bull Whip",
-        "weapon",
-        "Bull Whip is a base-game Weapon seen in the reserve during the owner's setup on 2026-09-16. "
-        "Its effect has not been read off the card by this project.",
-        confidence="effect_unchecked",
-    ),
-]
+# The base-game cards, versioned beside this file so the knowledge base can always be rebuilt.
+# Sourced as a list covering every expansion and filtered to the 2013 box on the way in; the
+# effects are the printed wording, which is what makes them worth anything to the reasoning
+# layer ("Bull Whip: +1 Strength during Combat Encounters" is actionable, "helps in a fight"
+# is not).
+CARDS_FILE = Path(__file__).parent / "cards" / "eldritch_base_game.json"
+
+
+def starting_possession_of(name: str) -> str:
+    """The investigator who begins the game holding this card, or "" - checked, not guessed."""
+    from src.strategy.reference import INVESTIGATORS
+
+    for sheet in INVESTIGATORS:
+        if name in sheet.starting_possessions:
+            return sheet.name
+    return ""
+
+
+def base_game_cards() -> list[dict[str, Any]]:
+    """Every card of the 2013 box as knowledge records."""
+    records, refused = from_file(str(CARDS_FILE))
+    if refused:  # the shipped file is filtered already, so anything refused is a bug in it
+        raise ValueError(f"{CARDS_FILE} contains cards that are not base game: {refused[:3]}")
+    for record in records:
+        record["starting_for"] = starting_possession_of(record["name"])
+    return records
 
 
 BASE_SET_NAMES = ("eldritch horror", "base", "base game", "core", "core set", "2013")
@@ -268,18 +155,20 @@ def from_file(path: str) -> tuple[list[dict[str, Any]], list[str]]:
             continue
         effect = str(item.get("effect") or item.get("text") or "").strip()
         category = str(item.get("category") or item.get("type") or "item").strip().lower()
-        if category not in CATEGORIES:
-            category = "item"
-        records.append(
-            asset(
-                name,
-                category,
-                effect or f"{name} is a base-game asset whose effect has not been read yet.",
-                confidence="verified" if effect else "effect_unchecked",
-                starting_for=str(item.get("starting_for") or "").strip(),
-                source=str(item.get("source") or path),
-            )
+        kind = NOT_ASSETS.get(category, "asset")
+        if kind == "asset" and category not in CATEGORIES:
+            refused.append(f"{name}: unknown card type {category!r}")
+            continue
+        record = asset(
+            name,
+            category,
+            effect or f"{name} is a base-game card whose effect has not been read yet.",
+            confidence="verified" if effect else "effect_unchecked",
+            starting_for=str(item.get("starting_for") or "").strip(),
+            source=str(item.get("source") or path),
         )
+        record["kind"] = kind  # a Condition is not an Asset and must not answer as one
+        records.append(record)
     return records, refused
 
 
@@ -305,12 +194,12 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    entries = ENTRIES
+    entries = base_game_cards()
     if args.source:
         incoming, refused = from_file(args.source)
         for reason in refused:
-            log.warning("asset refused: %s", reason)
-        entries = merge(ENTRIES, incoming)
+            log.debug("card refused: %s", reason)
+        entries = merge(entries, incoming)
         log.info("%s: %d accepted, %d refused", args.source, len(incoming), len(refused))
 
     for record in entries:
@@ -324,6 +213,11 @@ def main(argv: list[str] | None = None) -> int:
         for r in entries:
             print(json.dumps(r, ensure_ascii=False))
         return 0
+
+    kinds: dict[str, int] = {}
+    for r in entries:
+        kinds[r["kind"]] = kinds.get(r["kind"], 0) + 1
+    log.info("by kind: %s", kinds)
 
     client = get_client()
     ids = [point_id(GAME_ID, r["kind"], r["name"]) for r in entries]
