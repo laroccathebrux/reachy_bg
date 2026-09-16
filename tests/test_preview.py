@@ -279,3 +279,54 @@ def test_scan_learns_the_empty_board_then_finds_a_token_from_every_view(tmp_path
     finally:
         server.shutdown()
         preview.stop()
+
+
+def test_moves_json_reports_the_watcher_state_and_the_tail(tmp_path):
+    """The board log the page polls: newest first, capped, with the watcher's own state."""
+    preview = Preview(FakeCamera(160, 90), capture_dir=tmp_path)
+    empty = preview.moves_json()
+    assert empty["moves"] == [] and empty["count"] == 0
+    assert empty["state"] == "starting"
+
+    preview.motion_state = "watching"
+    for i in range(20):
+        preview.moves.append(
+            {
+                "at": float(i),
+                "time": f"10:00:{i:02d}",
+                "seconds": 1.0,
+                "text": f"move {i}",
+                "departed": ["Rome"],
+                "arrived": ["London"],
+            }
+        )
+    out = preview.moves_json()
+    assert out["state"] == "watching" and out["count"] == 20
+    assert len(out["moves"]) == 12, "the page is served a bounded tail"
+    assert out["moves"][0]["text"] == "move 19", "newest first"
+    assert out["moves"][-1]["text"] == "move 8"
+
+
+def test_the_watcher_is_dropped_while_the_robot_is_moving(tmp_path):
+    """A scan or a sweep turns the robot, so the registered view is gone until it stops."""
+    preview = Preview(FakeCamera(160, 90), capture_dir=tmp_path)
+    assert preview.busy_with_robot() is False
+
+    running = threading.Event()
+    thread = threading.Thread(target=running.wait, daemon=True)
+    thread.start()
+    preview._scan_thread = thread
+    try:
+        assert preview.busy_with_robot() is True
+    finally:
+        running.set()
+        thread.join(timeout=2)
+    assert preview.busy_with_robot() is False
+
+
+def test_the_page_carries_the_board_log_and_polls_it():
+    from src.vision.preview import PAGE
+
+    assert "BOARD LOG" in PAGE and 'id="logitems"' in PAGE
+    assert "pollMoves" in PAGE and "'/moves'" in PAGE
+    assert "setInterval(pollMoves, 1000)" in PAGE

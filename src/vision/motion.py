@@ -71,7 +71,11 @@ ACTIVITY_LEVEL = 30  # per-pixel grey difference counted as movement (sensor noi
 # trigger never fired. The floor is what matters, and the floor is zero.
 DISTURBED_FRACTION = 0.005  # of the frame moving: something is happening over the board
 QUIET_FRACTION = 0.001  # below this the board is considered still
-SETTLE_FRAMES = 5  # consecutive quiet frames before a verdict (~0.5 s at 9.5 fps)
+# Half a second of stillness was not enough: placing a piece produced a verdict 2.3 s in, then
+# another disturbance 0.1 s later, the second naming the arm still crossing the top of the board
+# ("2 pieces left London, Arkham"). A hand pauses mid-move - hesitating, settling the piece - and
+# those pauses read as quiet. A move that ran its course took 5 s, so a full second is affordable.
+SETTLE_FRAMES = 10  # consecutive quiet frames before a verdict (~1.05 s at 9.5 fps)
 MIN_MOVE_AREA = 300  # rectified-map pixels, as in detect.MIN_AREA
 # A sweep of the body scored 0.036 to 0.100 per frame and a hand 0.006 to 0.039: the two ranges
 # overlap, so how much moved cannot say whether it was the camera. Where the board sits in the

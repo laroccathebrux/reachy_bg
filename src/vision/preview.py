@@ -144,6 +144,22 @@ PAGE = """<!doctype html>
                      cursor: pointer; }
   input[type=checkbox] { accent-color: var(--accent); }
 
+  #log { margin: 10px 4px 0; border: 1px solid var(--line); background: var(--panel); }
+  .loghead { display: flex; align-items: center; justify-content: space-between;
+             padding: 7px 10px; border-bottom: 1px solid var(--line);
+             letter-spacing: .16em; color: var(--dim); }
+  #logstate { letter-spacing: .1em; color: var(--dim); text-transform: uppercase; font-size: 11px; }
+  #logstate.live { color: var(--live); }
+  #logstate.warn { color: var(--accent); }
+  #logitems { list-style: none; margin: 0; padding: 4px 0; max-height: 168px; overflow-y: auto; }
+  #logitems li { display: flex; gap: 10px; padding: 5px 10px; border-bottom: 1px solid #161c24; }
+  #logitems li:last-child { border-bottom: 0; }
+  #logitems li.fresh { background: rgba(240, 168, 40, .09); }
+  #logitems li.quiet { color: var(--dim); }
+  #logitems .t { color: var(--dim); flex: none; }
+  #logitems .w { color: var(--text); }
+  #logitems .w b { color: var(--accent); font-weight: 600; }
+  #logitems .d { margin-left: auto; color: var(--dim); flex: none; }
   #msg { padding: 8px 4px; color: var(--accent); white-space: pre-wrap; min-height: 18px;
          font-size: 12px; line-height: 1.5; }
   #pieces { padding: 0 4px 10px; display: flex; flex-wrap: wrap; gap: 12px; }
@@ -185,6 +201,13 @@ PAGE = """<!doctype html>
         <span class="hint">CLICK THE IMAGE TO CENTRE</span>
       </div>
     </div>
+    <section id="log">
+      <div class="loghead">
+        <span>BOARD LOG</span>
+        <span id="logstate">starting</span>
+      </div>
+      <ol id="logitems"><li class="quiet">no move seen yet</li></ol>
+    </section>
     <div id="msg"></div>
     <div id="pieces"></div>
     <div id="bar2" style="display:none">
@@ -389,6 +412,26 @@ async function pollBoard() {
   draw();
 }
 setInterval(pollBoard, 1000);
+let lastMoveAt = 0;
+async function pollMoves() {
+  let j;
+  try { j = await (await fetch('/moves')).json(); } catch (e) { return; }
+  const state = el('logstate');
+  state.textContent = j.state || '';
+  state.className = j.state && j.state.startsWith('watching') ? 'live' : (j.state && j.state.startsWith('paused') ? 'warn' : '');
+  const list = el('logitems');
+  if (!j.moves.length) { list.innerHTML = '<li class="quiet">no move seen yet</li>'; return; }
+  const newest = j.moves[0].at;
+  if (newest === lastMoveAt) return;   // nothing new: leave the list (and its scroll) alone
+  const fresh = lastMoveAt > 0;
+  lastMoveAt = newest;
+  list.innerHTML = j.moves.map((m, i) => {
+    const text = m.text.replace(/from ([^,]+?) to (.+)$/, 'from <b>$1</b> to <b>$2</b>');
+    return `<li class="${i === 0 && fresh ? 'fresh' : ''}"><span class="t">${m.time}</span>` +
+           `<span class="w">${text}</span><span class="d">${m.seconds}s</span></li>`;
+  }).join('');
+}
+setInterval(pollMoves, 1000); pollMoves();
 new ResizeObserver(draw).observe(cam);
 cam.onload = draw;
 async function poll() {
@@ -612,6 +655,10 @@ class Preview:
         self.registration: Any = None  # latest Registration of the latest frame
         self.registered_at = 0.0
         self._board_thread: threading.Thread | None = None
+        self.watcher: Any = None  # MotionWatcher of the current view, built once a board is found
+        self.moves: list[dict[str, Any]] = []  # what it reported, newest last
+        self.motion_state = "starting"
+        self._motion_thread: threading.Thread | None = None
 
     def start(self) -> Preview:
         self._thread = threading.Thread(target=self._grab_loop, name="camera-grab", daemon=True)
@@ -619,6 +666,8 @@ class Preview:
         if self.board is not None:
             self._board_thread = threading.Thread(target=self._board_loop, name="board-locate", daemon=True)
             self._board_thread.start()
+            self._motion_thread = threading.Thread(target=self._motion_loop, name="motion", daemon=True)
+            self._motion_thread.start()
         return self
 
     def _board_loop(self, period_s: float = 1.0) -> None:
@@ -639,6 +688,70 @@ class Preview:
                 registration = None
             self.registration, self.registered_at = registration, self.clock()
             time.sleep(max(0.0, period_s - (self.clock() - started)))
+
+    def busy_with_robot(self) -> bool:
+        """Is a scan or a sweep turning the robot right now?"""
+        for thread in (self._scan_thread, self._sweep_thread):
+            if thread is not None and thread.is_alive():
+                return True
+        return False
+
+    def _motion_loop(self) -> None:
+        """Feed every new frame to a MotionWatcher and keep what it reports.
+
+        Running the watcher here rather than in a second process is what makes it usable during
+        a session: only one process can hold the camera, and that process is this one.
+        """
+        from src.vision.motion import MotionWatcher
+
+        last_seen = 0
+        while not self._stop.is_set():
+            time.sleep(0.05)
+            if self.busy_with_robot():
+                # The robot is turning: the view the watcher registered is gone. Drop it and
+                # build a new one from the view that is there once the scan finishes.
+                if self.watcher is not None:
+                    log.info("motion: robot busy, watcher dropped until the view settles")
+                self.watcher, self.motion_state = None, "paused: the robot is moving"
+                continue
+            with self._lock:
+                frame, seq = self.frame, self.frames
+            if frame is None or seq == last_seen:
+                continue
+            last_seen = seq
+            if self.watcher is None:
+                registration = self.registration
+                if registration is None:
+                    self.motion_state = "waiting for the board"
+                    continue
+                baseline = None if self.baselines is None else self.baselines.views.get("centre")
+                self.watcher = MotionWatcher(registration, baseline=baseline, reference=self.board)
+                self.motion_state = "watching" + ("" if baseline is not None else " (no baseline: direction is a guess)")
+                log.info("motion: watching, %d inliers", registration.inliers)
+            try:
+                move = self.watcher.feed(frame)
+            except Exception as exc:  # a bad frame must not take the thread down
+                log.warning("motion: %s", exc)
+                continue
+            if move is not None:
+                self.moves.append(
+                    {
+                        "at": move.at,
+                        "time": time.strftime("%H:%M:%S", time.localtime(move.at)),
+                        "seconds": round(move.seconds, 1),
+                        "text": move.describe(),
+                        "departed": [p.space or p.near or "?" for p in move.departed],
+                        "arrived": [p.space or p.near or "?" for p in move.arrived],
+                    }
+                )
+                del self.moves[:-50]  # the page shows the tail; the log file keeps everything
+
+    def moves_json(self) -> dict[str, Any]:
+        return {
+            "state": self.motion_state,
+            "count": len(self.moves),
+            "moves": self.moves[-12:][::-1],  # newest first, as the page lists them
+        }
 
     def board_json(self) -> dict[str, Any]:
         """Outline and space centres of the last registration, as fractions of the frame."""
@@ -1234,7 +1347,7 @@ def make_handler(preview: Preview, table_pitch: float = TABLE_PITCH) -> type[Bas
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, fmt: str, *args: Any) -> None:  # quiet: one line per frame otherwise
-            if not self.path.startswith(("/stream", "/status", "/frame", "/board")):
+            if not self.path.startswith(("/stream", "/status", "/frame", "/board", "/moves")):
                 log.info("%s %s", self.command, self.path)
 
         def _send(self, status: int, body: bytes, content_type: str) -> None:
@@ -1263,6 +1376,8 @@ def make_handler(preview: Preview, table_pitch: float = TABLE_PITCH) -> type[Bas
                 self._stream()
             elif self.path.startswith("/board"):
                 self._json(preview.board_json())
+            elif self.path.startswith("/moves"):
+                self._json(preview.moves_json())
             elif self.path.startswith("/scan_result"):
                 self._json(preview.last_scan or {"ok": False, "error": "no scan yet"})
             elif self.path.startswith("/rectified"):
