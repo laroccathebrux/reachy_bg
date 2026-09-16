@@ -193,7 +193,13 @@ def _effect(text: str) -> str:
     return text if len(text) <= MAX_EFFECT_CHARS else text[:MAX_EFFECT_CHARS].rsplit(" ", 1)[0] + " ..."
 
 
-def brief(game: GameState, situation: Situation, *, advice: list[dict[str, Any]] | None = None) -> str:
+def brief(
+    game: GameState,
+    situation: Situation,
+    *,
+    advice: list[dict[str, Any]] | None = None,
+    plan: Any = None,
+) -> str:
     """The state of the game in words, small enough to be cheap to read.
 
     Only what bears on the decision: the Ancient One and doom, the Mystery as it was told, the
@@ -269,6 +275,11 @@ def brief(game: GameState, situation: Situation, *, advice: list[dict[str, Any]]
     unnamed = moves.unnamed_pieces_at(game, situation.space)
     if unnamed:
         lines.append(f"There are {unnamed} piece(s) on my space that nobody has named yet.")
+    if plan is not None and not getattr(plan, "empty", True):
+        lines.append(
+            "My plan for this game (my own intention, written after the setup, not a rule):\n"
+            + plan.as_text()
+        )
     if advice:
         lines.append("Player advice (opinion from a community guide, not a rule):")
         for item in advice:
@@ -346,6 +357,7 @@ def decide(
     limit: int = SHORTLIST,
     weights: Weights = DEFAULT_WEIGHTS,
     advice: list[dict[str, Any]] | None = None,
+    plan: Any = None,
     think: bool = False,
     chat_fn: Callable[..., Any] = chat,
 ) -> Decision:
@@ -386,7 +398,7 @@ def decide(
     kept = shortlist(scored, limit)
     questions = tuple(dict.fromkeys(u for item in kept for u in item.plan.unknowns))
 
-    state_text = brief(game, situation, advice=advice)
+    state_text = brief(game, situation, advice=advice, plan=plan)
     rules = rules_of(kept)
     if rules:
         state_text += "\nThe actions in the list, as the reference card prints them:\n" + rules

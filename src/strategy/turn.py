@@ -23,6 +23,7 @@ from pathlib import Path
 from src.logger import get_logger
 from src.strategy import decide as decider
 from src.strategy import map_graph, moves
+from src.strategy import plan as planner
 from src.strategy.game import ROBOT, GameState
 
 log = get_logger(__name__)
@@ -66,6 +67,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--advice", action="store_true", help="add community strategy entries (needs Qdrant)")
     parser.add_argument("--all", action="store_true", help="print every legal turn, not just the shortlist")
     parser.add_argument("--no-llm", action="store_true", help="score only, do not ask the model")
+    parser.add_argument(
+        "--plan", action="store_true", help="write the plan for the game first, and follow it"
+    )
     parser.add_argument("--shortlist", type=int, default=decider.SHORTLIST)
     args = parser.parse_args(argv)
 
@@ -120,8 +124,18 @@ def main(argv: list[str] | None = None) -> int:
     if args.no_llm:
         return 0
 
+    game_plan = None
+    if args.plan:
+        print("\nwriting the plan for this game ...")
+        game_plan = planner.make_plan(
+            game, language=args.lang, advice=planner.advice_for(game) if args.advice else None
+        )
+        print(game_plan.as_text() or "(no plan: the model did not answer)")
+
     print("\nasking the model ...")
-    decision = decider.decide(game, state, language=args.lang, limit=args.shortlist, advice=advice or None)
+    decision = decider.decide(
+        game, state, language=args.lang, limit=args.shortlist, advice=advice or None, plan=game_plan
+    )
     print(f"\n== {decision.plan.describe() if decision.plan else 'no action'}")
     print(f"== {decision.reason}")
     if decision.questions:

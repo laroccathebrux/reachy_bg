@@ -141,8 +141,62 @@ def decision_messages(brief: str, options: str, language: str) -> list[dict[str,
     ]
 
 
+PLAN_PROMPT = """You are Reachy, a small desktop robot playing Eldritch Horror (Fantasy Flight Games, 2013, base game only) as a real player. The game has just been set up, or a round has just changed it, and you are deciding how this group intends to win.
+
+A plan is not a turn. It is what you will keep coming back to: which Mysteries you are going for, who covers which part of the map, what your own investigator is for, and what would make you change your mind.
+
+Rules for the plan:
+- Use only what you were told. Never invent a card, a space, a Mystery or an investigator that is not in the state you were given, and never state a rule you were not given.
+- Say what YOUR investigator is for, in one line, from its own skills and possessions.
+- Two to four priorities, each a short line a player would say out loud, in the order you would drop them.
+- One to three things to watch for: the events that would make this plan wrong.
+- Player advice, when given, is somebody's opinion and is labelled as such; the Rulebook is the authority and advice is not.
+
+Write every line in {language}, keeping the game terms in English exactly as printed: investigator, card and Ancient One names; tokens (Doom, Omen, Clue, Gate, Eldritch, Mystery); phases (Action Phase, Encounter Phase, Mythos Phase); actions (Travel, Rest, Trade, Acquire Assets, Prepare for Travel); skills (Lore, Influence, Observation, Strength, Will); Health and Sanity. In Brazilian Portuguese: "Lily Chen usa Strength e o Protective Amulet para segurar os Monsters" - never "Força", never "Amuleto Protetor", never "Mistérios". Short sentences, warm and a little dry, no lists inside a line, no exclamation marks."""
+
+
+PLAN_SCHEMA: dict = {
+    "type": "object",
+    "properties": {
+        "aim": {"type": "string"},
+        "my_role": {"type": "string"},
+        "priorities": {"type": "array", "items": {"type": "string"}},
+        "watch_for": {"type": "array", "items": {"type": "string"}},
+        "changed": {"type": "string"},
+    },
+    "required": ["aim", "my_role", "priorities", "watch_for"],
+}
+
+
+def plan_messages(brief: str, language: str, previous: str = "", changes: str = "") -> list[dict[str, str]]:
+    """Chat messages for writing the plan for this game, or for revising the one in force.
+
+    ``previous`` is the plan as it stands and ``changes`` what happened since it was written;
+    with both, the model is asked to keep what still holds and say in "changed" what it dropped.
+    """
+    name = language_name(language)
+    parts = [brief]
+    if previous:
+        parts.append(f"The plan in force:\n{previous}")
+    if changes:
+        parts.append(f"What has happened since it was written:\n{changes}")
+    parts.append(
+        "Answer with JSON only: aim (one sentence), my_role (one line), priorities (two to four "
+        "short lines), watch_for (one to three lines)"
+        + (", changed (one line on what you dropped from the old plan and why)" if previous else "")
+        + f". Every line in {name}, game terms in English as printed."
+    )
+    return [
+        {"role": "system", "content": PLAN_PROMPT.format(language=name)},
+        {"role": "user", "content": "\n\n".join(parts)},
+    ]
+
+
 __all__ = [
     "DECISION_PROMPT",
+    "PLAN_PROMPT",
+    "PLAN_SCHEMA",
+    "plan_messages",
     "DECISION_SCHEMA",
     "decision_messages",
     "SYSTEM_PROMPT",
