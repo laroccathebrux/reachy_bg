@@ -34,8 +34,9 @@ from typing import Any
 
 import numpy as np
 
-from src.config import CAPTURE_DIR, REACHY_HOST, REACHY_PORT
+from src.config import CAPTURE_DIR, GAME_LOG_DIR, REACHY_HOST, REACHY_PORT
 from src.logger import get_logger
+from src.strategy.state import BoardState
 
 log = get_logger(__name__)
 
@@ -151,7 +152,21 @@ PAGE = """<!doctype html>
                      cursor: pointer; }
   input[type=checkbox] { accent-color: var(--accent); }
 
-  #log { margin: 10px 0 0; border: 1px solid var(--line); background: var(--panel); max-width: 100%; }
+  #log { margin: 10px 0 0; display: grid; grid-template-columns: minmax(0, 4fr) minmax(0, 6fr);
+         gap: 1px; background: var(--line); border: 1px solid var(--line); max-width: 100%; }
+  .panelcol { background: var(--panel); min-width: 0; }
+  @media (max-width: 760px) { #log { grid-template-columns: 1fr; } }
+  #pieceitems { list-style: none; margin: 0; padding: 4px 0; max-height: 168px; overflow-y: auto; }
+  #pieceitems li { display: flex; gap: 8px; align-items: center; padding: 4px 10px;
+                   border-bottom: 1px solid #161c24; }
+  #pieceitems li:last-child { border-bottom: 0; }
+  #pieceitems li.quiet { color: var(--dim); }
+  #pieceitems .id { color: var(--dim); flex: none; }
+  #pieceitems .nm { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #pieceitems .nm.unnamed { color: var(--dim); }
+  #pieceitems .wh { margin-left: auto; color: var(--accent); flex: none; }
+  #pieceitems input { width: 96px; background: var(--sunk); border: 1px solid var(--line);
+                      color: var(--text); padding: 2px 5px; font: inherit; font-size: 11px; }
   .loghead { display: flex; align-items: center; justify-content: space-between;
              padding: 7px 10px; border-bottom: 1px solid var(--line);
              letter-spacing: .16em; color: var(--dim); }
@@ -209,11 +224,20 @@ PAGE = """<!doctype html>
       </div>
     </div>
     <section id="log">
-      <div class="loghead">
-        <span>BOARD LOG</span>
-        <span id="logstate">starting</span>
+      <div class="panelcol">
+        <div class="loghead">
+          <span>PIECES</span>
+          <span id="piececount">0</span>
+        </div>
+        <ol id="pieceitems"><li class="quiet">nothing tracked yet</li></ol>
       </div>
-      <ol id="logitems"><li class="quiet">no move seen yet</li></ol>
+      <div class="panelcol">
+        <div class="loghead">
+          <span>BOARD LOG</span>
+          <span id="logstate">starting</span>
+        </div>
+        <ol id="logitems"><li class="quiet">no move seen yet</li></ol>
+      </div>
     </section>
     <div id="msg"></div>
     <div id="pieces"></div>
@@ -439,6 +463,44 @@ async function pollMoves() {
   }).join('');
 }
 setInterval(pollMoves, 1000); pollMoves();
+let namingId = null;   // the piece whose input is open: never redraw it under the user
+async function namePiece(id, value) {
+  namingId = null;
+  const name = (value || '').trim();
+  if (!name) { pollState(); return; }
+  const j = await (await fetch('/name', {method: 'POST', headers: {'content-type': 'application/json'},
+                                         body: JSON.stringify({id, name})})).json();
+  msg.textContent = j.error || j.text;
+  pollState();
+}
+async function pollState() {
+  let j;
+  try { j = await (await fetch('/state')).json(); } catch (e) { return; }
+  el('piececount').textContent = j.count;
+  const list = el('pieceitems');
+  if (!j.pieces.length) { list.innerHTML = '<li class="quiet">nothing tracked yet</li>'; return; }
+  if (namingId !== null) return;   // an input is open; leave the list alone
+  list.innerHTML = '';
+  for (const p of j.pieces) {
+    const li = document.createElement('li');
+    li.innerHTML = `<span class="id">#${p.id}</span>` +
+                   `<span class="nm ${p.named ? '' : 'unnamed'}">${p.label}</span>` +
+                   `<span class="wh">${p.where}</span>`;
+    li.querySelector('.nm').onclick = () => {
+      namingId = p.id;
+      const input = document.createElement('input');
+      input.value = p.name || '';
+      input.placeholder = 'kind:Name';
+      input.onkeydown = (e) => { if (e.key === 'Enter') namePiece(p.id, input.value);
+                                 if (e.key === 'Escape') { namingId = null; pollState(); } };
+      input.onblur = () => namePiece(p.id, input.value);
+      li.replaceChild(input, li.querySelector('.nm'));
+      input.focus();
+    };
+    list.appendChild(li);
+  }
+}
+setInterval(pollState, 1000); pollState();
 new ResizeObserver(draw).observe(cam);
 cam.onload = draw;
 async function poll() {
@@ -664,6 +726,7 @@ class Preview:
         self._board_thread: threading.Thread | None = None
         self.watcher: Any = None  # MotionWatcher of the current view, built once a board is found
         self.moves: list[dict[str, Any]] = []  # what it reported, newest last
+        self.state = BoardState()  # where every piece is: seeded by a scan, moved by the watcher
         self.motion_state = "starting"
         self._motion_thread: threading.Thread | None = None
 
@@ -741,6 +804,11 @@ class Preview:
                 log.warning("motion: %s", exc)
                 continue
             if move is not None:
+                try:
+                    self.state.apply(move)
+                    self.state.save(self.state_path())
+                except Exception as exc:  # the log must survive a bad state update
+                    log.warning("state: %s", exc)
                 self.moves.append(
                     {
                         "at": move.at,
@@ -752,6 +820,33 @@ class Preview:
                     }
                 )
                 del self.moves[:-50]  # the page shows the tail; the log file keeps everything
+
+    def state_path(self) -> Path:
+        return GAME_LOG_DIR / "board_state.json"
+
+    def state_json(self) -> dict[str, Any]:
+        return {
+            "text": self.state.describe(),
+            "count": len(self.state),
+            "pieces": [
+                {
+                    "id": p.id,
+                    "label": p.label,
+                    "where": p.where,
+                    "kind": p.kind,
+                    "name": p.name,
+                    "named": bool(p.name),
+                }
+                for p in self.state.on_board
+            ],
+        }
+
+    def name_piece(self, piece_id: int, name: str) -> dict[str, Any]:
+        change = self.state.name(int(piece_id), name)
+        if change is None:
+            return {"error": f"no piece #{piece_id}"}
+        self.state.save(self.state_path())
+        return {"ok": True, "text": change.describe(), "state": self.state_json()}
 
     def moves_json(self) -> dict[str, Any]:
         return {
@@ -1197,6 +1292,11 @@ class Preview:
             "text": text,
         }
         log.info("scan: %s (unseen: %s)", text, ", ".join(unseen) or "none")
+        try:
+            self.state.seed(merged)
+            self.state.save(self.state_path())
+        except Exception as exc:
+            log.warning("state: seeding from the scan failed: %s", exc)
         self.scan_state = f"scan done: {text}"
 
     def rectified_jpeg(self, width: int = 1200) -> bytes:
@@ -1354,7 +1454,7 @@ def make_handler(preview: Preview, table_pitch: float = TABLE_PITCH) -> type[Bas
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, fmt: str, *args: Any) -> None:  # quiet: one line per frame otherwise
-            if not self.path.startswith(("/stream", "/status", "/frame", "/board", "/moves")):
+            if not self.path.startswith(("/stream", "/status", "/frame", "/board", "/moves", "/state")):
                 log.info("%s %s", self.command, self.path)
 
         def _send(self, status: int, body: bytes, content_type: str) -> None:
@@ -1385,6 +1485,8 @@ def make_handler(preview: Preview, table_pitch: float = TABLE_PITCH) -> type[Bas
                 self._json(preview.board_json())
             elif self.path.startswith("/moves"):
                 self._json(preview.moves_json())
+            elif self.path.startswith("/state"):
+                self._json(preview.state_json())
             elif self.path.startswith("/scan_result"):
                 self._json(preview.last_scan or {"ok": False, "error": "no scan yet"})
             elif self.path.startswith("/rectified"):
@@ -1494,6 +1596,12 @@ def make_handler(preview: Preview, table_pitch: float = TABLE_PITCH) -> type[Bas
                 try:
                     body = json.loads(raw or b"{}")
                     self._json(preview.label_crop(str(body["crop"]), str(body["label"])))
+                except (ValueError, TypeError, KeyError) as exc:
+                    self._json({"error": str(exc)}, 400)
+            elif self.path.startswith("/name"):
+                try:
+                    body = json.loads(raw or b"{}")
+                    self._json(preview.name_piece(int(body["id"]), str(body["name"])))
                 except (ValueError, TypeError, KeyError) as exc:
                     self._json({"error": str(exc)}, 400)
             elif self.path.startswith("/zoom"):
