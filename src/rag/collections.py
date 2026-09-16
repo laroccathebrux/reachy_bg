@@ -19,12 +19,23 @@ Payload contracts (all keys and values in English):
 ``bg_knowledge`` - one point per named entity or FAQ entry known before a game starts
     game_id        "eldritch-horror"
     kind           "investigator" | "ancient_one" | "monster" | "gates" | "faq"
-                   | "card_composition" | "flowchart" | "starting_possessions"
+                   | "card_composition" | "flowchart" | "starting_possessions" | "strategy"
     name           entity name or FAQ question
     expansion      product the entity comes from, e.g. "Eldritch Horror (base game)"
     base_game      True when it ships in the 2013 base box
     text           English description used for the embedding
     ...            kind-specific structured fields (see ``migrate_knowledge.py``)
+
+    A ``strategy`` point is player advice rather than a game fact, so it carries where the
+    advice came from and never reads as a rule. See ``ingest_strategy.py``.
+    topic          "investigator_choice" | "ancient_one_matchup" | "monsters" | "assets" | "habits"
+    players        number of investigators the advice is about, or 0 when it is general
+    ancient_one    the Ancient One it is about, or "" when it is general
+    source_kind    "community_guide"
+    source_url     where it came from
+    source_author  who wrote it
+    confidence     "stated" when the source asserts it plainly, "partial" when this project
+                   could only read part of the passage
 
 ``bg_sessions`` - one point per round summary of a played game
     game_id        "eldritch-horror"
@@ -58,6 +69,7 @@ KNOWLEDGE_KINDS: Final = (
     "card_composition",
     "flowchart",
     "starting_possessions",
+    "strategy",
 )
 
 # Payload fields that get a keyword index so filters stay fast.
