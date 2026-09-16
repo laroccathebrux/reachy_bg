@@ -1,6 +1,7 @@
 """Watching one view of the board and reporting what moved, without naming anything.
 
     uv run python -m src.vision.motion                  # the robot watches the centre view
+    uv run python -m src.vision.motion --from-preview   # read a running preview's stream instead
     uv run python -m src.vision.motion --fake           # synthetic frames, no robot
 
     watcher = MotionWatcher(registration)
@@ -36,6 +37,11 @@ it, in each of the two frames: a piece stands out against the board, a vacated s
 
 The view is fixed: the registration is computed once, with the robot still. Moving the head or
 the body invalidates it, so the caller pauses the watcher across a sweep and re-registers after.
+
+Only one process can hold the camera, and during a session that process is the preview. So the
+frames can also come from the preview's own MJPEG stream (``--from-preview``): the page stays
+up and visible while a piece is moved, at the cost of the stream's 960-wide frames, which is the
+resolution the noise above was measured at.
 """
 
 from __future__ import annotations
@@ -248,15 +254,108 @@ class MotionWatcher:
         return move
 
 
+JPEG_START, JPEG_END = b"\xff\xd8", b"\xff\xd9"
+
+
+def iter_jpegs(stream: Any, *, chunk: int = 16384) -> Any:
+    """Yield the JPEG payloads of a multipart MJPEG byte stream, one per frame.
+
+    The parts are found by the JPEG markers rather than by the multipart boundary: the boundary
+    is a detail of the server, the markers are in the data itself.
+    """
+    buf = b""
+    while True:
+        data = stream.read(chunk)
+        if not data:
+            return
+        buf += data
+        while True:
+            start = buf.find(JPEG_START)
+            end = buf.find(JPEG_END, start + 2) if start >= 0 else -1
+            if start < 0 or end < 0:
+                break
+            yield buf[start : end + 2]
+            buf = buf[end + 2 :]
+
+
+class PreviewStream:
+    """Frames from a running preview's MJPEG stream, so the camera is not opened twice.
+
+    The preview already holds the camera, and a second client of the daemon would fight it for
+    the device. Reading its stream instead costs resolution (the stream is downscaled to 960
+    wide) but that is where the noise was measured, and it lets the owner watch the page while
+    moving a piece. A reader thread keeps only the newest frame, so a slow consumer never
+    works its way through a backlog of stale ones.
+    """
+
+    def __init__(self, url: str = "http://127.0.0.1:8090/stream", *, timeout: float = 30.0):
+        import threading
+
+        self.url = url
+        self.timeout = timeout
+        self._frame: np.ndarray | None = None
+        self._stop = False
+        self.frames = 0
+        self.error: str | None = None
+        self._thread = threading.Thread(target=self._loop, daemon=True)
+        self._thread.start()
+
+    def _loop(self) -> None:
+        import urllib.error
+        import urllib.request
+
+        import cv2
+
+        while not self._stop:
+            try:
+                with urllib.request.urlopen(self.url, timeout=self.timeout) as stream:
+                    for payload in iter_jpegs(stream):
+                        if self._stop:
+                            return
+                        image = cv2.imdecode(np.frombuffer(payload, np.uint8), cv2.IMREAD_COLOR)
+                        if image is not None:
+                            self._frame = image
+                            self.frames += 1
+                            self.error = None
+            except (urllib.error.URLError, OSError, ValueError) as exc:
+                self.error = str(exc)
+                if self._stop:
+                    return
+                log.warning("preview stream %s: %s; retrying", self.url, exc)
+                time.sleep(1.0)
+
+    def wait_for_frame(self, timeout: float = 15.0) -> np.ndarray | None:
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            if self._frame is not None:
+                return self._frame
+            time.sleep(0.1)
+        return None
+
+    def get_frame(self) -> np.ndarray | None:
+        return self._frame
+
+    def look(self, *args: Any, **kwargs: Any) -> None:
+        """The preview owns the robot; this source only watches."""
+
+    def close(self) -> None:
+        self._stop = True
+
+
 def watch(camera: Any, registration: Any, *, limit: int = 0, period_s: float = 0.1) -> list[Move]:
     """Print every move until ``limit`` of them (0 = forever); returns what was seen."""
     watcher = MotionWatcher(registration)
     seen: list[Move] = []
+    last_count = -1
     while True:
+        # A source that keeps only the newest frame hands out the same one between captures;
+        # feeding it twice would read as a still board and settle the watcher early.
+        count = getattr(camera, "frames", None)
         frame = camera.get_frame()
-        if frame is None:
+        if frame is None or (count is not None and count == last_count):
             time.sleep(period_s)
             continue
+        last_count = count
         move = watcher.feed(frame)
         if move is not None:
             seen.append(move)
@@ -274,23 +373,40 @@ def main(argv: list[str] | None = None) -> int:
 
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--fake", action="store_true", help="synthetic frames, no robot")
+    parser.add_argument(
+        "--from-preview",
+        nargs="?",
+        const="http://127.0.0.1:8090/stream",
+        default=None,
+        metavar="URL",
+        help="read a running preview's MJPEG stream instead of opening the camera "
+        "(default http://127.0.0.1:8090/stream); the preview keeps the robot and stays visible",
+    )
     parser.add_argument("--pitch", type=float, default=35.0, help="head pitch, degrees below level")
     parser.add_argument("--limit", type=int, default=0, help="stop after this many moves (0 = forever)")
     args = parser.parse_args(argv)
 
-    camera: Any = FakeCamera() if args.fake else RobotCamera()
+    direct = not args.fake and not args.from_preview
+    camera: Any
+    if args.from_preview:
+        camera = PreviewStream(args.from_preview)
+    elif args.fake:
+        camera = FakeCamera()
+    else:
+        camera = RobotCamera()
     try:
-        if not args.fake:
+        if direct:
             camera.look(args.pitch, 0.0, 0.0)
             time.sleep(1.0)
         frame = None
-        for _ in range(50):
+        for _ in range(75):
             frame = camera.get_frame()
             if frame is not None:
                 break
             time.sleep(0.2)
         if frame is None:
-            print("no frame from the camera", flush=True)
+            where = args.from_preview or "the camera"
+            print(f"no frame from {where}" + (f" ({camera.error})" if getattr(camera, "error", None) else ""))
             return 1
         registration = BoardReference().locate(frame)
         if registration is None:
@@ -309,7 +425,17 @@ def main(argv: list[str] | None = None) -> int:
     return 0
 
 
-__all__ = ["ACTIVITY_LEVEL", "Move", "MotionWatcher", "activity", "compare", "stands_out", "watch"]
+__all__ = [
+    "ACTIVITY_LEVEL",
+    "Move",
+    "MotionWatcher",
+    "PreviewStream",
+    "activity",
+    "compare",
+    "iter_jpegs",
+    "stands_out",
+    "watch",
+]
 
 
 if __name__ == "__main__":  # pragma: no cover

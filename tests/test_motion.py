@@ -144,3 +144,82 @@ def test_a_move_off_the_spaces_is_still_described():
 def test_activity_of_frames_of_different_sizes_is_total(view):
     _, _, _, empty, _, _ = view
     assert activity(empty, np.zeros((10, 10, 3), dtype=np.uint8)) == 1.0
+
+
+def mjpeg_bytes(images, boundary=b"--reachyframe"):
+    """A multipart MJPEG body, the way the preview serves one."""
+    out = b""
+    for img in images:
+        ok, buf = cv2.imencode(".jpg", img)
+        assert ok
+        payload = buf.tobytes()
+        out += boundary + b"\r\nContent-Type: image/jpeg\r\n"
+        out += b"Content-Length: " + str(len(payload)).encode() + b"\r\n\r\n"
+        out += payload + b"\r\n"
+    return out
+
+
+def test_iter_jpegs_splits_a_stream_into_frames():
+    import io
+
+    from src.vision.motion import iter_jpegs
+
+    images = [np.full((16, 24, 3), v, dtype=np.uint8) for v in (10, 120, 240)]
+    payloads = list(iter_jpegs(io.BytesIO(mjpeg_bytes(images)), chunk=7))
+    assert len(payloads) == 3
+    for payload, original in zip(payloads, images, strict=True):
+        assert payload.startswith(b"\xff\xd8") and payload.endswith(b"\xff\xd9")
+        decoded = cv2.imdecode(np.frombuffer(payload, np.uint8), cv2.IMREAD_COLOR)
+        assert decoded.shape == original.shape
+        assert abs(int(decoded.mean()) - int(original.mean())) <= 2
+
+
+def test_iter_jpegs_stops_at_the_end_of_the_stream():
+    import io
+
+    from src.vision.motion import iter_jpegs
+
+    assert list(iter_jpegs(io.BytesIO(b""), chunk=4)) == []
+    assert list(iter_jpegs(io.BytesIO(b"\xff\xd8 no end marker"), chunk=4)) == []
+
+
+def test_the_watcher_ignores_a_repeated_frame(view):
+    """A source that keeps only the newest frame hands the same one out between captures."""
+    board, reference, registration, empty, true_h, size = view
+    after = board_with_token(board, reference, "London", true_h, size)
+
+    class Repeating:
+        """Serves each frame several times, counting only the real captures."""
+
+        def __init__(self, script):
+            self.script = script
+            self.frames = 0
+            self.i = -1
+
+        def get_frame(self):
+            return self.script[min(self.i, len(self.script) - 1)] if self.i >= 0 else None
+
+        def advance(self):
+            self.i += 1
+            self.frames += 1
+
+    from src.vision.motion import MotionWatcher
+
+    watcher = MotionWatcher(registration, settle_frames=3, min_area=MIN_AREA)
+    camera = Repeating([empty] * 3 + [a_hand_over(empty)] * 2 + [after] * 4)
+    moves, last_count = [], -1
+    for _ in range(40):  # poll faster than the camera produces, as watch() does
+        if camera.frames == last_count:
+            camera.advance()
+            continue
+        last_count = camera.frames
+        frame = camera.get_frame()
+        if frame is None:
+            camera.advance()
+            continue
+        move = watcher.feed(frame)
+        if move:
+            moves.append(move)
+        camera.advance()
+    assert len(moves) == 1, f"expected one verdict, got {len(moves)}"
+    assert [p.space for p in moves[0].arrived] == ["London"]
