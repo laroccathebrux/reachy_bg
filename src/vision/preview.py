@@ -65,62 +65,193 @@ PAGE = """<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>Reachy camera</title>
+<title>Reachy Mini - Teleop Console</title>
 <style>
-  body { margin: 0; background: #111; color: #ddd; font: 14px system-ui, sans-serif; }
-  #wrap { position: relative; display: inline-block; max-width: 100vw; }
-  #cam { display: block; max-width: 100vw; max-height: 80vh; }
+  :root {
+    --bg: #090c10; --panel: #10151c; --line: #1f2731; --sunk: #0b0f14;
+    --text: #c9d4e0; --dim: #6b7887; --accent: #f0a828; --live: #3fb950;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); min-height: 100vh;
+         display: flex; flex-direction: column;
+         font: 12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+
+  header { display: flex; align-items: center; gap: 12px; padding: 9px 14px;
+           background: var(--panel); border-bottom: 1px solid var(--line); }
+  .logo { width: 24px; height: 24px; border: 2px solid var(--accent); border-radius: 4px;
+          color: var(--accent); display: grid; place-items: center; font-weight: 700; font-size: 13px; }
+  .brand { letter-spacing: .16em; font-weight: 600; font-size: 13px; }
+  .brand i { color: var(--dim); font-style: normal; font-weight: 400; }
+  header .right { margin-left: auto; display: flex; align-items: center; gap: 14px;
+                  color: var(--dim); letter-spacing: .1em; }
+  .live::before { content: "\\2022"; color: var(--live); margin-right: 6px; font-size: 15px; }
+
+  #main { flex: 1; display: grid; grid-template-columns: minmax(0, 1fr) 296px; min-height: 0; }
+  #stage { position: relative; padding: 10px; min-width: 0; }
+  #wrap { position: relative; display: block; width: 100%; }
+  #cam { display: block; width: 100%; max-height: calc(100vh - 210px); object-fit: contain; background: #000; }
   #guides { position: absolute; left: 0; top: 0; pointer-events: none; }
-  #bar { padding: 8px 12px; display: flex; flex-wrap: wrap; gap: 14px; align-items: center; }
-  #bar label { display: flex; gap: 6px; align-items: center; }
-  button { background: #333; color: #eee; border: 1px solid #666; padding: 4px 10px; cursor: pointer; }
-  #msg { padding: 0 12px 8px; color: #f6c343; white-space: pre-wrap; }
-  #info { color: #9ad; }
+  .corner { position: absolute; width: 22px; height: 22px; border: 2px solid var(--accent); pointer-events: none; }
+  .tl { left: 0; top: 0; border-right: 0; border-bottom: 0; }
+  .tr { right: 0; top: 0; border-left: 0; border-bottom: 0; }
+  .bl { left: 0; bottom: 0; border-right: 0; border-top: 0; }
+  .br { right: 0; bottom: 0; border-left: 0; border-top: 0; }
+
+  .tags { position: absolute; display: flex; gap: 8px; pointer-events: none; }
+  .tags.top { left: 12px; top: 12px; }
+  .tags.bottom { left: 12px; right: 12px; bottom: 12px; align-items: center; }
+  .tag { background: rgba(9, 12, 16, .82); border: 1px solid var(--line); color: var(--dim);
+         padding: 3px 8px; letter-spacing: .1em; white-space: nowrap; }
+  .tag b { color: var(--text); font-weight: 600; }
+  .tag.key { border-color: #3a2f18; color: var(--accent); }
+  .tags.bottom .hint { margin-left: auto; color: var(--dim); letter-spacing: .08em;
+                       background: rgba(9, 12, 16, .82); padding: 3px 8px; border: 1px solid var(--line); }
+
+  aside { background: var(--panel); border-left: 1px solid var(--line); padding: 14px;
+          display: flex; flex-direction: column; gap: 6px; }
+  .group { letter-spacing: .16em; color: var(--dim); margin: 14px 0 10px; }
+  .group:first-child { margin-top: 0; }
+  .row { display: flex; align-items: center; gap: 8px; margin-bottom: 9px; }
+  .row label { color: var(--dim); letter-spacing: .12em; width: 58px; flex: none; }
+  .row output { margin-left: auto; color: var(--text); }
+  input[type=range] { -webkit-appearance: none; appearance: none; flex: 1; height: 3px;
+                      background: var(--line); border-radius: 2px; outline: none; }
+  input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 13px; height: 13px;
+                      background: var(--accent); border-radius: 2px; cursor: pointer; }
+  input[type=range]::-moz-range-thumb { width: 13px; height: 13px; background: var(--accent);
+                      border: 0; border-radius: 2px; cursor: pointer; }
+  input[type=text] { width: 100%; background: var(--sunk); border: 1px solid var(--line);
+                     color: var(--text); padding: 6px 8px; font: inherit; }
+  .buttons { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  button { background: var(--sunk); color: var(--text); border: 1px solid var(--line);
+           padding: 8px 6px; cursor: pointer; font: inherit; letter-spacing: .1em; }
+  button:hover { border-color: var(--accent); color: var(--accent); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #17120a;
+                   font-weight: 700; padding: 11px 6px; }
+  button.primary:hover { background: #ffb838; color: #17120a; }
+  button.wide { grid-column: 1 / -1; }
+  aside .foot { margin-top: auto; color: #45505c; letter-spacing: .1em; line-height: 1.6;
+                border-top: 1px solid var(--line); padding-top: 10px; }
+
+  #statusbar { display: flex; align-items: center; gap: 18px; flex-wrap: wrap;
+               padding: 8px 14px; border-top: 1px solid var(--line); background: var(--panel); }
+  #statusbar .k { color: var(--dim); letter-spacing: .12em; }
+  #statusbar .v { color: var(--text); font-weight: 600; }
+  #statusbar .right { margin-left: auto; display: flex; align-items: center; gap: 16px; }
+  #statusbar label { color: var(--dim); letter-spacing: .1em; display: flex; align-items: center; gap: 6px;
+                     cursor: pointer; }
+  input[type=checkbox] { accent-color: var(--accent); }
+
+  #msg { padding: 8px 4px; color: var(--accent); white-space: pre-wrap; min-height: 18px;
+         font-size: 12px; line-height: 1.5; }
+  #pieces { padding: 0 4px 10px; display: flex; flex-wrap: wrap; gap: 12px; }
+  #pieces figure { margin: 0; }
+  #pieces img { border: 1px solid var(--line); display: block; }
+  #pieces figcaption { font-size: 11px; color: var(--dim); padding-top: 4px; max-width: 260px; }
+  #pieces input[type=text], #pieces input:not([type]) { width: 170px; background: var(--sunk);
+         border: 1px solid var(--line); color: var(--text); padding: 4px 6px; font: inherit; }
+  #pieces button { padding: 4px 8px; }
+  @media (max-width: 900px) { #main { grid-template-columns: 1fr; } }
 </style>
 </head>
 <body>
-<div id="wrap">
-  <img id="cam" src="/stream" alt="camera">
-  <canvas id="guides"></canvas>
+<header>
+  <div class="logo">R</div>
+  <div class="brand">REACHY MINI <i>/ TELEOP CONSOLE</i></div>
+  <div class="right">
+    <span class="live" id="link">CONNECTING</span>
+    <span id="res">-</span>
+    <span id="fps">-</span>
+  </div>
+</header>
+
+<div id="main">
+  <div id="stage">
+    <div id="wrap">
+      <img id="cam" src="/stream" alt="camera">
+      <canvas id="guides"></canvas>
+      <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+      <div class="tags top">
+        <span class="tag">CAM-01 &middot; <b>HEAD</b></span>
+        <span class="tag key" id="lock">BOARD LOCK &middot; <b>-</b></span>
+      </div>
+      <div class="tags bottom">
+        <span class="tag">PITCH <b id="tagPitch">-</b></span>
+        <span class="tag">YAW <b id="tagYaw">-</b></span>
+        <span class="tag">BODY <b id="tagBody">-</b></span>
+        <span class="tag">ZOOM <b id="tagZoom">-</b></span>
+        <span class="hint">CLICK THE IMAGE TO CENTRE</span>
+      </div>
+    </div>
+    <div id="msg"></div>
+    <div id="pieces"></div>
+    <div id="bar2" style="display:none">
+      <label>board guide margin <input id="margin" type="range" min="0" max="30" value="8">%</label>
+    </div>
+  </div>
+
+  <aside>
+    <div class="group">HEAD ATTITUDE</div>
+    <div class="row"><label>PITCH</label><input id="pitch" type="range" min="-10" max="60" value="__PITCH__"><output id="pitchv"></output></div>
+    <div class="row"><label>YAW</label><input id="yaw" type="range" min="-45" max="45" value="0"><output id="yawv"></output></div>
+    <div class="row"><label>BODY</label><input id="body" type="range" min="-90" max="90" value="0"><output id="bodyv"></output></div>
+    <div class="row"><label>ZOOM</label><input id="zoom" type="range" min="1" max="4" step="0.5" value="1"><output id="zoomv"></output></div>
+    <div class="buttons">
+      <button id="table">LOOK AT TABLE</button>
+      <button id="unzoom">RESET ZOOM</button>
+    </div>
+
+    <div class="group">SWEEP</div>
+    <div class="row" style="display:block">
+      <label style="width:auto;display:block;margin-bottom:6px">BODY ANGLES (&deg;)</label>
+      <input id="angles" type="text" value="60,30,0,-30,-60">
+    </div>
+    <div class="buttons">
+      <button id="sweep">SWEEP</button>
+      <button id="baseline">BASELINE (EMPTY)</button>
+    </div>
+
+    <div class="group">MISSION</div>
+    <div class="buttons">
+      <button id="scan" class="primary wide">SCAN THE BOARD</button>
+      <button id="snap" class="wide">SNAPSHOT</button>
+    </div>
+
+    <div class="foot">REACHY MINI &middot; POLLEN ROBOTICS<br>ELDRITCH HORROR 2013</div>
+  </aside>
 </div>
-<div id="bar">
-  <span id="info">connecting...</span>
-  <label>pitch <input id="pitch" type="range" min="-10" max="60" value="__PITCH__"> <span id="pitchv"></span>&deg;</label>
-  <label>yaw <input id="yaw" type="range" min="-45" max="45" value="0"> <span id="yawv"></span>&deg;</label>
-  <label>body <input id="body" type="range" min="-90" max="90" value="0"> <span id="bodyv"></span>&deg;</label>
-  <button id="table">Look at the table</button>
-  <button id="snap">Snapshot</button>
-  <label>zoom <input id="zoom" type="range" min="1" max="4" step="0.5" value="1"> <span id="zoomv"></span>x (click the image to centre)</label>
-  <button id="unzoom">Reset zoom</button>
-  <label>sweep body angles <input id="angles" type="text" value="60,30,0,-30,-60" size="16"></label>
-  <button id="sweep">Sweep</button>
-  <a href="/gallery" target="_blank" style="color:#9ad">gallery</a>
-  <label><input id="grid" type="checkbox" checked> guides</label>
-  <label><input id="overlay" type="checkbox" checked> board overlay</label>
-  <a href="/rectified.jpg" target="_blank" style="color:#9ad">top-down view</a>
-  <button id="baseline">Baseline sweep (empty board)</button>
-  <button id="scan">Scan the board</button>
+
+<div id="statusbar">
+  <span><span class="k">FRAME AGE</span> <span class="v" id="age">-</span></span>
+  <span><span class="k">RES</span> <span class="v" id="res2">-</span></span>
+  <span><span class="k">FPS</span> <span class="v" id="fps2">-</span></span>
+  <span><span class="k">INLIERS</span> <span class="v" id="inliers">-</span></span>
+  <span class="right">
+    <label><input id="grid" type="checkbox" checked> GUIDES</label>
+    <label><input id="overlay" type="checkbox" checked> BOARD OVERLAY</label>
+    <a href="/rectified.jpg" target="_blank">TOP-DOWN VIEW</a>
+    <a href="/gallery" target="_blank">GALLERY</a>
+  </span>
 </div>
-<div id="pieces" style="padding: 0 12px 8px; display: flex; flex-wrap: wrap; gap: 10px;"></div>
-<div id="bar2" style="display:none">
-  <label>board guide margin <input id="margin" type="range" min="0" max="30" value="8">%</label>
-</div>
-<div id="msg"></div>
+
 <script>
 const cam = document.getElementById('cam'), canvas = document.getElementById('guides');
-const info = document.getElementById('info'), msg = document.getElementById('msg');
+const msg = document.getElementById('msg');
 const pitch = document.getElementById('pitch'), yaw = document.getElementById('yaw');
 const pitchv = document.getElementById('pitchv'), yawv = document.getElementById('yawv');
 const grid = document.getElementById('grid'), margin = document.getElementById('margin');
 const body = document.getElementById('body'), bodyv = document.getElementById('bodyv');
 const overlay = document.getElementById('overlay');
+const el = (id) => document.getElementById(id);
 let board = null;  // last /board answer: outline and spaces in frame fractions
 let found = [];    // last /detect answer: pieces with frame boxes in fractions
 let scanning = false;
 let lastShown = '';  // the scan result already rendered (a reload in the middle of a scan must not lose it)
 function labelForm(crop, current) {
   const id = 'lbl' + Math.random().toString(36).slice(2, 8);
-  return `<div style="font-size:12px"><input id="${id}" placeholder="kind:name, e.g. investigator:Akachi Onyele" value="${current || ''}" size="22"> <button onclick="saveLabel('${crop}', '${id}')">Save</button></div>`;
+  return `<div style="padding-top:4px"><input id="${id}" placeholder="kind:name, e.g. investigator:Akachi Onyele" value="${current || ''}"> <button onclick="saveLabel('${crop}', '${id}')">SAVE</button></div>`;
 }
 async function saveLabel(crop, id) {
   const label = document.getElementById(id).value.trim();
@@ -144,19 +275,19 @@ async function showScan() {
   msg.textContent = j.text + (j.unseen.length ? `  |  not covered by any view: ${j.unseen.join(', ')}` : '  |  every space covered') + (skipped.length ? `  |  skipped ${skipped.join('; ')}` : '');
   const box = document.getElementById('pieces'); box.innerHTML = '';
   for (const r of (j.reserve || [])) {
-    const fig = document.createElement('figure'); fig.style.margin = '0';
+    const fig = document.createElement('figure');
     const label = !r.seen ? 'not in view' : (r.occupied ? 'card' : 'empty');
     const named = r.occupied && r.name ? ` ${r.name.replace(':', ' ')} (${Math.round(r.name_score * 100)}%)` : (r.occupied ? ' unknown card' : '');
-    fig.innerHTML = `<img src="${r.crop || ''}" style="height:160px;border:2px solid ${r.occupied ? '#fd5' : '#555'};display:block"><figcaption style="font-size:12px;color:#ccc">Reserve slot ${r.slot}: ${label}${named} (${Math.round(r.fraction * 100)}%)</figcaption>` + (r.occupied && r.crop ? labelForm(r.crop, r.name) : '');
+    fig.innerHTML = `<img src="${r.crop || ''}" style="height:160px;border-color:${r.occupied ? '#f0a828' : '#1f2731'}"><figcaption>Reserve slot ${r.slot}: ${label}${named} (${Math.round(r.fraction * 100)}%)</figcaption>` + (r.occupied && r.crop ? labelForm(r.crop, r.name) : '');
     box.appendChild(fig);
   }
   for (const p of j.pieces) {
-    const fig = document.createElement('figure'); fig.style.margin = '0';
+    const fig = document.createElement('figure');
     let where = p.space || (p.near ? 'near ' + p.near : 'between spaces');
     if (p.kind === 'die') where = `die showing ${p.value ?? '?'}${p.kind_confidence < 0.6 ? ' (unsure)' : ''} at ${where}`;
     else if (p.name) where = `${p.name.replace(':', ' ')} (${Math.round(p.name_score * 100)}%) at ${where}`;
     else where = `unknown piece at ${where}`;
-    fig.innerHTML = `<img src="${p.crop}" style="height:160px;border:1px solid #555;display:block;cursor:zoom-in"><figcaption style="font-size:12px;color:#ccc">${where} (seen from ${p.views.join(', ')}${p.confirmed ? ', confirmed by a closer look' : ''})</figcaption>` + (p.kind === 'die' ? '' : labelForm(p.crop, p.name));
+    fig.innerHTML = `<img src="${p.crop}" style="height:160px;cursor:zoom-in"><figcaption>${where} (seen from ${p.views.join(', ')}${p.confirmed ? ', confirmed by a closer look' : ''})</figcaption>` + (p.kind === 'die' ? '' : labelForm(p.crop, p.name));
     fig.querySelector('img').onclick = () => { if (p.views.includes('centre') && p.box) { zoom.value = 3; setZoom(3, (p.box[0] + p.box[2]) / 2, (p.box[1] + p.box[3]) / 2); } };
     box.appendChild(fig);
   }
@@ -165,7 +296,7 @@ async function showScan() {
 const zoom = document.getElementById('zoom'), zoomv = document.getElementById('zoomv');
 let crop = {factor: 1, cx: 0.5, cy: 0.5};
 async function setZoom(factor, cx, cy) {
-  crop = {factor, cx, cy}; zoomv.textContent = factor;
+  crop = {factor, cx, cy}; zoomv.textContent = factor + 'x'; el('tagZoom').textContent = factor + 'x';
   await fetch('/zoom', {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify(crop)});
 }
 zoom.oninput = () => setZoom(+zoom.value, crop.cx, crop.cy);
@@ -184,7 +315,7 @@ function draw() {
   const c = canvas.getContext('2d');
   c.clearRect(0, 0, w, h);
   if (!grid.checked) { drawBoard(); return; }
-  c.strokeStyle = 'rgba(255,255,255,0.45)'; c.lineWidth = 1;
+  c.strokeStyle = 'rgba(255,255,255,0.28)'; c.lineWidth = 1;
   for (const f of [1/3, 2/3]) {
     c.beginPath(); c.moveTo(w*f, 0); c.lineTo(w*f, h); c.stroke();
     c.beginPath(); c.moveTo(0, h*f); c.lineTo(w, h*f); c.stroke();
@@ -194,10 +325,10 @@ function draw() {
   c.beginPath(); c.moveTo(w/2, h/2-20); c.lineTo(w/2, h/2+20); c.stroke();
   drawBoard();
   const m = margin.value / 100;
-  c.setLineDash([10, 8]); c.strokeStyle = 'rgba(80,220,120,0.9)';
+  c.setLineDash([10, 8]); c.strokeStyle = 'rgba(80,220,120,0.85)';
   c.strokeRect(w*m, h*m, w*(1-2*m), h*(1-2*m));
   c.setLineDash([]);
-  c.fillStyle = 'rgba(80,220,120,0.9)'; c.font = '13px system-ui';
+  c.fillStyle = 'rgba(80,220,120,0.85)'; c.font = '12px ui-monospace, Menlo, monospace';
   c.fillText('board should fill the dashed area', w*m + 6, h*m + 16);
 }
 function toView(p) {  // frame fraction -> canvas pixels, through the current zoom crop
@@ -210,22 +341,28 @@ function drawBoard() {
   for (const p of found) {
     const [x0, y0] = toView([p.box[0], p.box[1]]), [x1, y1] = toView([p.box[2], p.box[3]]);
     c.strokeStyle = '#f44'; c.lineWidth = 3; c.strokeRect(x0, y0, x1 - x0, y1 - y0);
-    c.fillStyle = '#f44'; c.font = 'bold 14px system-ui'; c.fillText(p.space || (p.near ? 'near ' + p.near : '?'), x0, y0 - 4);
+    c.fillStyle = '#f44'; c.font = 'bold 13px ui-monospace, Menlo, monospace'; c.fillText(p.space || (p.near ? 'near ' + p.near : '?'), x0, y0 - 4);
   }
   if (!overlay.checked || !board || !board.inliers) return;
-  c.strokeStyle = 'rgba(0,220,80,0.9)'; c.lineWidth = 2; c.beginPath();
+  c.strokeStyle = 'rgba(240,168,40,0.55)'; c.lineWidth = 2; c.beginPath();
   board.outline.forEach((p, i) => { const [x, y] = toView(p); i ? c.lineTo(x, y) : c.moveTo(x, y); });
   c.closePath(); c.stroke();
-  c.font = '12px system-ui';
+  c.font = '12px ui-monospace, Menlo, monospace';
   for (const s of board.spaces) {
     const [x, y] = toView([s.x, s.y]);
     c.strokeStyle = s.kind === 'sea' ? '#4af' : (s.kind === 'wilderness' ? '#6d6' : '#fd5');
+    c.lineWidth = 2;
     c.beginPath(); c.arc(x, y, 7, 0, 2 * Math.PI); c.stroke();
-    c.fillStyle = 'rgba(0,0,0,0.6)'; c.fillRect(x + 9, y - 14, c.measureText(s.name).width + 6, 16);
-    c.fillStyle = '#fff'; c.fillText(s.name, x + 12, y - 2);
+    c.fillStyle = 'rgba(9,12,16,0.82)'; c.fillRect(x + 9, y - 15, c.measureText(s.name).width + 8, 18);
+    c.fillStyle = '#fff'; c.fillText(s.name, x + 13, y - 2);
   }
 }
-function labels() { pitchv.textContent = pitch.value; yawv.textContent = yaw.value; bodyv.textContent = body.value; zoomv.textContent = zoom.value; }
+function labels() {
+  pitchv.textContent = pitch.value + '\\u00b0'; yawv.textContent = yaw.value + '\\u00b0';
+  bodyv.textContent = body.value + '\\u00b0'; zoomv.textContent = zoom.value + 'x';
+  el('tagPitch').textContent = pitch.value + '\\u00b0'; el('tagYaw').textContent = yaw.value + '\\u00b0';
+  el('tagBody').textContent = body.value + '\\u00b0'; el('tagZoom').textContent = zoom.value + 'x';
+}
 async function look() {
   labels();
   await fetch('/look', {method: 'POST', headers: {'content-type': 'application/json'},
@@ -257,19 +394,28 @@ cam.onload = draw;
 async function poll() {
   try {
     const s = await (await fetch('/status')).json();
-    info.textContent = s.frames ? `${s.width}x${s.height}  ${s.fps.toFixed(1)} fps  frame age ${s.age_s.toFixed(1)} s  head pitch ${s.pitch} yaw ${s.yaw} body ${s.body}  zoom ${s.zoom}x` : `waiting for frames (${s.waited_s.toFixed(0)} s)`;
+    if (s.frames) {
+      el('link').textContent = 'LINK ACTIVE';
+      el('res').textContent = `${s.width}x${s.height}`; el('res2').textContent = `${s.width}x${s.height}`;
+      el('fps').textContent = `${s.fps.toFixed(1)} FPS`; el('fps2').textContent = s.fps.toFixed(1);
+      el('age').textContent = `${s.age_s.toFixed(1)} s`;
+    } else {
+      el('link').textContent = `WAITING (${s.waited_s.toFixed(0)} s)`;
+    }
     if (s.warning) msg.textContent = s.warning;
     if (s.sweep) msg.textContent = s.sweep;
     if (s.scan) { msg.textContent = s.scan; if (s.scan.startsWith('scan done') && s.scan !== lastShown) { lastShown = s.scan; scanning = false; showScan(); } }
-    if (s.board !== undefined) info.textContent += s.board ? `  board: ${s.board} inliers` : '  board: not found';
-  } catch (e) { info.textContent = 'server unreachable'; }
+    if (s.board !== undefined) {
+      el('inliers').textContent = s.board ? s.board : 'none';
+      el('lock').innerHTML = s.board ? `BOARD LOCK &middot; <b>${s.board} INLIERS</b>` : `NO BOARD LOCK`;
+    }
+  } catch (e) { el('link').textContent = 'SERVER UNREACHABLE'; }
 }
 labels();
 setInterval(poll, 1000); poll(); draw();
 </script>
 </body>
-</html>
-"""
+</html>"""
 
 GALLERY = """<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><title>Reachy sweeps</title>
