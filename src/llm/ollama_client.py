@@ -5,6 +5,7 @@ from __future__ import annotations
 import time
 from collections.abc import Iterator
 from dataclasses import dataclass
+from typing import Any
 
 import ollama
 
@@ -37,11 +38,16 @@ def chat(
     temperature: float = 0.3,
     keep_alive: str = OLLAMA_KEEP_ALIVE,
     think: bool = False,
+    format: Any = None,
 ) -> Reply:
     """Send a chat and return the assistant reply with timing and token counts.
 
     ``think=False`` disables the model's reasoning trace (Qwen 3.x) to keep spoken answers
     fast; turn it on for strategy decisions where a longer deliberation is worth the wait.
+
+    ``format`` constrains the output: "json" for any object, or a JSON Schema dict for a
+    specific shape. Used where the answer is parsed rather than spoken, so that a model in a
+    chatty mood cannot wrap the object in prose.
     """
     client = ollama.Client(host=base_url)
     started = time.perf_counter()
@@ -52,6 +58,7 @@ def chat(
             options={"num_ctx": num_ctx, "temperature": temperature},
             keep_alive=keep_alive,
             think=think,
+            **({"format": format} if format is not None else {}),
         )
     except Exception as exc:  # ollama raises its own ResponseError / connection errors
         raise LLMError(f"Ollama chat failed ({model} at {base_url}): {exc}") from exc
