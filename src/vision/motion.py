@@ -24,6 +24,11 @@ Measured on the robot's live stream at 960x540, board untouched (2026-09-16):
 A piece is worth 33-60 by the same measure, so the signal sits about 7x above the noise, and
 the noise does not grow with the interval (it is the sensor, not drifting light).
 
+The *activity* that triggers a reading was measured the same way, on the same stream: an
+untouched board scores exactly 0.0000 (no pixel differs by the 30 grey levels ``activity``
+counts), and a hand moving pieces peaks at 0.006 to 0.039 of the frame. The gap is the whole
+margin, and it is one-sided: the floor is zero, so the trigger sits just above it.
+
 How a move is read: while the board is quiet the *anchor* frame is kept fresh. A hand reaching
 in raises the activity far above anything a piece does, which is the cue that a move is
 happening; when the board is quiet again for ``settle_frames``, the anchor is compared with the
@@ -59,10 +64,13 @@ log = get_logger(__name__)
 
 ACTIVITY_SCALE = 480  # frames are compared at this width: 4x less work, same activity fraction
 ACTIVITY_LEVEL = 30  # per-pixel grey difference counted as movement (sensor noise peaks at 15)
-# A hand reaching over the board covers far more than a piece does: a standee is about 2 % of
-# the frame, an arm an order of magnitude more. The gap between the two is what these bound.
-DISTURBED_FRACTION = 0.04  # of the frame moving: something is happening over the board
-QUIET_FRACTION = 0.004  # below this the board is considered still
+# Measured on the live 960x540 stream (2026-09-16), not estimated: with ACTIVITY_LEVEL at 30 no
+# pixel of an untouched board passes at all, so a still board reads as exactly 0.0000 for
+# minutes at a time, while a hand moving pieces peaks between 0.006 and 0.039 per frame. The
+# first guess at these bounds was 0.04 / 0.004, and a real move topped out at 0.0386: the
+# trigger never fired. The floor is what matters, and the floor is zero.
+DISTURBED_FRACTION = 0.005  # of the frame moving: something is happening over the board
+QUIET_FRACTION = 0.001  # below this the board is considered still
 SETTLE_FRAMES = 5  # consecutive quiet frames before a verdict (~0.5 s at 9.5 fps)
 MIN_MOVE_AREA = 300  # rectified-map pixels, as in detect.MIN_AREA
 
@@ -342,9 +350,23 @@ class PreviewStream:
         self._stop = True
 
 
-def watch(camera: Any, registration: Any, *, limit: int = 0, period_s: float = 0.1) -> list[Move]:
-    """Print every move until ``limit`` of them (0 = forever); returns what was seen."""
-    watcher = MotionWatcher(registration)
+def watch(
+    camera: Any,
+    registration: Any,
+    *,
+    limit: int = 0,
+    period_s: float = 0.1,
+    show_activity: bool = False,
+    watcher: MotionWatcher | None = None,
+) -> list[Move]:
+    """Print every move until ``limit`` of them (0 = forever); returns what was seen.
+
+    ``show_activity`` prints the peak activity once a second. The thresholds depend on the room
+    and the light, so this is how they are checked before trusting a session: an untouched board
+    should read 0.0000, and a hand over it should clear ``DISTURBED_FRACTION``.
+    """
+    watcher = watcher or MotionWatcher(registration)
+    bucket_start, peak = time.time(), 0.0
     seen: list[Move] = []
     last_count = -1
     while True:
@@ -357,6 +379,14 @@ def watch(camera: Any, registration: Any, *, limit: int = 0, period_s: float = 0
             continue
         last_count = count
         move = watcher.feed(frame)
+        if show_activity:
+            peak = max(peak, watcher.last_activity)
+            if time.time() - bucket_start >= 1.0:
+                print(
+                    f"[{time.strftime('%H:%M:%S')}] activity peak {peak:.4f}  {watcher.state}",
+                    flush=True,
+                )
+                bucket_start, peak = time.time(), 0.0
         if move is not None:
             seen.append(move)
             print(f"[{time.strftime('%H:%M:%S')}] {move.describe()}", flush=True)
@@ -384,6 +414,17 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--pitch", type=float, default=35.0, help="head pitch, degrees below level")
     parser.add_argument("--limit", type=int, default=0, help="stop after this many moves (0 = forever)")
+    parser.add_argument(
+        "--show-activity",
+        action="store_true",
+        help="print the peak activity once a second, to check the thresholds against this room",
+    )
+    parser.add_argument(
+        "--disturbed",
+        type=float,
+        default=DISTURBED_FRACTION,
+        help=f"fraction of the frame moving that counts as a disturbance (default {DISTURBED_FRACTION})",
+    )
     args = parser.parse_args(argv)
 
     direct = not args.fake and not args.from_preview
@@ -417,7 +458,13 @@ def main(argv: list[str] | None = None) -> int:
             "Move a piece; Ctrl-C to stop.",
             flush=True,
         )
-        watch(camera, registration, limit=args.limit)
+        watch(
+            camera,
+            registration,
+            limit=args.limit,
+            show_activity=args.show_activity,
+            watcher=MotionWatcher(registration, disturbed_fraction=args.disturbed),
+        )
     except KeyboardInterrupt:
         print("stopped", flush=True)
     finally:
