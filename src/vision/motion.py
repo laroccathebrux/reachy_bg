@@ -58,7 +58,7 @@ from typing import Any
 import numpy as np
 
 from src.logger import get_logger
-from src.vision.detect import MAP_WIDTH, Baseline, Piece, find_pieces
+from src.vision.detect import MAP_WIDTH, Baseline, Piece, difference_map, find_pieces
 
 log = get_logger(__name__)
 
@@ -73,6 +73,11 @@ DISTURBED_FRACTION = 0.005  # of the frame moving: something is happening over t
 QUIET_FRACTION = 0.001  # below this the board is considered still
 SETTLE_FRAMES = 5  # consecutive quiet frames before a verdict (~0.5 s at 9.5 fps)
 MIN_MOVE_AREA = 300  # rectified-map pixels, as in detect.MIN_AREA
+# A sweep of the body scored 0.036 to 0.100 per frame and a hand 0.006 to 0.039: the two ranges
+# overlap, so how much moved cannot say whether it was the camera. Where the board sits in the
+# frame can, and that is what VIEW_SHIFT_PX checks before a verdict is trusted.
+VIEW_SHIFT_PX = 25.0  # board corners may wander this far in the frame before the view is stale
+MAX_PIECES_PER_MOVE = 4  # a verdict naming more than this is not a person moving pieces
 
 
 @dataclass
@@ -164,28 +169,66 @@ def stands_out(rectified: np.ndarray, piece: Piece, *, ring: float = RING) -> fl
     return float(np.linalg.norm(inner.reshape(-1, 3).mean(axis=0) - background))
 
 
+def occupancy(rectified: np.ndarray, baseline: Baseline, piece: Piece) -> float:
+    """Mean difference from the *empty* board inside the blob's box: high means a piece is there.
+
+    This is the reliable arbiter of direction, and it is absolute rather than relative: it asks
+    "does this spot differ from the bare board" instead of "does this spot differ from its
+    surroundings". ``stands_out`` gets that wrong wherever the board's own art is busy - a piece
+    landing on the dark "The Heart of Africa" card barely raises the local contrast, and a real
+    move from The Pyramids to it was reported as two departures.
+
+    The baseline only arbitrates; it never triggers. A stale one degrades this verdict but
+    cannot make the watcher fire, so the module keeps working in light the baseline never saw.
+    """
+    h, w = rectified.shape[:2]
+    x0 = int(max(0, piece.x - piece.width / 2))
+    x1 = int(min(w, piece.x + piece.width / 2))
+    y0 = int(max(0, piece.y - piece.height / 2))
+    y1 = int(min(h, piece.y + piece.height / 2))
+    if x1 <= x0 or y1 <= y0:
+        return 0.0
+    diff = difference_map(rectified, baseline)
+    covered = baseline.coverage[y0:y1, x0:x1] == 255
+    window = diff[y0:y1, x0:x1]
+    return float(window[covered].mean()) if covered.any() else 0.0
+
+
 def compare(
     registration: Any,
     before: np.ndarray,
     after: np.ndarray,
     *,
     min_area: int = MIN_MOVE_AREA,
+    baseline: Baseline | None = None,
 ) -> Move:
     """What left and what arrived between two frames of the same fixed view.
 
     Each frame is used as the other's baseline, so the whole of ``find_pieces`` applies: the
     adaptive threshold, the hysteresis that keeps a standee's footprint, the masked Reserve and
     legend, and the naming of a piece by the space under its base. Both directions return the
-    same blobs, so each blob is then assigned to the frame it actually stands out in, which also
-    keeps the crop taken from the frame where the piece is visible.
+    same blobs, so each blob is then assigned to the frame it actually holds the piece in, which
+    also keeps the crop taken from the frame where the piece is visible.
+
+    With a ``baseline`` of the empty board the assignment is made by ``occupancy`` (absolute);
+    without one it falls back to ``stands_out`` (relative, and wrong over busy board art).
     """
     seen_after = find_pieces(registration, after, Baseline.capture(registration, before), min_area=min_area)
     seen_before = find_pieces(registration, before, Baseline.capture(registration, after), min_area=min_area)
-    width = MAP_WIDTH
+    width = baseline.image.shape[1] if baseline is not None else MAP_WIDTH
     rect_before = registration.rectify(before, width=width)
     rect_after = registration.rectify(after, width=width)
-    arrived = [p for p in seen_after if stands_out(rect_after, p) >= stands_out(rect_before, p)]
-    departed = [p for p in seen_before if stands_out(rect_before, p) > stands_out(rect_after, p)]
+    if baseline is not None:
+
+        def holds_piece(rectified: np.ndarray, piece: Piece) -> float:
+            return occupancy(rectified, baseline, piece)
+    else:
+
+        def holds_piece(rectified: np.ndarray, piece: Piece) -> float:
+            return stands_out(rectified, piece)
+
+    arrived = [p for p in seen_after if holds_piece(rect_after, p) >= holds_piece(rect_before, p)]
+    departed = [p for p in seen_before if holds_piece(rect_before, p) > holds_piece(rect_after, p)]
     return Move(departed=departed, arrived=arrived)
 
 
@@ -200,12 +243,20 @@ class MotionWatcher:
         disturbed_fraction: float = DISTURBED_FRACTION,
         quiet_fraction: float = QUIET_FRACTION,
         min_area: int = MIN_MOVE_AREA,
+        baseline: Baseline | None = None,
+        reference: Any = None,
+        view_shift_px: float = VIEW_SHIFT_PX,
+        max_pieces: int = MAX_PIECES_PER_MOVE,
     ):
         self.registration = registration
         self.settle_frames = settle_frames
         self.disturbed_fraction = disturbed_fraction
         self.quiet_fraction = quiet_fraction
         self.min_area = min_area
+        self.baseline = baseline
+        self.reference = reference  # BoardReference, to re-register and notice the view moving
+        self.view_shift_px = view_shift_px
+        self.max_pieces = max_pieces
         self.anchor: np.ndarray | None = None  # last frame of the board at rest
         self.previous: np.ndarray | None = None
         self.disturbed = False
@@ -224,6 +275,31 @@ class MotionWatcher:
         self.previous = self.anchor
         self.disturbed = False
         self.quiet_run = 0
+        self.camera_moved = False
+
+    def view_shifted(self, frame: np.ndarray) -> bool:
+        """Has the board moved within the frame since the registration was taken?
+
+        How *much* of the picture changed cannot answer this: a hand reaches 0.039 and a body
+        sweep starts at 0.036. Where the board's corners sit can, so the frame is registered
+        again and the outlines compared. Without a ``reference`` to register with, the watcher
+        trusts its view and leans on ``max_pieces`` to catch the damage instead.
+        """
+        if self.reference is None:
+            return False
+        fresh = self.reference.locate(frame)
+        if fresh is None:
+            log.warning("motion: the board is no longer recognised in this view")
+            return True
+        shift = float(np.abs(self.registration.outline() - fresh.outline()).max())
+        if shift <= self.view_shift_px:
+            return False
+        log.warning(
+            "motion: the view moved (board corners by %.0f px); the registration is stale, "
+            "not reading a move until it is renewed",
+            shift,
+        )
+        return True
 
     def feed(self, frame: np.ndarray) -> Move | None:
         """One frame in; a ``Move`` out when the board has just settled after being disturbed."""
@@ -249,11 +325,26 @@ class MotionWatcher:
             return None
         if self.quiet_run < self.settle_frames:
             return None
-        move = compare(self.registration, self.anchor, frame, min_area=self.min_area)
+        if self.view_shifted(frame):
+            # Settled, but the board is no longer where the registration says it is: the robot
+            # turned. Every verdict taken here would be noise (a sweep once produced "12 pieces
+            # left"), so drop it, re-anchor, and let the caller register the new view.
+            self.anchor = frame.copy()
+            self.disturbed = False
+            self.quiet_run = 0
+            return None
+        move = compare(self.registration, self.anchor, frame, min_area=self.min_area, baseline=self.baseline)
         move.seconds = time.time() - self.disturbed_since
         self.anchor = frame.copy()
         self.disturbed = False
         self.quiet_run = 0
+        total = len(move.departed) + len(move.arrived)
+        if total > self.max_pieces:
+            # A human moves one or two pieces at a time. A verdict naming a dozen means the
+            # picture changed for some other reason (the view shifted, the light jumped), and
+            # reporting it as a move would be worse than saying nothing.
+            log.warning("motion: %d pieces changed at once; ignoring as not a move", total)
+            return None
         if move.empty:
             log.info("motion: board settled, nothing changed (%.1f s)", move.seconds)
             return None
@@ -399,6 +490,7 @@ def main(argv: list[str] | None = None) -> int:
     import argparse
 
     from src.vision.board_map import BoardReference
+    from src.vision.detect import BaselineSet
     from src.vision.preview import FakeCamera, RobotCamera
 
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
@@ -414,6 +506,11 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--pitch", type=float, default=35.0, help="head pitch, degrees below level")
     parser.add_argument("--limit", type=int, default=0, help="stop after this many moves (0 = forever)")
+    parser.add_argument(
+        "--no-baseline",
+        action="store_true",
+        help="ignore the empty-board baseline and decide direction by local contrast instead",
+    )
     parser.add_argument(
         "--show-activity",
         action="store_true",
@@ -449,10 +546,23 @@ def main(argv: list[str] | None = None) -> int:
             where = args.from_preview or "the camera"
             print(f"no frame from {where}" + (f" ({camera.error})" if getattr(camera, "error", None) else ""))
             return 1
-        registration = BoardReference().locate(frame)
+        reference = BoardReference()
+        registration = reference.locate(frame)
         if registration is None:
             print("the board was not recognised in this view", flush=True)
             return 1
+        baseline = None
+        if not args.no_baseline:
+            from src.config import CAPTURE_DIR
+
+            try:
+                baseline = BaselineSet.load(CAPTURE_DIR / "board_baseline").views.get("centre")
+            except (FileNotFoundError, OSError) as exc:
+                log.info("no empty-board baseline (%s); direction falls back to local contrast", exc)
+        print(
+            "direction arbiter: " + ("empty-board baseline" if baseline is not None else "local contrast"),
+            flush=True,
+        )
         print(
             f"watching: {registration.inliers} inliers, {frame.shape[1]}x{frame.shape[0]}. "
             "Move a piece; Ctrl-C to stop.",
@@ -463,7 +573,12 @@ def main(argv: list[str] | None = None) -> int:
             registration,
             limit=args.limit,
             show_activity=args.show_activity,
-            watcher=MotionWatcher(registration, disturbed_fraction=args.disturbed),
+            watcher=MotionWatcher(
+                registration,
+                disturbed_fraction=args.disturbed,
+                baseline=baseline,
+                reference=reference,
+            ),
         )
     except KeyboardInterrupt:
         print("stopped", flush=True)
@@ -480,6 +595,7 @@ __all__ = [
     "activity",
     "compare",
     "iter_jpegs",
+    "occupancy",
     "stands_out",
     "watch",
 ]

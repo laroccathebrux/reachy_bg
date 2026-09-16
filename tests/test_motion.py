@@ -223,3 +223,82 @@ def test_the_watcher_ignores_a_repeated_frame(view):
         camera.advance()
     assert len(moves) == 1, f"expected one verdict, got {len(moves)}"
     assert [p.space for p in moves[0].arrived] == ["London"]
+
+
+def test_a_turned_view_is_refused_instead_of_read_as_a_move(view):
+    """A body sweep once produced "12 pieces left": the registration belonged to the old view."""
+    board, reference, registration, empty, true_h, _ = view
+    watcher = MotionWatcher(registration, settle_frames=2, min_area=MIN_AREA, reference=reference)
+
+    # the same board from a different camera pose, the way a body sweep leaves it
+    h, w = board.shape[:2]
+    src = np.float32([[0, 0], [w, 0], [w, h], [0, h]])
+    dst = np.float32([[10, 30], [740, 50], [620, 380], [150, 370]])
+    turned = cv2.warpPerspective(board, cv2.getPerspectiveTransform(src, dst), (640, 400))
+    assert watcher.view_shifted(turned), "the moved view was not noticed"
+    assert not watcher.view_shifted(empty), "the unchanged view was called stale"
+
+    watcher.feed(empty)
+    watcher.feed(a_hand_over(empty))
+    assert watcher.state == "disturbed"
+    verdicts = [watcher.feed(turned) for _ in range(5)]
+    assert all(v is None for v in verdicts), "a verdict was read from a stale registration"
+    assert watcher.moves == []
+
+
+def test_a_verdict_naming_too_many_pieces_is_dropped(view):
+    _, _, registration, empty, _, _ = view
+    watcher = MotionWatcher(registration, settle_frames=2, min_area=MIN_AREA, max_pieces=1)
+
+    class ManyPieces:
+        pass
+
+    from src.vision import motion as motion_module
+    from src.vision.detect import Piece
+
+    original = motion_module.compare
+    motion_module.compare = lambda *a, **k: Move(
+        departed=[Piece(10, 10, 5, 5, 400, 70.0, "London", 0.0)],
+        arrived=[Piece(20, 20, 5, 5, 400, 70.0, "Rome", 0.0), Piece(30, 30, 5, 5, 400, 70.0, "Tokyo", 0.0)],
+    )
+    try:
+        watcher.feed(empty)
+        watcher.feed(a_hand_over(empty))
+        verdicts = [watcher.feed(empty) for _ in range(4)]
+        assert all(v is None for v in verdicts), "a 3-piece verdict passed a max_pieces of 1"
+        assert watcher.moves == []
+    finally:
+        motion_module.compare = original
+
+
+def test_the_baseline_decides_direction_over_busy_board_art(view):
+    """The live failure: a piece landing on a dark card was called a departure.
+
+    ``stands_out`` asks how far the blob sits from its surroundings, which barely moves when a
+    piece lands on art that is already dark. ``occupancy`` asks whether the spot differs from
+    the *empty* board, which is unambiguous.
+    """
+    from src.vision.detect import Baseline
+    from src.vision.motion import occupancy
+
+    board, reference, registration, empty, true_h, size = view
+    baseline = Baseline.capture(registration, empty)
+
+    # A dark card printed on the board at Rome, with the piece landing on top of it later.
+    with_card = board.copy()
+    cx, cy = BY_NAME["Rome"].pixel(reference.width, reference.height)
+    cv2.rectangle(with_card, (int(cx) - 22, int(cy) - 22), (int(cx) + 22, int(cy) + 22), (35, 30, 25), -1)
+    before = cv2.warpPerspective(with_card, true_h, size)
+    on_the_card = with_card.copy()
+    cv2.circle(on_the_card, (int(cx), int(cy)), 13, (30, 30, 230), -1)
+    after = cv2.warpPerspective(on_the_card, true_h, size)
+
+    base_of_card = Baseline.capture(registration, before)  # the board *with* its printed card
+    move = compare(registration, before, after, min_area=MIN_AREA, baseline=base_of_card)
+    assert [p.space for p in move.arrived] == ["Rome"], f"got {move.describe()}"
+    assert move.departed == []
+
+    rect_after = registration.rectify(after, width=base_of_card.image.shape[1])
+    piece = move.arrived[0]
+    assert occupancy(rect_after, base_of_card, piece) > 0.0
+    assert occupancy(rect_after, baseline, piece) > 0.0
