@@ -209,3 +209,44 @@ def test_names_investigator_matches_any_part_of_the_name():
     assert names_investigator("it is Lily Chen's turn", "Lily Chen")
     assert not names_investigator("é a vez do Leo", "Lily Chen")
     assert not names_investigator("é a vez da Lily", "")
+
+
+def test_the_speaker_keeps_the_floor_for_what_they_are_still_saying():
+    # The live session of 2026-09-16: the owner explained a card in four breaths and only the
+    # ones that happened to be questions got through.
+    said = "Vou botar um Eldritch Token no espaço 18 e outro no espaço 8."
+    assert not decide(said, "pt-BR", humans_present=2).addressed
+    verdict = decide(said, "pt-BR", humans_present=2, seconds_since_addressed=4.4)
+    assert verdict.addressed and verdict.reason == "holding_the_floor"
+
+
+def test_the_floor_closes_after_its_window():
+    said = "Eu coloquei lá, ok?"
+    assert decide(said, "pt-BR", humans_present=2, seconds_since_addressed=90).reason != "holding_the_floor"
+    assert (
+        decide(said, "pt-BR", humans_present=2, seconds_since_addressed=5, floor_window_s=2).reason
+        != "holding_the_floor"
+    )
+
+
+def test_naming_another_player_ends_the_floor():
+    verdict = decide(
+        "Bruno, o que você acha?",
+        "pt-BR",
+        humans_present=2,
+        other_names=["Bruno"],
+        seconds_since_addressed=2.0,
+    )
+    assert not verdict.addressed and verdict.reason == "other_person"
+
+
+def test_a_reply_right_after_the_robot_spoke_is_still_a_follow_up():
+    # The floor must not swallow the more specific label: the robot had just spoken.
+    verdict = decide(
+        "Sim, claro",
+        "pt-BR",
+        humans_present=2,
+        seconds_since_robot_spoke=1.0,
+        seconds_since_addressed=3.0,
+    )
+    assert verdict.reason == "follow_up_reply"

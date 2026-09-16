@@ -85,10 +85,37 @@ class Gatekeeper:
         self.clock = clock
         self.asr_lock = threading.Lock()  # one Whisper call at a time (the spotter shares it)
         self.last_addressed = ""
+        # Who last spoke to the robot and when: while that voice holds the floor, its next
+        # sentences are for the robot too (see addressee.decide's seconds_since_addressed).
+        self.addressed_at: float | None = None
+        self.addressed_label = ""
         self.early_release_at: float | None = None
         self.early_text = ""
         self.early_language = ""
         self.verdicts: list[Verdict] = []
+
+    def _floor_seconds(self, speaker: str, label: str) -> float | None:
+        """How long ago this same voice last spoke to the robot, or None if it was not this one.
+
+        The voiceprint name is the better key; when nobody is enrolled the diarizer's anonymous
+        label still separates one speaker from another. With neither, the floor is not opened:
+        a table where no voice can be told apart is exactly where "everything continues" would
+        send the other player's sentences to the agent.
+        """
+        if self.addressed_at is None:
+            return None
+        if speaker or self.last_addressed:
+            same = bool(speaker) and speaker == self.last_addressed
+        elif label or self.addressed_label:
+            same = bool(label) and label == self.addressed_label
+        else:
+            same = False
+        return self.clock() - self.addressed_at if same else None
+
+    def _floor_opened(self, speaker: str, label: str) -> None:
+        self.last_addressed = speaker
+        self.addressed_label = label
+        self.addressed_at = self.clock()
 
     # ------------------------------------------------------------------ early release
     def early_release(self, text: str, language: str) -> int:
@@ -107,6 +134,7 @@ class Gatekeeper:
             verdict = Verdict(
                 "early", Decision(True, "name", 0.95), self.early_text, self.early_language, 0, 0, 0, 0
             )
+            self._floor_opened(speaker, label)
             return self._done(verdict, utterance, speaker, score, label, None)
 
         # The whole voice fell inside the robot's own playback and no barge-in released it: the
@@ -145,6 +173,7 @@ class Gatekeeper:
                 follow_up_ok=bool(speaker) and speaker == self.last_addressed,
                 other_names=[n for n in self.names if n != speaker],
                 my_investigator=self.my_investigator(),
+                seconds_since_addressed=self._floor_seconds(speaker, label),
             )
 
         if decision.addressed and decision.reason == "my_turn" and self.on_my_turn is not None:
@@ -155,7 +184,7 @@ class Gatekeeper:
                 log.exception("gatekeeper: taking the turn failed (%s)", exc)
             if taken:
                 dropped = self.audio.discard_utterance(until) if self.active else 0
-                self.last_addressed = speaker
+                self._floor_opened(speaker, label)
                 verdict = Verdict("my_turn", decision, text, language, 0, dropped, 0, whisper_ms)
                 return self._done(verdict, utterance, speaker, score, label, since)
 
@@ -180,7 +209,7 @@ class Gatekeeper:
             dropped = self.audio.discard_utterance(until)
             route = "discarded"
         if decision.addressed:
-            self.last_addressed = speaker
+            self._floor_opened(speaker, label)
         verdict = Verdict(route, decision, text, language, forwarded, dropped, 0, whisper_ms)
         verdict = self._done(verdict, utterance, speaker, score, label, since)
         if route == "switched" and self.on_switch is not None:

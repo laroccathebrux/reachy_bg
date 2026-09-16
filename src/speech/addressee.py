@@ -10,6 +10,9 @@ The rules, in order of confidence:
    with full confidence when the sentence hands over the turn.
 2. Another player is named as the vocative ("Bruno, what do you think?"): not for the robot.
 3. A question or a short reply within ``FOLLOW_UP_WINDOW_S`` after the robot spoke: follow-up.
+3b. The speaker still holds the floor: they spoke to the robot less than ``FLOOR_WINDOW_S``
+   ago and nobody else has spoken since, so this sentence continues what they were telling it -
+   a statement counts, which is how a person explains a board.
 4. A question about the rules or the game while it is the robot's turn: probably for it.
 5. A rules question to the table: answered when ``ANSWER_GAME_QUESTIONS`` is on (a
    knowledgeable player would), logged either way.
@@ -32,7 +35,13 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
-from src.config import ANSWER_GAME_QUESTIONS, FOLLOW_UP_WINDOW_S, GAME_LOG_DIR, ROBOT_NAME_ALIASES
+from src.config import (
+    ANSWER_GAME_QUESTIONS,
+    FLOOR_WINDOW_S,
+    FOLLOW_UP_WINDOW_S,
+    GAME_LOG_DIR,
+    ROBOT_NAME_ALIASES,
+)
 
 _INTERROGATIVES = {
     "pt-BR": (
@@ -227,6 +236,8 @@ def decide(
     follow_up_ok: bool = True,
     other_names: Iterable[str] = (),
     my_investigator: str = "",
+    seconds_since_addressed: float | None = None,
+    floor_window_s: float = FLOOR_WINDOW_S,
 ) -> Decision:
     """Decide whether the utterance is for the robot.
 
@@ -239,6 +250,14 @@ def decide(
     ``my_investigator`` is the investigator the robot is playing. Handing the robot its turn by
     naming its investigator - "it is Lily Chen's turn" - counts exactly like calling its own
     name, which is how people actually pass the turn at a table.
+
+    ``seconds_since_addressed`` is how long ago this same voice last said something the robot
+    took as its own, and it is what lets a person *tell* the robot something rather than only
+    ask it. In the first live session the owner explained a card in four breaths - "Reachy, eu
+    comprei uma carta", "chamada Deep Ones Attack", "quando ela entra em jogo...", "coloquei um
+    Eldritch Token no espaço 18" - and only the breaths that happened to be questions got
+    through; the rest were dropped as table talk. While the floor is open, a statement counts.
+    Naming another player still ends it, because that sentence is plainly for them.
     """
     if mentions_robot(text):
         return Decision(True, "name", 0.95)
@@ -267,6 +286,10 @@ def decide(
         return Decision(True, "follow_up_question", 0.8)
     if recent and len(_words(text)) <= _SHORT_REPLY_MAX_WORDS:
         return Decision(True, "follow_up_reply", 0.6)
+    if seconds_since_addressed is not None and 0 <= seconds_since_addressed <= floor_window_s:
+        # The same person is still talking to the robot: this is the rest of what they were
+        # saying, whether or not it happens to be a question.
+        return Decision(True, "holding_the_floor", 0.7)
     if robot_turn and question and about_the_game(text, language):
         return Decision(True, "robot_turn_question", 0.6)
     if question and about_the_game(text, language):

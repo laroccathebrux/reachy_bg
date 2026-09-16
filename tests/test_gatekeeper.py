@@ -239,3 +239,42 @@ def test_the_gatekeeper_reads_its_investigator_at_decision_time():
     assert callable(signature.parameters["my_investigator"].default), (
         "it must be a callable read per utterance, not a fixed string"
     )
+
+
+def test_the_floor_carries_a_statement_from_the_same_voice(tmp_path):
+    k, audio, asr, _, _ = keeper(
+        tmp_path,
+        [Result("Reachy, eu comprei uma carta"), Result("Vou botar um Eldritch Token no espaço 18")],
+        names=("Alessandro",),
+    )
+    first = k.judge(utterance(100.0), "Alessandro", 0.7)
+    second = k.judge(utterance(106.0), "Alessandro", 0.7)
+    assert first.route == "released" and first.decision.reason == "name"
+    assert second.route == "released" and second.decision.reason == "holding_the_floor"
+
+
+def test_another_voice_does_not_inherit_the_floor(tmp_path):
+    k, audio, asr, _, _ = keeper(
+        tmp_path,
+        [Result("Reachy, eu comprei uma carta"), Result("Vou botar um Eldritch Token no espaço 18")],
+        names=("Alessandro", "Bruno"),
+    )
+    k.judge(utterance(100.0), "Alessandro", 0.7)
+    second = k.judge(utterance(106.0), "Bruno", 0.7)
+    assert second.route == "discarded"
+
+
+def test_with_no_voiceprints_the_diarizer_label_keeps_the_floor_apart(tmp_path):
+    k, audio, asr, _, _ = keeper(
+        tmp_path,
+        [
+            Result("Reachy, eu comprei uma carta"),
+            Result("Vou botar um Eldritch Token no espaço 18"),
+            Result("Vou botar um Eldritch Token no espaço 18"),
+        ],
+    )
+    k.judge(utterance(100.0), "", 0.0, "speaker0")
+    same = k.judge(utterance(106.0), "", 0.0, "speaker0")
+    other = k.judge(utterance(112.0), "", 0.0, "speaker1")
+    assert same.decision.reason == "holding_the_floor"
+    assert other.route == "discarded"

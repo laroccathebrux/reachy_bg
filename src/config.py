@@ -144,6 +144,12 @@ ROBOT_NAME_ALIASES = tuple(
 )
 # A question within this many seconds after the robot finished speaking is a follow-up to it.
 FOLLOW_UP_WINDOW_S = float(os.getenv("FOLLOW_UP_WINDOW_S", "8"))
+# Once somebody has spoken to the robot, they keep the floor for this long: their next
+# sentences are for it too, even when they are statements with no name and no question in them.
+# People explain a board in several breaths, with pauses for moving pieces. 30 s is what the
+# first live session measured: replaying it (scripts/rules_replay.py) 20 s recovered 7 of the
+# owner's dropped instructions, 25 s recovered 8, 30 s recovered all 9, and 40 s added nothing.
+FLOOR_WINDOW_S = float(os.getenv("FLOOR_WINDOW_S", "30"))
 # Answer rules questions asked to the table without naming the robot (a knowledgeable player
 # would); false = only when named, after its own turn, or on its game turn.
 ANSWER_GAME_QUESTIONS = _env_bool("ANSWER_GAME_QUESTIONS", True)
@@ -284,6 +290,7 @@ __all__ = [
     "ROBOT_NAME",
     "ROBOT_NAME_ALIASES",
     "FOLLOW_UP_WINDOW_S",
+    "FLOOR_WINDOW_S",
     "ANSWER_GAME_QUESTIONS",
     "HF_TOKEN",
     "TTS_PROVIDER",

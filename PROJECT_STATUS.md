@@ -761,6 +761,42 @@ and `RobotAudioInterface` could not open without a microphone, which is all a re
 Still to do live, with the owner at the table: say it out loud to the robot and check in
 `conversation.jsonl` that the turn produced no agent turn at all.
 
+## Done: a person can tell the robot something, not only ask it (2026-09-16, first live turn)
+
+The first live session with the robot playing ended with the owner's verdict: "ele descartou
+muita instrução que era relevante... ele não tá sabendo reconhecer o próprio nome". The log said
+otherwise about the name - "Ritch", "Ei Rich", "Allie, Rich", "Reach", "Gate reach" were all
+heard as the name, and "É a vez da Lily Chang" was taken as its own turn - but he was right about
+the instructions, and the reason was in the rules rather than in the ears.
+
+The gate answered questions and name-calls and dropped **statements**. A person explaining a
+board does not ask anything:
+
+    17:22:18  Reach.                                                    -> released (name)
+    17:22:20  Eu comprei uma carta.                                     -> discarded
+    17:22:23  Chamada de Deep Ones Attack.                              -> discarded
+    17:22:24  Quando ela entra em jogo...                               -> released (a question)
+    17:22:29  Vou botar um Eldritch Token no espaço 18 e outro no 8.    -> discarded
+    17:22:30  Eu coloquei lá, ok?                                       -> discarded
+
+So the speaker now **keeps the floor**: once somebody has said something the robot took as its
+own, their next sentences are for it too, statements included, until 30 seconds pass in silence
+or they name another player. The voiceprint identifies the voice; with nobody enrolled the
+diarizer's anonymous label still keeps two speakers apart, and with neither the floor stays shut
+rather than opening for the table.
+
+`scripts/rules_replay.py` is how the window was chosen: it replays the addressee rules over the
+transcripts already in `addressee.jsonl`, instantly and with no audio, and prints the lines a
+rule change flips. On that session: 20 s recovered 7 of the 9 dropped instructions, 25 s
+recovered 8, **30 s recovered all 9, and 40 s added nothing**. Nothing that should have been
+ignored was released at any of those windows.
+
+Other things that session showed, not yet addressed: Whisper writes "Lily Chang", "Lily Shane",
+"AsaTot", "Azatov", "Eldritch Tolkien", "Old Jonah" (the setup extraction tolerates it, the
+knowledge lookups may not); and the owner reading the Reserve out loud right after the robot said
+those same card names was marked `self_echo`, which is the one case where the echo check and a
+person quoting the robot are genuinely the same signal.
+
 ## Decisions taken
 
 | Topic | Decision | Where |
