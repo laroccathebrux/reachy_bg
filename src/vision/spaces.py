@@ -56,7 +56,7 @@ SPACES: tuple[Space, ...] = (
     _px("5", "city", 216, 240),
     _px("6", "city", 183, 315),
     _px("7", "city", 244, 400),
-    _px("8", "city", 318, 336),
+    _px("8", "sea", 318, 336),  # blue ship-wheel token on the board, as in docs/GAME_REFERENCE.md
     _px("9", "wilderness", 412, 128),
     _px("10", "wilderness", 508, 425),
     _px("11", "sea", 527, 612),
