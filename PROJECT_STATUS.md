@@ -454,6 +454,75 @@ camera" direction (frame pixels above the horizon flip it); a fourth scan view f
 Reserve; locally normalised differences (noise as high as the signal); the SDK's
 `look_at_image`.
 
+## Done: what just moved, and what a VLM is worth here (2026-09-16)
+
+The scan compares the board with a baseline of the *empty* board, and that baseline ages: the
+evening one was useless the next morning. `src/vision/motion.py` answers a narrower question
+that does not age — "what changed just now" — by comparing consecutive frames, 0.1 s apart,
+where the light is the same light.
+
+Measured on the live stream at 960x540 with the board untouched:
+
+| Frames apart | Median difference | 95th percentile | Max |
+|---|---|---|---|
+| 1 (0.10 s) | 2.24 | 4.58 | 14.7 |
+| 9 (0.94 s) | 2.24 | 4.58 | 14.9 |
+
+A piece is worth 33-60 by the same measure: the signal is about 7x the noise, and the noise
+does not grow with the interval (it is the sensor, not drifting light).
+
+`MotionWatcher` keeps an *anchor* frame while the board is quiet. A hand reaching in raises the
+activity far above anything a piece does, which is the cue; when the board is still again for
+five frames the anchor is compared with the new frame by `find_pieces`, so the whole detector
+applies (adaptive threshold, hysteresis, masked Reserve and legend, naming by the space under
+the base). The occlusion is the trigger, not an obstacle.
+
+The rule that fell on the way: a frame difference is **symmetric**, so using either frame as
+the other's baseline returns the same blobs and cannot say which one holds the piece — the
+first version reported `['Rome', 'London']` as having both departed. `stands_out` breaks the
+tie by asking how far a blob's colour sits from the board immediately around it in each frame:
+a piece stands out against the board, a vacated space does not.
+
+This also means identity can come from **tracking instead of recognition**: a piece followed
+across a move carries its own name, and the name itself is given once, by voice, through the
+conversation that already exists.
+
+### The VLM, measured rather than assumed
+
+`qwen3.6:35b-mlx` turns out to have a working vision tower (it read `ZXQ-4718-KTMR` off a
+synthetic image; a blind control answered nonsense). `qwen3-vl:8b` was pulled and compared with
+the ResNet gallery on the 13 labelled crops, leave-one-out:
+
+| | correct |
+|---|---|
+| ResNet gallery (threshold 0.72) | 2/13 |
+| Qwen3-VL 8B, piece name | 0/13 |
+| Qwen3-VL 8B, kind only | 4/13 (the four standees) |
+
+The VLM does not fail quietly: it produced "Edward Carnby" (a character from another game),
+"Bernard Aizen", "Ritual Gate", "Knyfe". On the full board photo it placed the investigator on
+The Amazon (it was on Buenos Aires) and invented six gates out of the red-bordered cities
+*printed* on the board, three of them Arkham Horror spaces that do not exist in this game.
+
+The conclusion is not "VLM or ResNet" but that **the pixels are the bottleneck**: the crops run
+116x57 to 277x255 and are out of focus. The single large, sharp crop in the set (460x274) is the
+only one read correctly, and it was read by the 35B. No recogniser fixes that.
+
+Two facts found the hard way, both worth keeping:
+
+- **The gallery is contaminated**: `Card/20260915_125442_001.jpg` and
+  `asset:Bull Whip/20260915_125411_001.jpg` are byte-identical with contradicting labels, so the
+  ResNet always ties at 1.000 between those two labels.
+- **Ollama pre-allocates the model's native context**: `qwen3-vl:8b` is 6.1 GB on disk and took
+  **45 GB of memory** because it reserved its 256K window. `num_ctx` must be set explicitly on
+  this Mac; `num_predict` must *not* be, because the model spends the budget on internal
+  reasoning and returns an empty string.
+- **MLX is the cheaper road on this machine**, as the owner expected: the same model as
+  `lmstudio-community/Qwen3-VL-8B-Instruct-MLX-4bit` through `mlx-vlm` runs at **1.6 s per crop
+  and 6.3 GB peak**, against 16-25 s and 10-45 GB through Ollama. `mlx-vlm` is installed in the
+  venv but is not in `pyproject.toml` yet: it upgrades `transformers` to 5.x, and the 160 tests
+  pass with it.
+
 ## Decisions taken
 
 | Topic | Decision | Where |
@@ -496,6 +565,23 @@ Blocked on the owner deciding where the robot sits at the table.
 3. A recorded 2-3 player session (the annotated dataset) waits until players are available.
 4. ~~Small fixes: the rules tool ran twice across a language switch; the shadow label marked
    an English question as echo; start the diart sidecar by default when present~~ done.
+
+### Re-ordered after the 2026-09-16 measurements
+
+Naming a piece from a crop was going to come first (normalise the gallery labels, tune the
+0.72 threshold, decide ResNet vs a stronger embedder). The measurement says that order is
+wrong: on the current crops the gallery gets 2/13 and a VLM 0/13, because the crops are too
+small and soft for either. Pixels first, recogniser second.
+
+1. **Live test of `motion.py`** with the owner at the board: does a real move on the real
+   table produce one verdict, and is the space right? (The synthetic tests pass; the robot
+   has not seen a real move yet.)
+2. **Bigger, sharper crops**: a piece is about 250 px of 1920 today. The closer look should
+   fill the frame with the piece before anything tries to name it.
+3. **Clean the gallery**: remove the byte-identical crop filed under two labels, then
+   normalise to `kind:Name`.
+4. Only then re-measure recognisers, with `mlx-vlm` as the cheap way to run one.
+5. Pending from before: the live test of the addressee gate.
 
 ### Phase 2: speech and turn-taking (weeks 2-3)
 

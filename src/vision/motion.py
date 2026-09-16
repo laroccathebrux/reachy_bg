@@ -1,0 +1,316 @@
+"""Watching one view of the board and reporting what moved, without naming anything.
+
+    uv run python -m src.vision.motion                  # the robot watches the centre view
+    uv run python -m src.vision.motion --fake           # synthetic frames, no robot
+
+    watcher = MotionWatcher(registration)
+    move = watcher.feed(frame)                          # None until the board settles again
+    print(move.describe())                              # "a piece left Buenos Aires, one arrived at Rome"
+
+The scan in ``detect.py`` answers "what is on the board" against a baseline of the *empty*
+board, which is captured once and ages badly: the evening baseline was useless the next
+morning (board brightness 138 -> 86, median difference 28 against 2 the night before) and the
+scan invented pieces. This module answers a narrower question that does not age: "what changed
+just now". Consecutive frames are 0.1 s apart, so the light between them is the same light.
+
+Measured on the robot's live stream at 960x540, board untouched (2026-09-16):
+
+| Frames apart | Median difference | 95th percentile | Max |
+|---|---|---|---|
+| 1 (0.10 s) | 2.24 | 4.58 | 14.7 |
+| 9 (0.94 s) | 2.24 | 4.58 | 14.9 |
+
+A piece is worth 33-60 by the same measure, so the signal sits about 7x above the noise, and
+the noise does not grow with the interval (it is the sensor, not drifting light).
+
+How a move is read: while the board is quiet the *anchor* frame is kept fresh. A hand reaching
+in raises the activity far above anything a piece does, which is the cue that a move is
+happening; when the board is quiet again for ``settle_frames``, the anchor is compared with the
+new frame by ``find_pieces``. The occlusion is therefore not a problem to work around but the
+trigger itself.
+
+Which blob left and which arrived does *not* follow from that difference: it is symmetric, so
+using either frame as the other's baseline returns the same blobs. The tie is broken by
+``stands_out``, which asks how far each blob's colour sits from the board immediately around
+it, in each of the two frames: a piece stands out against the board, a vacated space does not.
+
+The view is fixed: the registration is computed once, with the robot still. Moving the head or
+the body invalidates it, so the caller pauses the watcher across a sweep and re-registers after.
+"""
+
+from __future__ import annotations
+
+import time
+from dataclasses import dataclass, field
+from typing import Any
+
+import numpy as np
+
+from src.logger import get_logger
+from src.vision.detect import MAP_WIDTH, Baseline, Piece, find_pieces
+
+log = get_logger(__name__)
+
+ACTIVITY_SCALE = 480  # frames are compared at this width: 4x less work, same activity fraction
+ACTIVITY_LEVEL = 30  # per-pixel grey difference counted as movement (sensor noise peaks at 15)
+# A hand reaching over the board covers far more than a piece does: a standee is about 2 % of
+# the frame, an arm an order of magnitude more. The gap between the two is what these bound.
+DISTURBED_FRACTION = 0.04  # of the frame moving: something is happening over the board
+QUIET_FRACTION = 0.004  # below this the board is considered still
+SETTLE_FRAMES = 5  # consecutive quiet frames before a verdict (~0.5 s at 9.5 fps)
+MIN_MOVE_AREA = 300  # rectified-map pixels, as in detect.MIN_AREA
+
+
+@dataclass
+class Move:
+    """What changed between two quiet moments: pieces that left, pieces that arrived."""
+
+    departed: list[Piece] = field(default_factory=list)
+    arrived: list[Piece] = field(default_factory=list)
+    seconds: float = 0.0  # how long the board was disturbed
+    at: float = field(default_factory=time.time)
+
+    @property
+    def empty(self) -> bool:
+        return not self.departed and not self.arrived
+
+    @staticmethod
+    def _where(piece: Piece) -> str:
+        return piece.space or (f"near {piece.near}" if piece.near else "off the spaces")
+
+    def describe(self) -> str:
+        """One line in plain English, naming spaces only (this module never names pieces)."""
+        if self.empty:
+            return "nothing changed"
+        left = [self._where(p) for p in self.departed]
+        came = [self._where(p) for p in self.arrived]
+        if len(left) == 1 and len(came) == 1:
+            return f"a piece moved from {left[0]} to {came[0]}"
+        parts = []
+        if left:
+            parts.append(f"{len(left)} piece(s) left {', '.join(left)}")
+        if came:
+            parts.append(f"{len(came)} piece(s) arrived at {', '.join(came)}")
+        return "; ".join(parts)
+
+    def record(self) -> dict[str, Any]:
+        return {
+            "at": round(self.at, 3),
+            "seconds": round(self.seconds, 2),
+            "departed": [p.record() for p in self.departed],
+            "arrived": [p.record() for p in self.arrived],
+            "text": self.describe(),
+        }
+
+
+def activity(previous: np.ndarray, current: np.ndarray, *, level: int = ACTIVITY_LEVEL) -> float:
+    """Fraction of the frame whose grey value moved by more than ``level`` between two frames."""
+    import cv2
+
+    if previous.shape != current.shape:
+        return 1.0
+    scale = ACTIVITY_SCALE / max(1, current.shape[1])
+    size = (max(1, int(current.shape[1] * scale)), max(1, int(current.shape[0] * scale)))
+    a = cv2.cvtColor(cv2.resize(previous, size, interpolation=cv2.INTER_AREA), cv2.COLOR_BGR2GRAY)
+    b = cv2.cvtColor(cv2.resize(current, size, interpolation=cv2.INTER_AREA), cv2.COLOR_BGR2GRAY)
+    return float(np.mean(cv2.absdiff(a, b) > level))
+
+
+RING = 1.8  # the local background is read from a box this many times the blob's own box
+
+
+def stands_out(rectified: np.ndarray, piece: Piece, *, ring: float = RING) -> float:
+    """How far the blob's colour sits from the board immediately around it, in Lab.
+
+    The difference between two frames is symmetric: the same two blobs show up whichever frame
+    is used as the baseline, so it cannot say by itself which one holds the piece. This can: a
+    piece stands out against the board around it, an empty space does not.
+    """
+    import cv2
+
+    h, w = rectified.shape[:2]
+    bw, bh = max(4.0, piece.width), max(4.0, piece.height)
+
+    def box(factor: float) -> tuple[int, int, int, int]:
+        return (
+            int(max(0, piece.x - bw * factor / 2)),
+            int(max(0, piece.y - bh * factor / 2)),
+            int(min(w, piece.x + bw * factor / 2)),
+            int(min(h, piece.y + bh * factor / 2)),
+        )
+
+    x0, y0, x1, y1 = box(1.0)
+    rx0, ry0, rx1, ry1 = box(ring)
+    if x1 <= x0 or y1 <= y0 or rx1 <= rx0 or ry1 <= ry0:
+        return 0.0
+    inner = cv2.cvtColor(rectified[y0:y1, x0:x1], cv2.COLOR_BGR2LAB).astype(np.float32)
+    around = cv2.cvtColor(rectified[ry0:ry1, rx0:rx1], cv2.COLOR_BGR2LAB).astype(np.float32)
+    # The ring is the larger share of the wider box, so its median is the local board colour.
+    background = np.median(around.reshape(-1, 3), axis=0)
+    return float(np.linalg.norm(inner.reshape(-1, 3).mean(axis=0) - background))
+
+
+def compare(
+    registration: Any,
+    before: np.ndarray,
+    after: np.ndarray,
+    *,
+    min_area: int = MIN_MOVE_AREA,
+) -> Move:
+    """What left and what arrived between two frames of the same fixed view.
+
+    Each frame is used as the other's baseline, so the whole of ``find_pieces`` applies: the
+    adaptive threshold, the hysteresis that keeps a standee's footprint, the masked Reserve and
+    legend, and the naming of a piece by the space under its base. Both directions return the
+    same blobs, so each blob is then assigned to the frame it actually stands out in, which also
+    keeps the crop taken from the frame where the piece is visible.
+    """
+    seen_after = find_pieces(registration, after, Baseline.capture(registration, before), min_area=min_area)
+    seen_before = find_pieces(registration, before, Baseline.capture(registration, after), min_area=min_area)
+    width = MAP_WIDTH
+    rect_before = registration.rectify(before, width=width)
+    rect_after = registration.rectify(after, width=width)
+    arrived = [p for p in seen_after if stands_out(rect_after, p) >= stands_out(rect_before, p)]
+    departed = [p for p in seen_before if stands_out(rect_before, p) > stands_out(rect_after, p)]
+    return Move(departed=departed, arrived=arrived)
+
+
+class MotionWatcher:
+    """Feeds frames of one fixed view; returns a ``Move`` each time the board settles after a change."""
+
+    def __init__(
+        self,
+        registration: Any,
+        *,
+        settle_frames: int = SETTLE_FRAMES,
+        disturbed_fraction: float = DISTURBED_FRACTION,
+        quiet_fraction: float = QUIET_FRACTION,
+        min_area: int = MIN_MOVE_AREA,
+    ):
+        self.registration = registration
+        self.settle_frames = settle_frames
+        self.disturbed_fraction = disturbed_fraction
+        self.quiet_fraction = quiet_fraction
+        self.min_area = min_area
+        self.anchor: np.ndarray | None = None  # last frame of the board at rest
+        self.previous: np.ndarray | None = None
+        self.disturbed = False
+        self.quiet_run = 0
+        self.last_activity = 0.0
+        self.disturbed_since = 0.0
+        self.moves: list[Move] = []
+
+    @property
+    def state(self) -> str:
+        return "disturbed" if self.disturbed else "quiet"
+
+    def reset(self, frame: np.ndarray | None = None) -> None:
+        """Forget the history; call after the robot moved and the view was registered again."""
+        self.anchor = None if frame is None else frame.copy()
+        self.previous = self.anchor
+        self.disturbed = False
+        self.quiet_run = 0
+
+    def feed(self, frame: np.ndarray) -> Move | None:
+        """One frame in; a ``Move`` out when the board has just settled after being disturbed."""
+        if self.previous is None:
+            self.anchor = frame.copy()
+            self.previous = frame.copy()
+            return None
+        self.last_activity = activity(self.previous, frame)
+        self.previous = frame.copy()
+        if self.last_activity >= self.disturbed_fraction:
+            if not self.disturbed:
+                self.disturbed_since = time.time()
+                log.info("motion: board disturbed (activity %.3f)", self.last_activity)
+            self.disturbed = True
+            self.quiet_run = 0
+            return None
+        if self.last_activity > self.quiet_fraction:
+            self.quiet_run = 0  # neither clearly moving nor clearly still: wait
+            return None
+        self.quiet_run += 1
+        if not self.disturbed:
+            self.anchor = frame.copy()  # nothing happened; keep the anchor fresh
+            return None
+        if self.quiet_run < self.settle_frames:
+            return None
+        move = compare(self.registration, self.anchor, frame, min_area=self.min_area)
+        move.seconds = time.time() - self.disturbed_since
+        self.anchor = frame.copy()
+        self.disturbed = False
+        self.quiet_run = 0
+        if move.empty:
+            log.info("motion: board settled, nothing changed (%.1f s)", move.seconds)
+            return None
+        log.info("motion: %s (%.1f s)", move.describe(), move.seconds)
+        self.moves.append(move)
+        return move
+
+
+def watch(camera: Any, registration: Any, *, limit: int = 0, period_s: float = 0.1) -> list[Move]:
+    """Print every move until ``limit`` of them (0 = forever); returns what was seen."""
+    watcher = MotionWatcher(registration)
+    seen: list[Move] = []
+    while True:
+        frame = camera.get_frame()
+        if frame is None:
+            time.sleep(period_s)
+            continue
+        move = watcher.feed(frame)
+        if move is not None:
+            seen.append(move)
+            print(f"[{time.strftime('%H:%M:%S')}] {move.describe()}", flush=True)
+            if limit and len(seen) >= limit:
+                return seen
+        time.sleep(period_s)
+
+
+def main(argv: list[str] | None = None) -> int:
+    import argparse
+
+    from src.vision.board_map import BoardReference
+    from src.vision.preview import FakeCamera, RobotCamera
+
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--fake", action="store_true", help="synthetic frames, no robot")
+    parser.add_argument("--pitch", type=float, default=35.0, help="head pitch, degrees below level")
+    parser.add_argument("--limit", type=int, default=0, help="stop after this many moves (0 = forever)")
+    args = parser.parse_args(argv)
+
+    camera: Any = FakeCamera() if args.fake else RobotCamera()
+    try:
+        if not args.fake:
+            camera.look(args.pitch, 0.0, 0.0)
+            time.sleep(1.0)
+        frame = None
+        for _ in range(50):
+            frame = camera.get_frame()
+            if frame is not None:
+                break
+            time.sleep(0.2)
+        if frame is None:
+            print("no frame from the camera", flush=True)
+            return 1
+        registration = BoardReference().locate(frame)
+        if registration is None:
+            print("the board was not recognised in this view", flush=True)
+            return 1
+        print(
+            f"watching: {registration.inliers} inliers, {frame.shape[1]}x{frame.shape[0]}. "
+            "Move a piece; Ctrl-C to stop.",
+            flush=True,
+        )
+        watch(camera, registration, limit=args.limit)
+    except KeyboardInterrupt:
+        print("stopped", flush=True)
+    finally:
+        camera.close()
+    return 0
+
+
+__all__ = ["ACTIVITY_LEVEL", "Move", "MotionWatcher", "activity", "compare", "stands_out", "watch"]
+
+
+if __name__ == "__main__":  # pragma: no cover
+    raise SystemExit(main())
