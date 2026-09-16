@@ -47,7 +47,7 @@ def retrieve(
     return hits
 
 
-__all__ = ["retrieve"]
+__all__ = ["advice", "card", "cards_in_reserve", "retrieve"]
 
 
 def card(name: str, *, client: Any = None) -> dict[str, Any] | None:
@@ -81,6 +81,27 @@ def card(name: str, *, client: Any = None) -> dict[str, Any] | None:
             if _key(str(payload.get("name", ""))) == wanted:
                 return payload
     return None
+
+
+def advice(question: str, *, limit: int = 3, client: Any = None) -> list[dict[str, Any]]:
+    """Community strategy entries for a situation - player advice, never rules.
+
+    These carry a source and are phrased as opinion (``kind="strategy"`` in ``bg_knowledge``).
+    They are kept in their own lookup, and labelled as advice wherever they are used, because a
+    good habit read as a rule is exactly the mistake this project refuses to make: the rulebook
+    is the authority and a player's tip is not.
+    """
+    client = client or get_client()
+    if not client.collection_exists(KNOWLEDGE):
+        return []
+    hits = search(
+        client,
+        KNOWLEDGE,
+        embed_text(question),
+        limit=limit,
+        filters=build_filter(game_id=GAME_ID, kind="strategy"),
+    )
+    return [{**h["payload"], "score": h["score"]} for h in hits]
 
 
 def cards_in_reserve(names: Iterable[str], *, client: Any = None) -> list[dict[str, Any]]:

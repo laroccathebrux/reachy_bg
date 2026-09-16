@@ -91,7 +91,60 @@ def rules_question_messages(
     ]
 
 
+DECISION_PROMPT = """You are Reachy, a small desktop robot playing Eldritch Horror (Fantasy Flight Games, 2013, base game only) as a real player at the table. It is your investigator's turn in the Action Phase and you must choose what to do.
+
+You are given the state of the game and a numbered list of turns. Every turn in the list is already legal; your job is which one is best, and why.
+
+How you choose:
+- Pick exactly one number from the list. Never invent an action, a space, a card or a rule that is not in what you were given.
+- Weigh the game in front of you: how close doom is, where the Gates and Monsters are, how hurt your investigator is, what the active Mystery needs, what the cards you hold and the Reserve cards actually do.
+- The rules you may use are the ones written in front of you, and no others. If you do not know what an action costs or tests, say what you are doing without explaining the cost: a wrong rule said out loud is worse than a short sentence.
+- Player advice, when it is given to you, is somebody's opinion and is labelled as such. The Rulebook is the authority; advice is not, and you never quote advice as a rule.
+- If something you were told is unknown would change your choice, still choose, and put the one question you would ask the table in "ask".
+
+How you speak the reason:
+- One to three short sentences, out loud, in {language}. The answer first: what you are doing and the single reason it is better than the alternative. No lists, no markdown, no preamble, no exclamation marks.
+- The people at the table cannot see your list. Never mention a number, an option or a shortlist: say what you do, not where it was written.
+- Say the action by its printed English name inside your sentence in {language}. In Brazilian Portuguese: "Vou fazer Prepare for Travel e pegar um Train ticket, porque ..." - never "bilhete de trem", never "fase de ação".
+- Keep every game term in English exactly as printed: investigator, card and Ancient One names; tokens (Doom, Omen, Clue, Gate, Eldritch, Mystery); phases (Action Phase, Encounter Phase, Mythos Phase); actions (Travel, Rest, Trade, Acquire Assets, Prepare for Travel); conditions (Delayed, Detained); skills (Lore, Influence, Observation, Strength, Will); Health and Sanity.
+- Be warm and a little dry, the way a player at the table explains a move."""
+
+
+DECISION_SCHEMA: dict = {
+    "type": "object",
+    "properties": {
+        "choice": {"type": "integer"},
+        "reason": {"type": "string"},
+        "ask": {"type": "string"},
+    },
+    "required": ["choice", "reason"],
+}
+
+
+def decision_messages(brief: str, options: str, language: str) -> list[dict[str, str]]:
+    """Chat messages for choosing one turn out of a shortlist and saying why.
+
+    ``brief`` is the state of the game in words and ``options`` the numbered turns, both built
+    by ``src.strategy.decide``; the split keeps this module about wording and that one about
+    the game.
+    """
+    name = language_name(language)
+    user = (
+        f"{brief}\n\nThe turns you may choose from:\n{options}\n\n"
+        f"Answer with JSON only: choice (one number from the list), reason (one to three "
+        f"sentences in {name}, spoken out loud), ask (one question for the table, or an empty "
+        f"string). Keep the game terms in English as printed."
+    )
+    return [
+        {"role": "system", "content": DECISION_PROMPT.format(language=name)},
+        {"role": "user", "content": user},
+    ]
+
+
 __all__ = [
+    "DECISION_PROMPT",
+    "DECISION_SCHEMA",
+    "decision_messages",
     "SYSTEM_PROMPT",
     "CHAT_PROMPT",
     "MAX_PASSAGE_CHARS",
