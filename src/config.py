@@ -153,6 +153,11 @@ FLOOR_WINDOW_S = float(os.getenv("FLOOR_WINDOW_S", "30"))
 # Answer rules questions asked to the table without naming the robot (a knowledgeable player
 # would); false = only when named, after its own turn, or on its game turn.
 ANSWER_GAME_QUESTIONS = _env_bool("ANSWER_GAME_QUESTIONS", True)
+# The addressee gate itself. Off means the robot answers everything it hears: no utterance is
+# ever dropped, and the rules only watch and log. It still holds each utterance long enough to
+# recognise its own echo and to take its own turn, so the robot and the agent never answer the
+# same sentence. ``--no-gate`` on the command line does the same for one session.
+ADDRESSEE_GATE = _env_bool("ADDRESSEE_GATE", True)
 # Hugging Face token: required once to download the gated pyannote models.
 HF_TOKEN = os.getenv("HF_TOKEN", "")
 
@@ -292,6 +297,7 @@ __all__ = [
     "FOLLOW_UP_WINDOW_S",
     "FLOOR_WINDOW_S",
     "ANSWER_GAME_QUESTIONS",
+    "ADDRESSEE_GATE",
     "HF_TOKEN",
     "TTS_PROVIDER",
     "ELEVENLABS_API_KEY",

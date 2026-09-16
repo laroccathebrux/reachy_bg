@@ -6,7 +6,10 @@
     verdict = keeper.judge(utterance, speaker_name, score)     # audio released to the agent or dropped
 
 The ElevenLabs agent only ever hears the utterances the rules say are for the robot, so
-"stay quiet" costs no cloud turn and no tokens. The decision is made on the local Whisper
+"stay quiet" costs no cloud turn and no tokens. With ``answer_everything`` the deciding stops
+and every utterance is released - the rules still run and are still logged, so the sessions stay
+comparable, and the robot's own echo is still dropped, because answering itself is not answering
+the table. The decision is made on the local Whisper
 transcript once the VAD closes the utterance; :class:`NameSpotter` runs earlier, on the voice
 in progress, and opens the gate as soon as the robot's name is heard so that the rest of the
 sentence streams live (no added latency for the most common way of addressing the robot).
@@ -57,6 +60,7 @@ class Gatekeeper:
         turn_log: TurnLogger,
         *,
         active: bool = True,
+        answer_everything: bool = False,
         humans: int | None = None,
         names: tuple[str, ...] = (),
         spoken_recently: Callable[[], str] = lambda: "",
@@ -72,6 +76,15 @@ class Gatekeeper:
         self.transcriber = transcriber
         self.turn_log = turn_log
         self.active = active
+        # "Answer everything": the rules stop deciding and every utterance goes to the agent.
+        # The audio is still held and still transcribed, because that is what the robot's own
+        # ear needs - the self-echo check so it does not answer itself, the language switch, and
+        # the turn call and the briefing it handles without the cloud. Without the holding, the
+        # agent would already have heard a turn call by the time the robot decided to take it,
+        # and both of them would answer.
+        self.answer_everything = answer_everything
+        if answer_everything:
+            log.info("gatekeeper: the gate is off - everything is answered, nothing is dropped")
         self.humans = humans
         self.names = tuple(names)
         self.spoken_recently = spoken_recently
@@ -196,6 +209,12 @@ class Gatekeeper:
                 verdict = Verdict(handled, decision, text, language, 0, dropped, 0, whisper_ms)
                 return self._done(verdict, utterance, speaker, score, label, since)
 
+        # With the gate off the rules still run and are still logged - that file is the dataset
+        # the learned classifier will be trained on, and a session with the gate off has to stay
+        # comparable with one with it on. Only the routing changes: everything is released. The
+        # robot's own echo is the exception, because answering itself is not answering the table.
+        forced = self.answer_everything and not decision.addressed and decision.reason != "self_echo"
+
         forwarded = dropped = 0
         confident_switch = (
             self.on_switch is not None
@@ -207,6 +226,9 @@ class Gatekeeper:
             route = "passed"
             if decision.addressed and confident_switch:
                 route = "switched"
+        elif forced:
+            forwarded = self.audio.release_utterance(until)
+            route = "released"
         elif decision.addressed and confident_switch:
             dropped = self.audio.discard_utterance(until)
             route = "switched"
@@ -247,6 +269,7 @@ class Gatekeeper:
             diart_label=label,
             seconds_since_robot_spoke=since,
             shadow=not self.active,
+            gate_off=self.answer_everything,
             route=verdict.route,
             forwarded=verdict.forwarded,
             dropped=verdict.dropped,

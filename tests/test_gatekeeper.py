@@ -278,3 +278,41 @@ def test_with_no_voiceprints_the_diarizer_label_keeps_the_floor_apart(tmp_path):
     other = k.judge(utterance(112.0), "", 0.0, "speaker1")
     assert same.decision.reason == "holding_the_floor"
     assert other.route == "discarded"
+
+
+def test_with_the_gate_off_everything_is_released(tmp_path):
+    k, audio, asr, _, _ = keeper(
+        tmp_path, [Result("Vou pegar um café")], answer_everything=True, names=("Alessandro",)
+    )
+    verdict = k.judge(utterance(100.0), "Alessandro", 0.7)
+    assert verdict.route == "released"
+    assert verdict.decision.reason == "not_addressed"  # the rules still ran, and still said no
+    assert logged(tmp_path)[0]["gate_off"] is True
+
+
+def test_with_the_gate_off_the_robot_still_does_not_answer_itself(tmp_path):
+    k, audio, asr, _, _ = keeper(
+        tmp_path,
+        [Result("Doom advances by one")],
+        answer_everything=True,
+        spoken_recently=lambda: "Doom advances by one",
+    )
+    k.audio.last_played_at = 100.5
+    verdict = k.judge(utterance(100.0), "Alessandro", 0.7)
+    assert verdict.decision.reason == "self_echo"
+    assert verdict.route == "discarded"
+
+
+def test_with_the_gate_off_a_turn_call_is_still_the_robots_own(tmp_path):
+    handled = []
+    k, audio, asr, _, _ = keeper(
+        tmp_path,
+        [Result("é a vez da Lily Chen")],
+        answer_everything=True,
+        my_investigator=lambda: "Lily Chen",
+        on_addressed=lambda text, language, reason, speaker: (handled.append(text), "my_turn")[1],
+    )
+    verdict = k.judge(utterance(100.0), "Alessandro", 0.7)
+    assert verdict.route == "my_turn"
+    assert handled == ["é a vez da Lily Chen"]
+    assert audio.calls[-1][0] == "discard"  # the agent must not answer it as well

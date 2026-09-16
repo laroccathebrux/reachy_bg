@@ -5,7 +5,7 @@
     uv run python -m src.integration.talk --players "Ana,Bruno"   # enrol voices first (local)
     uv run python -m src.integration.talk --device "MacBook Pro Microphone"
     uv run python -m src.integration.talk --humans 2          # two people at the table: the gate is on
-    uv run python -m src.integration.talk --always-answer     # no gate: the agent hears everything
+    uv run python -m src.integration.talk --no-gate           # no gate: the robot answers everything
     uv run python -m src.integration.talk --new-game          # forget the saved game and set up again
     uv run python -m src.integration.talk --demo-game --game-plan   # the robot plays its own investigator
 
@@ -16,8 +16,10 @@ so every heard utterance is attributed to a player and judged by the addressee r
 the agent hears it: the audio of an utterance is held back, transcribed by the local Whisper,
 and only released to the agent when the rules say it was for the robot (see
 src/speech/gatekeeper.py). Table talk that is not for the robot never reaches the cloud, so it
-costs no turn and no tokens. With ``--always-answer`` (or one person at the table) the gate
-only watches and its decisions are logged as shadow decisions. Every decision goes to
+costs no turn and no tokens. With ``--no-gate`` (or ``ADDRESSEE_GATE=false``, or one person at the table) the robot answers
+everything it hears and nothing is ever dropped; the rules still run and are still logged, so
+the sessions stay comparable, and the utterance is still held for the moment the robot needs to
+recognise its own echo and to take its own turn before the agent is given anything. Every decision goes to
 data/game_logs/addressee.jsonl; everything heard and said to data/game_logs/conversation.jsonl.
 
 The robot also plays, and remembers the game it is playing between runs
@@ -56,6 +58,7 @@ from typing import Any
 import numpy as np
 
 from src.config import (
+    ADDRESSEE_GATE,
     DEFAULT_LANGUAGE,
     DIARIZER_URL,
     ELEVENLABS_API_KEY,
@@ -511,9 +514,11 @@ def main(argv: list[str] | None = None) -> int:
         help="people at the table (default: enrolled voices); 1 = solo, everything is for the robot",
     )
     parser.add_argument(
+        "--no-gate",
         "--always-answer",
+        dest="no_gate",
         action="store_true",
-        help="no addressee gate: the agent hears everything (decisions logged as shadow)",
+        help="no addressee gate: the robot answers everything it hears (the rules only watch)",
     )
     parser.add_argument(
         "--game",
@@ -622,13 +627,14 @@ def main(argv: list[str] | None = None) -> int:
                 audio.stop()
                 audio.muted = False
             humans = args.humans if args.humans is not None else (len(registry.names) or None)
-            gate_on = not args.always_answer and humans != 1
+            gate_on = ADDRESSEE_GATE and not args.no_gate and humans != 1
             session = build_game_session(args, audio, table, diary)
             table.keeper = Gatekeeper(
                 audio,
                 transcriber,
                 table.turn_log,
-                active=gate_on,
+                active=True,  # the ear always runs: the echo check, the turn and the briefing
+                answer_everything=not gate_on,
                 humans=humans,
                 names=tuple(registry.names),
                 spoken_recently=lambda: table.spoken_recently,
@@ -643,15 +649,17 @@ def main(argv: list[str] | None = None) -> int:
                     else (lambda text: False)
                 ),
             )
-            audio.hold_utterances = gate_on
+            # Held either way: the robot has to hear an utterance before the agent does, or the
+            # agent answers a turn call the robot was about to take itself.
+            audio.hold_utterances = True
             ear.on_utterance = table.on_utterance
             log.info(
                 "addressee gate %s (%s at the table%s)",
                 "on: the agent only hears what is for the robot"
                 if gate_on
-                else "off: the agent hears everything",
+                else "off: the robot answers everything (rules logged, nothing dropped)",
                 "?" if humans is None else humans,
-                ", --always-answer" if args.always_answer else "",
+                ", --no-gate" if args.no_gate else ("" if ADDRESSEE_GATE else ", ADDRESSEE_GATE=false"),
             )
             if diarizer is not None and diarizer.wait_connected(2.0):
                 log.info("live diarizer connected")

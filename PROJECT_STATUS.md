@@ -880,6 +880,31 @@ for one new fact, and a table stops listening to that.
 Replayed over both live sessions (`scripts/rules_replay.py`): 58 utterances, 14 reached the robot
 then, 29 would now, and every one of the 15 newly heard is an instruction the owner gave it.
 
+## Done: the gate can be switched off, and then nothing is ever dropped (2026-09-16, late)
+
+The owner's call after three sessions of tuning rules: "vamos remover os discarded por completo
+por enquanto". Fair - a rule that drops a sentence is only worth having once the rest works, and
+until then every drop is a thing he has to notice and complain about.
+
+``ADDRESSEE_GATE=false`` (already set in his ``.env``) or ``--no-gate`` on the command line: the
+robot answers everything it hears. What does **not** change with the gate off, and is the reason
+this is not simply "pass the audio through":
+
+- **The utterance is still held** for the moment it takes to transcribe it. Without that the
+  agent has already heard a turn call by the time the robot decides to take it, and both of them
+  answer the same sentence. The delay is the one already measured, about 1.3 s.
+- **The robot's own echo is still dropped.** Answering itself is not answering the table, and
+  an earlier session had exactly that loop.
+- **The turn and the briefing are still the robot's own**: a turn call and a setup narration are
+  handled locally and never reach the agent.
+- **The rules still run and are still logged.** ``addressee.jsonl`` is the dataset the learned
+  classifier will be trained on, and a session with the gate off has to stay comparable with one
+  with it on; each line now carries ``gate_off`` next to the verdict the rules would have given.
+
+The old ``--always-answer`` flag stays as an alias for ``--no-gate``. What it used to do - leave
+the gate watching but let the audio stream straight through - is what caused the double answer,
+so it is gone.
+
 ## Decisions taken
 
 | Topic | Decision | Where |
@@ -891,7 +916,7 @@ then, 29 would now, and every one of the 15 newly heard is an instruction the ow
 | Speech output | ElevenLabs by default, local TTS optional | src/config.py |
 | Conversation | ElevenLabs agent (cloud) + local client tools; local Whisper + Ollama kept as fallback | docs/SPEECH_PIPELINE.md |
 | Agent LLM | `gpt-4.1-mini` inside ElevenLabs (owner's decision, 2026-09-14): follows the prompt better than the Gemini default; billed through the ElevenLabs account, no OpenAI key | src/config.py |
-| Turn-taking | the local ear decides speak/stay-quiet before any audio reaches the agent (rules on the local Whisper transcript; a local LLM classifier only if the rules prove insufficient) | src/speech/gatekeeper.py |
+| Turn-taking | the local ear decides speak/stay-quiet before any audio reaches the agent (rules on the local Whisper transcript; a local LLM classifier only if the rules prove insufficient). Switchable: with `ADDRESSEE_GATE=false` the robot answers everything and the rules only watch, which is how the owner is running it for now | src/speech/gatekeeper.py |
 | Game setup | verbal briefing + knowledge base, no card OCR | docs/SETUP_PROTOCOL.md |
 | Vision | YOLO-World + image-embedding gallery, SAM not used | docs/DESIGN_DOCUMENT.md |
 | Prior project | read for lessons only; no code copied | CLAUDE.md |
