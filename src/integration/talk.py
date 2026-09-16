@@ -5,6 +5,7 @@
     uv run python -m src.integration.talk --players "Ana,Bruno"   # enrol voices first (local)
     uv run python -m src.integration.talk --device "MacBook Pro Microphone"
     uv run python -m src.integration.talk --humans 2          # two people at the table: the gate is on
+    uv run python -m src.integration.talk --lang en-US        # this session is in English, and stays in it
     uv run python -m src.integration.talk --no-gate           # no gate: the robot answers everything
     uv run python -m src.integration.talk --new-game          # forget the saved game and set up again
     uv run python -m src.integration.talk --demo-game --game-plan   # the robot plays its own investigator
@@ -21,6 +22,17 @@ everything it hears and nothing is ever dropped; the rules still run and are sti
 the sessions stay comparable, and the utterance is still held for the moment the robot needs to
 recognise its own echo and to take its own turn before the agent is given anything. Every decision goes to
 data/game_logs/addressee.jsonl; everything heard and said to data/game_logs/conversation.jsonl.
+
+**There is one voice at this table and it is the agent's.** The robot decides its own turn and
+writes down its own setup, but it says neither: the agent calls ``take_turn`` and
+``remember_setup`` and speaks the answer in its own voice. Two voices answering the same sentence
+- the agent and a local TTS - is what made the owner stop a live session.
+
+**And one language, chosen when the session starts** (``--lang``, ``LANGUAGE_LOCK``). Locked, the
+agent has no ``language_detection`` tool, no second voice preset and a prompt that names the
+language it speaks, and the gate never restarts the session to switch: the robot answered a
+Portuguese table in English mid-game, and it cannot any more. ``--free-language`` restores the
+old behaviour.
 
 The robot also plays, and remembers the game it is playing between runs
 (src/integration/game_session.py). The setup is heard rather than typed: while it still does not
@@ -49,7 +61,6 @@ import subprocess
 import sys
 import threading
 import time
-import wave
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -64,9 +75,11 @@ from src.config import (
     ELEVENLABS_API_KEY,
     GAME_LOG_DIR,
     HEAD_SWAY,
+    LANGUAGE_LOCK,
+    SPOKEN_LANGUAGES,
     validate_config,
 )
-from src.integration.game_session import GameSession, looks_like_setup
+from src.integration.game_session import GameSession
 from src.logger import get_logger
 from src.robot.reachy import AGREE_MOVES, GREETING_MOVES, Robot
 from src.robot.sway import HeadSway
@@ -437,59 +450,57 @@ def _say_line(robot: Robot, text: str, language: str, speak: bool) -> None:
         log.warning("%s", exc)
 
 
-def speak_pcm(audio: Any, text: str, language: str, *, table: Any = None) -> None:
-    """Say a line of our own through the agent's own speaker stream.
+def warm_up_reasoning() -> None:
+    """Load the reasoning model now, so the first turn does not time out waiting for it.
 
-    The robot has two voices in this process: the agent's, which arrives as PCM over the
-    WebSocket, and this one, synthesized locally for what the robot decided by itself. Both are
-    written to the same output queue, so the echo gate, the barge-in check and the head sway see
-    them as the same voice - which they are, to everybody at the table.
+    The agent gives a client tool 45 seconds; a cold ``qwen3.6:35b-mlx`` spends 30 of them just
+    being read off disk. Loading it while the table is still setting up costs nothing anybody
+    is waiting for.
     """
-    log.info("robot (local): %s", text)
-    try:
-        clip = synthesize(text, language)
-    except TTSError as exc:
-        log.warning("turn: could not synthesize (%s)", exc)
-        return
-    with wave.open(str(clip.path), "rb") as wav:
-        pcm = wav.readframes(wav.getnframes())
-    if table is not None:
-        table.on_agent_response(text)  # the barge-in and echo checks compare against what is said
-    audio.output(pcm)
+
+    def load() -> None:
+        from src.llm.ollama_client import LLMError, chat
+
+        started = time.monotonic()
+        try:
+            chat([{"role": "user", "content": "ok"}], num_ctx=1024)
+            log.info("reasoning model warm in %.1fs", time.monotonic() - started)
+        except LLMError as exc:
+            log.warning("the reasoning model did not warm up (%s)", exc)
+
+    threading.Thread(target=load, name="warm-up", daemon=True).start()
 
 
-def build_game_session(args: Any, audio: Any, table: Any, diary: Diary) -> GameSession | None:
+def build_game_session(args: Any, diary: Diary, *, language: str) -> GameSession | None:
     """The game this session is playing: read back from its file, or started from nothing.
 
     The file is the memory. It is written every time the robot learns something, so closing the
-    conversation loses nothing, and reopening makes the robot say what it remembers - which is
-    also how a stale game gets caught: it tells the table it is still playing yesterday's, and
-    the table says otherwise.
+    conversation loses nothing, and reopening picks it up where it was.
+
+    The session is given **no voice**. There is one mouth at this table and it is the agent's:
+    the robot's turn and the briefings it writes down reach the table through the ``take_turn``
+    and ``remember_setup`` tools, said in the agent's own voice. Two voices answering the same
+    sentence is what made the owner stop a live session.
     """
     if args.no_game:
         return None
     path = Path(args.game)
-
-    def say(text: str, language: str) -> None:
-        speak_pcm(audio, text, language, table=table)
-
     if args.demo_game:
         from src.strategy.turn import demo_game
 
-        session = GameSession(demo_game(), say=say, path=path, language=DEFAULT_LANGUAGE)
+        session = GameSession(demo_game(), path=path, language=language)
     elif args.new_game:
-        session = GameSession(GameState(), say=say, path=path, language=DEFAULT_LANGUAGE)
+        session = GameSession(GameState(), path=path, language=language)
     else:
-        session = GameSession.open(path, say=say, language=DEFAULT_LANGUAGE)
+        session = GameSession.open(path, language=language)
     if args.game_plan and session.game.ready:
         from src.strategy import plan as planner
 
-        plan = planner.make_plan(
-            session.game, language=DEFAULT_LANGUAGE, advice=planner.advice_for(session.game)
-        )
+        plan = planner.make_plan(session.game, language=language, advice=planner.advice_for(session.game))
         session.taker.plan = plan
         log.info("plan for this game:\n%s", plan.as_text())
         diary.write("game_plan", **plan.record())
+    warm_up_reasoning()
     session.taker.on_decision = lambda decision, text: diary.write("turn", said=text, **decision.record())
     session.on_setup = lambda reading, text: diary.write("setup", heard=text, **reading.record())
     log.info("game: %s", session.game.briefing())
@@ -502,6 +513,17 @@ def main(argv: list[str] | None = None) -> int:
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
     parser.add_argument("--no-robot", action="store_true", help="no daemon: gestures logged")
+    parser.add_argument(
+        "--lang",
+        default=DEFAULT_LANGUAGE,
+        choices=SPOKEN_LANGUAGES,
+        help="the language of this session; it does not change once it has started",
+    )
+    parser.add_argument(
+        "--free-language",
+        action="store_true",
+        help="let the session switch language mid-game (the old behaviour; off by default)",
+    )
     parser.add_argument("--device", default=None, help="input device name substring or index")
     parser.add_argument("--output-device", default=None, help="output device name substring")
     parser.add_argument("--players", default="", help="comma-separated names to enrol by voice at the start")
@@ -563,7 +585,11 @@ def main(argv: list[str] | None = None) -> int:
     diary = Diary()
     players = [n.strip() for n in args.players.split(",") if n.strip()]
 
-    agent_id = ensure_agent()
+    locked = LANGUAGE_LOCK and not args.free_language
+    agent_id = ensure_agent(language=args.lang, language_lock=locked)
+    log.info(
+        "session language: %s%s", args.lang, " (locked for the whole session)" if locked else " (may switch)"
+    )
     client = ElevenLabs(api_key=ELEVENLABS_API_KEY)
     conversation = None
     sway = None
@@ -621,8 +647,8 @@ def main(argv: list[str] | None = None) -> int:
                 diary.write("session_restart", language=language)
                 log.info("session restarted in %s; re-asking: %s", language, text)
 
-            table.restart = restart
-            conversation = open_session(DEFAULT_LANGUAGE)
+            table.restart = None if locked else restart
+            conversation = open_session(args.lang)
             robot.emotion(random.choice(GREETING_MOVES))
             if players:
                 # Enrolment uses the local ear only; start the microphone without the agent.
@@ -633,7 +659,7 @@ def main(argv: list[str] | None = None) -> int:
                 audio.muted = False
             humans = args.humans if args.humans is not None else (len(registry.names) or None)
             gate_on = ADDRESSEE_GATE and not args.no_gate and humans != 1
-            session = build_game_session(args, audio, table, diary)
+            session = build_game_session(args, diary, language=args.lang)
             table.game_session = session  # the agent's game_state tool reads it through here
             table.keeper = Gatekeeper(
                 audio,
@@ -646,14 +672,8 @@ def main(argv: list[str] | None = None) -> int:
                 spoken_recently=lambda: table.spoken_recently,
                 robot_spoke_at=lambda: table.robot_spoke_at,
                 voice_language=lambda: table.voice_language,
-                on_switch=table.switch_language,
+                on_switch=None if locked else table.switch_language,
                 my_investigator=(lambda: session.taker.investigator) if session is not None else (lambda: ""),
-                on_addressed=session.handle if session is not None else None,
-                wants_setup=(
-                    (lambda text: session.wants_setup and looks_like_setup(text))
-                    if session is not None
-                    else (lambda text: False)
-                ),
             )
             # Held either way: the robot has to hear an utterance before the agent does, or the
             # agent answers a turn call the robot was about to take itself.
@@ -677,10 +697,10 @@ def main(argv: list[str] | None = None) -> int:
                 target=table.watch_voice, args=(transcriber, stop_watch), name="voice-watch", daemon=True
             ).start()
             log.info("talking (Ctrl+C to stop); players: %s", ", ".join(registry.names) or "unknown voices")
-            if session is not None:
-                greeting = session.greeting()
-                if greeting:
-                    speak_pcm(audio, greeting, DEFAULT_LANGUAGE, table=table)
+            if session is not None and session.greeting():
+                # Not said out loud: the agent is the only voice at the table, and it reads the
+                # same state through its game_state tool whenever it needs it.
+                log.info("game remembered: %s", session.greeting())
             diary.write(
                 "session_start", agent_id=agent_id, players=registry.names, humans=humans, gate=gate_on
             )

@@ -34,6 +34,7 @@ from src.config import (
     ELEVEN_TURN_TIMEOUT_S,
     ELEVENLABS_API_KEY,
     ELEVENLABS_MODEL_ID,
+    LANGUAGE_LOCK,
     SPOKEN_LANGUAGES,
 )
 from src.llm.prompts import format_passages
@@ -50,7 +51,7 @@ AGENT_PROMPT = """You are Reachy, a small desktop robot sitting at a table where
 
 Golden rule: you do not know the rules by heart. For any question about rules, cards, investigators, Ancient Ones, monsters, phases or numbers, call the game_rules tool (or game_knowledge for one named thing) and answer ONLY from what it returns. Never invent rules, numbers or card texts. If the tool has nothing, say so in one sentence and suggest checking the Reference Guide. While a tool runs, say a short filler first ("Let me check the Reference Guide...").
 
-How you talk: you are speaking out loud, so keep it to one to three short sentences; no lists, no markdown, no exclamation marks; warm and a little dry. Mirror the language of the person talking to you: Brazilian Portuguese for Portuguese, English for English, never mixed within one reply. Each language has its own voice, so before EVERY reply compare the language of the last thing the person said with your current language; whenever they differ, call the language_detection tool FIRST with the language code ("en" for English, "pt" for Portuguese, never the language name) to switch to that language, then answer; never answer in English with the Portuguese voice or the other way round. The table plays the English edition, so keep every game term in English exactly as printed (investigator, card and Ancient One names; Doom, Omen, Clue, Gate, Mystery; Action Phase, Encounter Phase, Mythos Phase; Travel, Rest, Trade, Acquire Assets; Delayed, Detained; Lore, Influence, Observation, Strength, Will; Health, Sanity), and everything else in the spoken language.
+How you talk: you are speaking out loud, so keep it to one to three short sentences; no lists, no markdown, no exclamation marks; warm and a little dry. You speak {language} and only {language}, for this whole session, whatever language you are spoken to in - if somebody says a sentence in another language, you still answer in {language}. The table plays the English edition, so keep every game term in English exactly as printed (investigator, card and Ancient One names; Doom, Omen, Clue, Gate, Mystery; Action Phase, Encounter Phase, Mythos Phase; Travel, Rest, Trade, Acquire Assets; Delayed, Detained; Lore, Influence, Observation, Strength, Will; Health, Sanity), and everything else in {language}.
 
 Several people sit at the table and talk to each other. Answer when you are addressed (by name, "Reachy", or with a question to you), when someone asks the table a rules question, or when you are asked to continue. Otherwise stay quiet. If someone says "stop", "wait", "hold on" or talks over you, stop at once, without finishing the sentence, and only say you are listening.
 
@@ -93,6 +94,46 @@ _TOOLS: list[dict[str, Any]] = [
         "parameters": {"type": "object", "properties": {}, "required": []},
         "expects_response": True,
         "response_timeout_secs": 10,
+    },
+    {
+        "type": "client",
+        "name": "take_turn",
+        "description": (
+            "Use when the table hands the robot's own investigator its turn - 'é a vez da Lily "
+            "Chen', 'your turn', 'pode jogar'. The robot works out its move from the board and "
+            "the rules and returns the move and the sentence to say. Say that sentence as it "
+            "comes back, in your own voice but without changing what it decided, and then let "
+            "the table move the piece. Never invent a move."
+        ),
+        "parameters": {"type": "object", "properties": {}, "required": []},
+        "expects_response": True,
+        # The local model has to think about the whole board; cold it takes half a minute.
+        "response_timeout_secs": 45,
+        "pre_tool_speech": "auto",
+    },
+    {
+        "type": "client",
+        "name": "remember_setup",
+        "description": (
+            "Use when somebody tells the robot how this game is set up or corrects it - the "
+            "Ancient One, who plays which investigator, the Mystery, what is in the Reserve. "
+            "Pass what they said, word for word. The robot checks the names against the box, "
+            "writes down what it can and returns what it wrote and what it still needs. Say that "
+            "back. Do not use it for rules questions."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "said": {
+                    "type": "string",
+                    "description": "What the person said about the setup, in their own words.",
+                }
+            },
+            "required": ["said"],
+        },
+        "expects_response": True,
+        "response_timeout_secs": 30,
+        "pre_tool_speech": "auto",
     },
     {
         "type": "client",
@@ -161,6 +202,13 @@ def _lang_code(tag: str) -> str:
     return tag.split("-")[0].lower()
 
 
+def tools_for(language_lock: bool = LANGUAGE_LOCK) -> list[dict[str, Any]]:
+    """The tools the agent gets. With the language locked, the switching tool is not one of them."""
+    if not language_lock:
+        return _TOOLS
+    return [t for t in _TOOLS if t.get("name") != "language_detection"]
+
+
 def agent_config(
     *,
     prompt: str = AGENT_PROMPT,
@@ -172,22 +220,31 @@ def agent_config(
     turn_timeout_s: float = ELEVEN_TURN_TIMEOUT_S,
     max_duration_s: int = ELEVEN_MAX_DURATION_S,
     state_text: str = "",
+    language_lock: bool = LANGUAGE_LOCK,
 ) -> dict[str, Any]:
-    """The agent's ``conversation_config`` (pure; unit-tested)."""
+    """The agent's ``conversation_config`` (pure; unit-tested).
+
+    ``language_lock`` is the owner's rule after a live session where the robot answered in
+    English in the middle of a Portuguese game: the language is whatever the session starts in
+    and it does not change. Locked, the agent gets no ``language_detection`` tool and no
+    language presets to switch into - there is nothing to switch with - and its prompt says
+    which language it speaks. Unlocked, it behaves as it used to.
+    """
     voices = ELEVEN_AGENT_VOICES if voices is None else voices
     default_voice = voices.get(default_language, "")
     if not default_voice:
         raise ValueError(f"no native voice configured for {default_language}")
+    prompt = prompt.replace("{language}", language_name(default_language))
     full_prompt = f"{prompt}\n\n{state_text}".rstrip() if state_text else prompt
     agent: dict[str, Any] = {
         "first_message": "",
         "language": _lang_code(default_language),
-        "prompt": {"prompt": full_prompt, "tools": _TOOLS, "temperature": 0.3},
+        "prompt": {"prompt": full_prompt, "tools": tools_for(language_lock), "temperature": 0.3},
     }
     if llm:
         agent["prompt"]["llm"] = llm
     presets: dict[str, Any] = {}
-    for tag in languages:
+    for tag in () if language_lock else languages:
         if tag == default_language:
             continue
         voice = voices.get(tag)
@@ -261,12 +318,19 @@ def ensure_agent(
     api_key: str = ELEVENLABS_API_KEY,
     state_text: str = "",
     name: str = ELEVEN_AGENT_NAME,
+    language: str = DEFAULT_LANGUAGE,
+    language_lock: bool = LANGUAGE_LOCK,
     timeout: float = 30.0,
 ) -> str:
-    """Create the agent once, then keep it in sync with :func:`agent_config` at every start."""
+    """Create the agent once, then keep it in sync with :func:`agent_config` at every start.
+
+    ``language`` is the one this session speaks: with the lock on it is written into the prompt
+    and the agent is given no way to change it, so the agent has to be updated when a session
+    starts in the other language - which is exactly what this function already does every time.
+    """
     if not api_key:
         raise RuntimeError("ELEVENLABS_API_KEY is empty")
-    config = agent_config(state_text=state_text)
+    config = agent_config(state_text=state_text, default_language=language, language_lock=language_lock)
     agent_id = load_agent_id()
     with httpx.Client(headers=_headers(api_key), timeout=timeout) as http:
         if agent_id:
@@ -409,11 +473,15 @@ def client_tools(
     on_call: Any = None,
     active: Callable[[], bool] | None = None,
     game: Callable[[], Any] | None = None,
+    session: Callable[[], Any] | None = None,
 ) -> Any:
     """SDK ``ClientTools`` with the local implementations registered.
 
-    ``game`` is read at call time, not at registration, because the robot learns the setup while
-    the session is already running.
+    ``game`` and ``session`` are read at call time, not at registration, because the robot learns
+    the setup while the session is already running. ``session`` is the
+    ``src/integration/game_session.GameSession``: it is how the agent takes the robot's turn and
+    writes down a briefing, since the robot itself has no voice at the table - the agent is the
+    one mouth, and these tools are its hands.
 
     ``active`` says whether the session these tools belong to is still the live one; a session
     being closed for a language switch gets :data:`CLOSING_RESULT` instead of a search, so the
@@ -448,6 +516,37 @@ def client_tools(
             on_call("game_state", parameters, result)
         return json.dumps(result, ensure_ascii=False)
 
+    def take_turn(parameters: dict) -> str:
+        playing = session() if session is not None else None
+        if playing is None:
+            result = {
+                "took_a_turn": False,
+                "say": "",
+                "note": "No game is loaded, so there is no turn for me to take.",
+            }
+        else:
+            result = playing.turn_report()
+        if on_call:
+            on_call("take_turn", parameters, result)
+        return json.dumps(result, ensure_ascii=False)
+
+    def remember_setup(parameters: dict) -> str:
+        said = str(parameters.get("said", "")).strip()
+        playing = session() if session is not None else None
+        if playing is None or not said:
+            result = {
+                "noted": [],
+                "say": "",
+                "note": "There is nothing to write it down in yet."
+                if playing is None
+                else "I need their words.",
+            }
+        else:
+            result = playing.setup_report(said)
+        if on_call:
+            on_call("remember_setup", parameters, result)
+        return json.dumps(result, ensure_ascii=False)
+
     def encounter_card(parameters: dict) -> str:
         try:
             number = int(parameters.get("number"))
@@ -458,6 +557,8 @@ def client_tools(
             on_call("encounter_card", parameters, result)
         return json.dumps(result, ensure_ascii=False)
 
+    tools.register("take_turn", take_turn)
+    tools.register("remember_setup", remember_setup)
     tools.register("encounter_card", encounter_card)
     tools.register("game_rules", game_rules)
     tools.register("game_knowledge", game_knowledge)
@@ -477,6 +578,7 @@ __all__ = [
     "AGENT_PROMPT",
     "AGENT_FILE",
     "agent_config",
+    "tools_for",
     "client_tools",
     "CLOSING_RESULT",
     "ensure_agent",

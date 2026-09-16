@@ -316,3 +316,43 @@ def test_only_what_changed_is_read_back(tmp_path):
     assert "The Deep Ones Attack" in said.last
     assert "Bull Whip" not in said.last  # the Reserve did not change: it is not read back
     assert "Azathoth" not in said.last
+
+
+def test_the_turn_comes_back_as_text_for_the_agent_to_say(tmp_path):
+    from src.strategy.decide import Decision
+    from src.strategy.moves import Candidate, TurnPlan
+
+    session = GameSession.open(tmp_path / "game.json", language="pt-BR", background=False)
+    session.game.add_investigator("Lily Chen", controller=ROBOT)
+    plan = TurnPlan((Candidate("rest", "at Shanghai"),), "Shanghai")
+    session.taker.decide_fn = lambda *a, **k: Decision(plan, "Vou descansar.", ask="Tem Monster aqui?")
+    report = session.turn_report()
+    assert report["took_a_turn"] is True
+    assert report["move"] == "Rest at Shanghai"
+    assert report["say"] == "Vou descansar. Tem Monster aqui?"
+    assert "as it is" in report["note"]
+
+
+def test_without_an_investigator_the_turn_tool_says_so_instead_of_inventing(tmp_path):
+    session = GameSession.open(tmp_path / "game.json", language="pt-BR", background=False)
+    report = session.turn_report()
+    assert report["took_a_turn"] is False and report["say"] == ""
+    assert "which investigator" in report["note"]
+
+
+def test_the_setup_tool_writes_it_down_and_hands_back_one_sentence(tmp_path):
+    said = _Said()
+    session = _session(tmp_path, said, setup_fn=_setup_fn(ancient_one="Azathoth"))
+    report = session.setup_report("o ancião é Azathoth")
+    assert report["noted"] == ["facing Azathoth"]
+    assert "Azathoth" in report["say"]
+    assert any("investigator" in m for m in report["still_missing"])
+
+
+def test_a_session_without_a_voice_never_speaks(tmp_path):
+    # The agent is the only mouth at the table; the session is built without a say callable.
+    session = GameSession.open(tmp_path / "game.json", language="pt-BR", background=False)
+    session.game.add_investigator("Lily Chen", controller=ROBOT)
+    session.setup_report("o ancião é Azathoth")  # would have spoken before
+    session.turn_report()
+    assert session.say("anything", "pt-BR") is None

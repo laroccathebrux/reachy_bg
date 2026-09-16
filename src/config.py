@@ -158,6 +158,10 @@ ANSWER_GAME_QUESTIONS = _env_bool("ANSWER_GAME_QUESTIONS", True)
 # recognise its own echo and to take its own turn, so the robot and the agent never answer the
 # same sentence. ``--no-gate`` on the command line does the same for one session.
 ADDRESSEE_GATE = _env_bool("ADDRESSEE_GATE", True)
+# One language per session, chosen when it starts. The robot answered a Portuguese table in
+# English mid-game and the owner stopped the session over it: with the lock on, the agent has no
+# tool to switch with, no second voice preset, and a prompt that names the language it speaks.
+LANGUAGE_LOCK = _env_bool("LANGUAGE_LOCK", True)
 # Hugging Face token: required once to download the gated pyannote models.
 HF_TOKEN = os.getenv("HF_TOKEN", "")
 
@@ -298,6 +302,7 @@ __all__ = [
     "FLOOR_WINDOW_S",
     "ANSWER_GAME_QUESTIONS",
     "ADDRESSEE_GATE",
+    "LANGUAGE_LOCK",
     "HF_TOKEN",
     "TTS_PROVIDER",
     "ELEVENLABS_API_KEY",

@@ -216,7 +216,7 @@ class GameSession:
         self,
         game: GameState,
         *,
-        say: Callable[[str, str], None],
+        say: Callable[[str, str], None] | None = None,
         path: Path | None = None,
         language: str = "pt-BR",
         plan: Any = None,
@@ -226,13 +226,18 @@ class GameSession:
         on_setup: Callable[[SetupReading, str], None] | None = None,
     ) -> None:
         self.game = game
-        self.say = say
+        # No ``say`` means the robot has no voice of its own: the agent speaks for it, through
+        # the take_turn and remember_setup tools. That is the arrangement at the table - one
+        # mouth - and it is why every report here comes back as text.
+        self.say = say or (lambda text, language: None)
         self.path = Path(path) if path else None
         self.language = language
         self.setup_fn = setup_fn
         self.background = background
         self.on_setup = on_setup
-        self.taker = taker or TurnTaker(game, say=say, language=language, plan=plan, background=background)
+        self.taker = taker or TurnTaker(
+            game, say=self.say, language=language, plan=plan, background=background
+        )
         self.readings = 0
         self._busy = threading.Lock()
 
@@ -347,6 +352,48 @@ class GameSession:
             )
             self.say(self.sentence(reading, language), language)
             return reading
+
+    # ------------------------------------------------------------------ what the agent asks for
+    def turn_report(self, language: str = "") -> dict[str, Any]:
+        """The robot's turn, for the agent to say. One mouth at the table, and it is the agent's."""
+        language = language or self.language
+        who = self.taker.investigator
+        if not who:
+            return {
+                "took_a_turn": False,
+                "say": "",
+                "note": "I do not know which investigator I am playing. Ask the table.",
+            }
+        decision = self.taker.decide_now(language)
+        if decision is None:
+            return {"took_a_turn": False, "say": "", "note": "The turn could not be worked out."}
+        return {
+            "took_a_turn": decision.acted,
+            "investigator": who,
+            "move": decision.plan.describe() if decision.plan else "",
+            "ends_at": decision.plan.ends_at if decision.plan else "",
+            "say": TurnTaker.sentence(decision, language),
+            "decided_by": decision.chosen_by,
+            "refusals": list(decision.refusals),
+            "note": (
+                "Say the sentence in 'say' as it is - that is the move the robot chose and the "
+                "reason it chose it. Then ask the table to move the piece."
+            ),
+        }
+
+    def setup_report(self, said: str, language: str = "", speaker: str = "") -> dict[str, Any]:
+        """Write down what the table just said about the setup, and say what is still missing."""
+        language = language or self.language
+        reading = self._read_setup(said, language, speaker, quiet_if_nothing=True)
+        if reading is None:
+            return {"noted": [], "say": "", "note": "I could not read that; ask them to say it again."}
+        return {
+            "noted": list(reading.applied),
+            "not_recognised": list(reading.unknown),
+            "still_missing": self.game.missing(),
+            "say": self.sentence(reading, language),
+            "note": "Say the sentence in 'say' as it is. Do not add anything to it.",
+        }
 
     def sentence(self, reading: SetupReading, language: str) -> str:
         """What the robot says back: what it wrote down, then the next thing it needs.

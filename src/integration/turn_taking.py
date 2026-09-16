@@ -109,6 +109,36 @@ class TurnTaker:
             self._take(language)
         return True
 
+    def decide_now(self, language: str = "") -> Decision | None:
+        """Work the turn out and return it, without saying anything.
+
+        This is what the agent's ``take_turn`` tool calls: with one voice at the table, the
+        robot decides and the agent speaks, so the decision has to come back as text rather
+        than go to a speaker of its own.
+        """
+        language = language or self.language
+        if self.game.robot_investigator is None:
+            return None
+        with self._busy:
+            started = time.monotonic()
+            try:
+                decision = self.decide_fn(self.game, language=language, plan=self.plan)
+            except Exception as exc:  # a decision that crashes must not take the turn down
+                log.exception("turn: the decision failed (%s)", exc)
+                return None
+            self.last = decision
+            self.turns += 1
+            log.info(
+                "turn %d: %s (%s, %.1fs)",
+                self.turns,
+                decision.plan.describe() if decision.plan else "no action",
+                decision.chosen_by,
+                time.monotonic() - started,
+            )
+            if self.on_decision is not None:
+                self.on_decision(decision, self.sentence(decision, language))
+            return decision
+
     def _take(self, language: str) -> None:
         with self._busy:
             started = time.monotonic()

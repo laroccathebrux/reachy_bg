@@ -979,6 +979,46 @@ kept underneath), the knowledge base stays English even when the card is read in
 the printed **value** of an Asset finally has somewhere to live - ``moves.card_value`` reads it,
 so Acquire Assets stops asking for a number somebody has already read out.
 
+## Done: one voice, one language (2026-09-16, after the session was stopped)
+
+The owner stopped a live session: "tem agente demais ouvindo... cada um responde o que acha que
+deve responder... até em inglês falou". He was right on both counts, and both were ours.
+
+**Two mouths.** The ElevenLabs agent answered what it heard, and the robot's own TTS answered
+for the turn, for a briefing it wrote down, and with a greeting when the session opened. From a
+chair at the table that is two things talking, sometimes about the same sentence.
+
+There is one now, and it is the agent's. The robot still decides its own turn and still writes
+down its own setup - that is local, checked against the box, and unchanged - but it says neither.
+Two new client tools hand it over:
+
+- ``take_turn``: the table gives the robot's investigator its turn, the agent calls this, the
+  local model works the move out and returns the sentence to say.
+- ``remember_setup``: somebody describes or corrects the setup, the agent passes their words,
+  the reference checks the names, and what was written down comes back as one sentence.
+
+Both return a ``say`` field with the note "say this as it is". The greeting is a log line now, not
+speech: the agent reads the same state through ``game_state`` whenever it needs it. The only local
+speech left is voice enrolment (``--players``), which happens before the agent session starts.
+
+**One language.** ``LANGUAGE_LOCK`` (on by default) and ``--lang``: the session starts in a
+language and stays there. Locked, the agent has no ``language_detection`` tool to switch with, no
+second voice preset to switch into, and a prompt that says which language it speaks; the gate's
+language-switch restart is not wired at all. ``--free-language`` restores what it did before.
+
+Also: the reasoning model is loaded in the background when a game is opened, because the agent
+gives a client tool 45 seconds and a cold ``qwen3.6:35b-mlx`` spends 30 of them being read off
+disk (measured tonight: 31.6 s cold for a turn, 2-8 s warm).
+
+Live check of both tools, on the owner's saved game:
+
+    take_turn       -> "Vou fazer Acquire Assets em Shanghai ... Qual é o valor total das cartas
+                       Lucky Cigarette Case, Private Investigator e Kerosene no Reserve?"
+    remember_setup("o Mystery é The Deep Ones Attack")
+                    -> noted: mystery: The Deep Ones Attack!   (spelled as the box prints it)
+                    -> "Anotado. O Mystery é The Deep Ones Attack!."
+    game_state      -> mystery: "The Deep Ones Attack!"
+
 ## Decisions taken
 
 | Topic | Decision | Where |
@@ -988,7 +1028,8 @@ so Acquire Assets stops asking for a number somebody has already read out.
 | Vector store | Qdrant in the existing Docker container; collections `bg_rules`, `bg_knowledge`, `bg_sessions` | docs/DESIGN_DOCUMENT.md |
 | Speech input | Mac microphone; mlx-whisper; diart + pyannote 3 live in a sidecar; pyannote 4 + WhisperX offline | docs/SPEECH_PIPELINE.md |
 | Speech output | ElevenLabs by default, local TTS optional | src/config.py |
-| Conversation | ElevenLabs agent (cloud) + local client tools; local Whisper + Ollama kept as fallback. The agent talks; the game state is the robot's and the agent reads it through the `game_state` tool | docs/SPEECH_PIPELINE.md |
+| Conversation | ElevenLabs agent (cloud) + local client tools; local Whisper + Ollama kept as fallback. **One voice**: the agent speaks, and everything the robot works out locally (its turn, the setup it writes down) reaches the table through a tool | docs/SPEECH_PIPELINE.md |
+| Language | one per session, chosen at the start and locked (`LANGUAGE_LOCK`, `--lang`); the agent is given no way to switch | src/speech/eleven_agent.py |
 | Agent LLM | `gpt-4.1-mini` inside ElevenLabs (owner's decision, 2026-09-14): follows the prompt better than the Gemini default; billed through the ElevenLabs account, no OpenAI key | src/config.py |
 | Turn-taking | the local ear decides speak/stay-quiet before any audio reaches the agent (rules on the local Whisper transcript; a local LLM classifier only if the rules prove insufficient). Switchable: with `ADDRESSEE_GATE=false` the robot answers everything and the rules only watch, which is how the owner is running it for now | src/speech/gatekeeper.py |
 | Game setup | verbal briefing + knowledge base, no card OCR | docs/SETUP_PROTOCOL.md |

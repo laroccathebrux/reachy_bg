@@ -7,26 +7,50 @@ from src.speech.eleven_agent import agent_config, knowledge_lookup, language_of,
 VOICES = {"pt-BR": "voice-br", "en-US": "voice-us"}
 
 
-def test_agent_config_has_native_voice_per_language_and_local_tools():
-    cfg = agent_config(
-        voices=VOICES, default_language="pt-BR", languages=("pt-BR", "en-US"), llm="", state_text=""
-    )
+def _config(**kwargs):
+    base = dict(voices=VOICES, default_language="pt-BR", languages=("pt-BR", "en-US"), llm="", state_text="")
+    return agent_config(**{**base, **kwargs})
+
+
+def test_agent_config_has_the_native_voice_and_the_local_tools():
+    cfg = _config()
     assert cfg["agent"]["language"] == "pt"
     assert cfg["tts"]["voice_id"] == "voice-br"
     assert cfg["tts"]["agent_output_audio_format"] == "pcm_16000"
     assert cfg["asr"]["user_input_audio_format"] == "pcm_16000"
-    assert cfg["language_presets"]["en"]["overrides"]["tts"]["voice_id"] == "voice-us"
-    assert cfg["language_presets"]["en"]["overrides"]["agent"]["language"] == "en"
     names = [t["name"] for t in cfg["agent"]["prompt"]["tools"]]
     assert names == [
         "game_rules",
         "game_state",
+        "take_turn",
+        "remember_setup",
         "encounter_card",
         "game_knowledge",
-        "language_detection",
     ]
     assert "llm" not in cfg["agent"]["prompt"]
     assert "Golden rule" in cfg["agent"]["prompt"]["prompt"]
+
+
+def test_the_locked_language_leaves_nothing_to_switch_with():
+    cfg = _config(language_lock=True)
+    names = [t["name"] for t in cfg["agent"]["prompt"]["tools"]]
+    assert "language_detection" not in names  # no tool to switch with
+    assert cfg["language_presets"] == {}  # and no other voice to switch to
+    prompt = cfg["agent"]["prompt"]["prompt"]
+    assert "You speak Brazilian Portuguese and only Brazilian Portuguese" in prompt
+    assert "{language}" not in prompt
+
+
+def test_unlocked_it_can_still_switch_the_way_it_used_to():
+    cfg = _config(language_lock=False)
+    names = [t["name"] for t in cfg["agent"]["prompt"]["tools"]]
+    assert "language_detection" in names
+    assert cfg["language_presets"]["en"]["overrides"]["tts"]["voice_id"] == "voice-us"
+    assert cfg["language_presets"]["en"]["overrides"]["agent"]["language"] == "en"
+
+
+def test_the_language_in_the_prompt_is_the_one_the_session_starts_in():
+    assert "only American English" in _config(default_language="en-US")["agent"]["prompt"]["prompt"]
 
 
 def test_agent_config_appends_state_and_llm():
@@ -42,8 +66,22 @@ def test_agent_config_appends_state_and_llm():
 
 
 def test_agent_config_refuses_a_language_without_a_native_voice():
+    # Unlocked, the session may switch into English, so English needs its own voice.
     with pytest.raises(ValueError):
-        agent_config(voices={"pt-BR": "voice-br"}, default_language="pt-BR", languages=("pt-BR", "en-US"))
+        agent_config(
+            voices={"pt-BR": "voice-br"},
+            default_language="pt-BR",
+            languages=("pt-BR", "en-US"),
+            language_lock=False,
+        )
+    # Locked, it never switches, so the missing voice is not this session's problem.
+    cfg = agent_config(
+        voices={"pt-BR": "voice-br"},
+        default_language="pt-BR",
+        languages=("pt-BR", "en-US"),
+        language_lock=True,
+    )
+    assert cfg["tts"]["voice_id"] == "voice-br"
 
 
 def fake_retriever(query, *, rules_limit, knowledge_limit):
