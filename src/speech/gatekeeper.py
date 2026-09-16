@@ -65,6 +65,7 @@ class Gatekeeper:
         on_switch: Callable[[str, str, str], None] | None = None,
         my_investigator: Callable[[], str] = lambda: "",
         on_addressed: Callable[..., str | None] | None = None,
+        wants_setup: Callable[[str], bool] = lambda text: False,
         clock: Callable[[], float] = time.monotonic,
     ):
         self.audio = audio
@@ -85,6 +86,9 @@ class Gatekeeper:
         # the transcript, the language, the rule that addressed it and the speaker, and returns
         # the route it handled the utterance as - or None, and the agent hears it as usual.
         self.on_addressed = on_addressed
+        # "Is this the briefing I am still waiting for?" - answered by the game session, which
+        # is the only thing that knows what the robot still has to be told.
+        self.wants_setup = wants_setup
         self.clock = clock
         self.asr_lock = threading.Lock()  # one Whisper call at a time (the spotter shares it)
         self.last_addressed = ""
@@ -177,6 +181,7 @@ class Gatekeeper:
                 other_names=[n for n in self.names if n != speaker],
                 my_investigator=self.my_investigator(),
                 seconds_since_addressed=self._floor_seconds(speaker, label),
+                setup_hint=self.wants_setup(text),
             )
 
         if decision.addressed and self.on_addressed is not None:

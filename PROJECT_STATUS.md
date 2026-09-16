@@ -843,6 +843,43 @@ Three faults this exposed, all of them older:
   which is what let the setup ear sit beside the turn taker without a second path through the
   audio.
 
+## Done: the briefing reaches the robot even when nobody says its name (2026-09-16, late)
+
+The next live session put the same complaint one step further on. The game file already had the
+Ancient One and the investigator, so the setup ear was closed - and the owner was telling the
+robot the Mystery:
+
+    17:54:41  O mistério atual diz o seguinte, ele é o The Deepest One Attack.  -> discarded
+    17:54:43  Conhece ele?                                                      -> discarded
+
+Two things were wrong, both of them ours:
+
+- **The ear was open for the wrong condition.** It waited on `game.ready`, which the Ancient One
+  and its own investigator already satisfy. It now waits on what the robot can only be *told* -
+  the Ancient One, its investigator, the Mystery, and any name the reference refused - and not on
+  `game.missing()`, which includes "which piece on the board is Lily Chen" and would hold the ear
+  open all game for something the camera answers.
+- **A statement never reached the ear at all.** The ear only sees what the gate already judged
+  to be for the robot, and a briefing has no name, no question and no floor behind it. So the
+  rules gained one: while the robot is missing something it can only be told, a statement that
+  carries the words of a briefing is for it (`setup_talk`).
+
+That rule is a guess, so it costs nothing when it is wrong: the extraction runs **before** the
+audio is dropped, and a sentence that turns out not to be a briefing goes on to the agent as if
+nothing had happened. "Não, tu não entendeu, esse foi o mistério que eu comprei" has the word in
+it and is not a briefing; the robot stays quiet and the agent answers it.
+
+Live, with the state from that session and the sentence as Whisper wrote it:
+
+    "O mistério atual diz o seguinte, ele é o The Deepest One Attack."
+      -> setup in 3.6 s: "Anotado. O Mystery é The Deepest One Attack."
+
+Only what changed is read back now. Confirming with the whole state was twenty seconds of speech
+for one new fact, and a table stops listening to that.
+
+Replayed over both live sessions (`scripts/rules_replay.py`): 58 utterances, 14 reached the robot
+then, 29 would now, and every one of the 15 newly heard is an instruction the owner gave it.
+
 ## Decisions taken
 
 | Topic | Decision | Where |

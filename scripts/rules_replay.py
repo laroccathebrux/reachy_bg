@@ -27,12 +27,15 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src.config import GAME_LOG_DIR  # noqa: E402
-from src.speech.addressee import decide  # noqa: E402
+from src.integration.game_session import looks_like_setup  # noqa: E402
+from src.speech.addressee import decide, is_question  # noqa: E402
 
 ADDRESSED_ROUTES = {"released", "early", "switched", "my_turn"}
 
 
-def replay(rows: list[dict], *, humans: int | None = 2, investigator: str = "") -> list[dict]:
+def replay(
+    rows: list[dict], *, humans: int | None = 2, investigator: str = "", missing_setup: bool = True
+) -> list[dict]:
     """Judge every logged utterance again, tracking who held the floor as the session went."""
     out: list[dict] = []
     addressed_at: float | None = None
@@ -58,10 +61,16 @@ def replay(rows: list[dict], *, humans: int | None = 2, investigator: str = "") 
             other_names=[],
             my_investigator=investigator,
             seconds_since_addressed=since_addressed,
+            setup_hint=missing_setup and looks_like_setup(text),
         )
         if verdict.addressed:
             addressed_at, addressed_by, addressed_label = ts, speaker, label
-        out.append({**row, "new_addressed": verdict.addressed, "new_reason": verdict.reason})
+        handled = ""
+        if verdict.addressed and not is_question(text, row.get("language") or "pt-BR"):
+            handled = "setup" if (missing_setup and looks_like_setup(text)) else ""
+        out.append(
+            {**row, "new_addressed": verdict.addressed, "new_reason": verdict.reason, "handled": handled}
+        )
     return out
 
 
@@ -72,6 +81,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--all", action="store_true", help="every line, not only the ones that changed")
     parser.add_argument("--humans", type=int, default=2)
     parser.add_argument("--investigator", default="Lily Chen")
+    parser.add_argument(
+        "--game-known",
+        action="store_true",
+        help="judge as if the robot already knew the whole setup (no setup_talk rule)",
+    )
     args = parser.parse_args(argv)
 
     rows = [json.loads(line) for line in Path(args.log).read_text().splitlines() if line.strip()]
@@ -84,7 +98,9 @@ def main(argv: list[str] | None = None) -> int:
         gaps = [i for i in range(1, len(rows)) if rows[i]["ts"] - rows[i - 1]["ts"] > 600]
         rows = rows[gaps[-1] :] if gaps else rows
 
-    judged = replay(rows, humans=args.humans, investigator=args.investigator)
+    judged = replay(
+        rows, humans=args.humans, investigator=args.investigator, missing_setup=not args.game_known
+    )
     changed = [r for r in judged if r["new_addressed"] != (r["route"] in ADDRESSED_ROUTES)]
     for row in judged:
         was = row["route"] in ADDRESSED_ROUTES
@@ -93,7 +109,10 @@ def main(argv: list[str] | None = None) -> int:
             continue
         mark = "  " if was == now else ("+ " if now else "- ")
         stamp = time.strftime("%H:%M:%S", time.localtime(row["ts"]))
-        print(f"{mark}{stamp} {row['reason']:18s} -> {row['new_reason']:18s} {(row.get('text') or '')[:80]}")
+        where = f" [{row['handled']}]" if row.get("handled") else ""
+        print(
+            f"{mark}{stamp} {row['reason']:18s} -> {row['new_reason']:18s}{where} {(row.get('text') or '')[:74]}"
+        )
     heard = sum(1 for r in judged if r["route"] in ADDRESSED_ROUTES)
     print(
         f"\n{len(judged)} utterances: {heard} reached the robot, "

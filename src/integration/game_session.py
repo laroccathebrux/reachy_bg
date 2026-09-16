@@ -29,8 +29,10 @@ Azathoth" would be slower and less reliable than writing it once.
 
 from __future__ import annotations
 
+import re
 import threading
 import time
+import unicodedata
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -39,6 +41,7 @@ from src.integration.turn_taking import TurnTaker
 from src.logger import get_logger
 from src.speech.addressee import is_question
 from src.strategy.game import GameState
+from src.strategy.reference import ANCIENT_ONES, INVESTIGATORS
 from src.strategy.setup import SetupReading, pending, read_setup
 
 log = get_logger(__name__)
@@ -87,27 +90,63 @@ ASKS: dict[str, dict[str, str]] = {
 }
 
 
+# Words that make a statement worth handing to the setup extractor. Without this the ear takes
+# every statement for as long as anything is missing, and "vou pegar um café" costs 4 seconds of
+# the local model and a question read back.
+SETUP_WORDS = frozenset(
+    "ancient ancião anciao mystery mysteries mistério misterio mistérios investigator investigators "
+    "investigador investigadores controlar controla controlo control plays playing jogar jogo joga "
+    "reserve reserva doom setup partida game inicial starting começa comeca".split()
+)
+
+
+def looks_like_setup(text: str) -> bool:
+    """Does this sentence carry setup in it - a game word, or a name from the reference?"""
+    words = {_fold(w) for w in re.findall(r"[\wÀ-ÿ']+", text.lower())}
+    if words & {_fold(w) for w in SETUP_WORDS}:
+        return True
+    names = {_fold(part) for sheet in INVESTIGATORS for part in sheet.name.split() if len(part) > 2}
+    names |= {_fold(part) for one in ANCIENT_ONES for part in one.name.replace("-", " ").split()}
+    return bool(words & names)
+
+
+def _fold(word: str) -> str:
+    """Lowercase and without accents, so "Mistério", "mistério" and "misterio" are one word."""
+    stripped = unicodedata.normalize("NFD", word.lower())
+    return "".join(c for c in stripped if unicodedata.category(c) != "Mn")
+
+
 def _lines(language: str) -> dict[str, str]:
     return LINES.get(language, LINES["en-US"])
 
 
-def briefing(game: GameState, language: str) -> str:
-    """What the robot knows about this game, said out loud in the table's language."""
+def briefing(game: GameState, language: str, only: list[str] | None = None) -> str:
+    """What the robot knows about this game, said out loud in the table's language.
+
+    ``only`` limits it to the parts a narration just changed ("mystery", "investigators"...):
+    reading the whole state back after every sentence is twenty seconds of speech for one new
+    fact, and the table stops listening.
+    """
     words = _lines(language)
     parts: list[str] = []
-    if game.ancient_one is not None:
+    wanted = None if only is None else set(only)
+
+    def include(field: str) -> bool:
+        return wanted is None or field in wanted
+
+    if game.ancient_one is not None and include("ancient_one"):
         parts.append(words["facing"].format(ancient_one=game.ancient_one.name, doom=game.doom))
     mine = game.robot_investigator
-    if mine is not None:
+    if mine is not None and include("investigators"):
         parts.append(words["mine"].format(name=mine.name, space=mine.space))
     others = [i for i in game.investigators if not i.is_robot]
-    if others:
+    if others and include("investigators"):
         parts.append(words["others"].format(others=", ".join(f"{i.name} ({i.controller})" for i in others)))
-    if game.mystery:
+    if game.mystery and include("mystery"):
         parts.append(words["mystery"].format(mystery=game.mystery))
-    if game.reserve:
+    if game.reserve and include("reserve"):
         parts.append(words["reserve"].format(reserve=", ".join(game.reserve)))
-    return " ".join(parts) or words["nothing"]
+    return " ".join(parts) or ("" if wanted is not None else words["nothing"])
 
 
 # How an unrecognised name is spoken about, per language.
@@ -214,8 +253,21 @@ class GameSession:
     # ------------------------------------------------------------------ listening
     @property
     def wants_setup(self) -> bool:
-        """True while something essential is missing, so a narration is worth extracting."""
-        return not self.game.ready
+        """True while something the robot can only be told is missing.
+
+        Not ``game.ready``: that is satisfied by the Ancient One and its own investigator, and
+        the owner was still telling it the Mystery - "O mistério atual diz o seguinte" went to
+        the agent as table talk and was dropped. Not ``game.missing()`` either, which includes
+        "which piece on the board is Lily Chen": the camera answers that one, and waiting on it
+        would leave this ear open for the whole game.
+        """
+        game = self.game
+        return (
+            game.ancient_one is None
+            or game.robot_investigator is None
+            or not game.mystery
+            or bool(game.unresolved)
+        )
 
     def handle(self, text: str, language: str = "", reason: str = "", speaker: str = "") -> str | None:
         """Deal with an utterance the gate judged to be for the robot.
@@ -229,15 +281,30 @@ class GameSession:
             return "my_turn"
         if not self.wants_setup or is_question(text, language) or self._busy.locked():
             return None
+        if not looks_like_setup(text):
+            return None  # a statement about something else belongs to the conversation
+        if reason == "setup_talk":
+            # This sentence reached the robot on a guess - it sounded like the briefing the
+            # robot is waiting for. So the guess is paid for here and now: the extraction runs
+            # before anything is dropped, and if it was not a briefing after all the utterance
+            # goes on to the agent as if this had never happened. "Não, tu não entendeu, esse
+            # foi o mistério que eu comprei" has the word in it and is not a briefing.
+            reading = self._read_setup(text, language, speaker, quiet_if_nothing=True)
+            return "setup" if reading is not None and (reading.applied or reading.unknown) else None
         if self.background:
             threading.Thread(
-                target=self._read_setup, args=(text, language, speaker), name="setup-ear", daemon=True
+                target=self._read_setup,
+                args=(text, language, speaker, False),
+                name="setup-ear",
+                daemon=True,
             ).start()
         else:
-            self._read_setup(text, language, speaker)
+            self._read_setup(text, language, speaker, False)
         return "setup"
 
-    def _read_setup(self, text: str, language: str, speaker: str = "") -> None:
+    def _read_setup(
+        self, text: str, language: str, speaker: str = "", quiet_if_nothing: bool = False
+    ) -> SetupReading | None:
         with self._busy:
             started = time.monotonic()
             try:
@@ -246,12 +313,15 @@ class GameSession:
                 reading = self.setup_fn(text, language, self.game, speaker=speaker)
             except Exception as exc:  # the extractor failing must not take the conversation down
                 log.exception("setup: reading failed (%s)", exc)
-                return
+                return None
             self.readings += 1
             if self.on_setup is not None:
                 self.on_setup(reading, text)
             if reading.applied or reading.unknown:
                 self.save()
+            elif quiet_if_nothing:
+                log.info("setup %d: nothing in %r; the agent gets it instead", self.readings, text[:60])
+                return reading
             log.info(
                 "setup %d: %s (%.1fs)",
                 self.readings,
@@ -259,21 +329,23 @@ class GameSession:
                 time.monotonic() - started,
             )
             self.say(self.sentence(reading, language), language)
+            return reading
 
     def sentence(self, reading: SetupReading, language: str) -> str:
         """What the robot says back: what it wrote down, then the next thing it needs.
 
-        Nothing extracted is not silence: the robot asks again, because a briefing the model
-        could not read is usually one the person will rephrase. It repeats the whole state only
-        when it did write something down, so a "no" does not get the full briefing read back.
+        Only what this narration changed is read back, and then the next missing thing. Nothing
+        extracted is not silence when the person was plainly talking to the robot: it asks
+        again, because a briefing the model could not read is usually one they will rephrase.
         """
         words = _lines(language)
         question = next_question(self.game, reading, language)
         if reading.applied:
-            return " ".join(p for p in (words["noted"], briefing(self.game, language), question) if p)
+            changed = briefing(self.game, language, only=getattr(reading, "fields", None) or None)
+            return " ".join(p for p in (words["noted"], changed, question) if p)
         if self.game.ancient_one is None and not self.game.investigators:
             return " ".join(p for p in (words["nothing"], question) if p)
         return question or briefing(self.game, language)
 
 
-__all__ = ["ASKS", "LINES", "GameSession", "briefing", "next_question"]
+__all__ = ["ASKS", "LINES", "SETUP_WORDS", "GameSession", "briefing", "looks_like_setup", "next_question"]

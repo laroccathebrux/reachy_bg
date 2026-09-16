@@ -10,7 +10,9 @@ The rules, in order of confidence:
    with full confidence when the sentence hands over the turn.
 2. Another player is named as the vocative ("Bruno, what do you think?"): not for the robot.
 3. A question or a short reply within ``FOLLOW_UP_WINDOW_S`` after the robot spoke: follow-up.
-3b. The speaker still holds the floor: they spoke to the robot less than ``FLOOR_WINDOW_S``
+3b. The robot is missing something it can only be told and the sentence sounds like the
+   briefing for it: a statement counts, and the robot stays quiet unless it learnt something.
+3c. The speaker still holds the floor: they spoke to the robot less than ``FLOOR_WINDOW_S``
    ago and nobody else has spoken since, so this sentence continues what they were telling it -
    a statement counts, which is how a person explains a board.
 4. A question about the rules or the game while it is the robot's turn: probably for it.
@@ -252,6 +254,7 @@ def decide(
     my_investigator: str = "",
     seconds_since_addressed: float | None = None,
     floor_window_s: float = FLOOR_WINDOW_S,
+    setup_hint: bool = False,
 ) -> Decision:
     """Decide whether the utterance is for the robot.
 
@@ -283,6 +286,7 @@ def decide(
         return Decision(True, "my_investigator", 0.8)
     if mentions_person(text, other_names):
         return Decision(False, "other_person", 0.85)
+    question = is_question(text, language)
     if is_turn_call(text, language) and (mentions_robot(text) or humans_present == 1):
         return Decision(True, "turn_call", 0.75)
     if humans_present == 1 and len(_words(text)) >= 2:
@@ -290,7 +294,6 @@ def decide(
         # form makes it certain, anything else is still far more likely than talking alone).
         reason = "second_person_solo" if second_person(text, language) else "solo"
         return Decision(True, reason, 0.6 if reason == "second_person_solo" else 0.55)
-    question = is_question(text, language)
     recent = (
         follow_up_ok
         and seconds_since_robot_spoke is not None
@@ -300,6 +303,13 @@ def decide(
         return Decision(True, "follow_up_question", 0.8)
     if recent and len(_words(text)) <= _SHORT_REPLY_MAX_WORDS:
         return Decision(True, "follow_up_reply", 0.6)
+    if setup_hint and not question:
+        # The robot is still missing something it can only be told, and this sentence carries
+        # the words of a briefing. A person saying "o mistério atual é The Deep Ones Attack" at
+        # a table where the robot does not know the Mystery is telling the robot. It costs a
+        # local extraction and nothing in the cloud, and the robot only answers if it learnt
+        # something, so being wrong here is quiet.
+        return Decision(True, "setup_talk", 0.6)
     if seconds_since_addressed is not None and 0 <= seconds_since_addressed <= floor_window_s:
         # The same person is still talking to the robot: this is the rest of what they were
         # saying, whether or not it happens to be a question.

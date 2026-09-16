@@ -63,7 +63,7 @@ from src.config import (
     HEAD_SWAY,
     validate_config,
 )
-from src.integration.game_session import GameSession
+from src.integration.game_session import GameSession, looks_like_setup
 from src.logger import get_logger
 from src.robot.reachy import AGREE_MOVES, GREETING_MOVES, Robot
 from src.robot.sway import HeadSway
@@ -637,6 +637,11 @@ def main(argv: list[str] | None = None) -> int:
                 on_switch=table.switch_language,
                 my_investigator=(lambda: session.taker.investigator) if session is not None else (lambda: ""),
                 on_addressed=session.handle if session is not None else None,
+                wants_setup=(
+                    (lambda text: session.wants_setup and looks_like_setup(text))
+                    if session is not None
+                    else (lambda text: False)
+                ),
             )
             audio.hold_utterances = gate_on
             ear.on_utterance = table.on_utterance

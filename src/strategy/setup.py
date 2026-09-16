@@ -93,6 +93,10 @@ class SetupReading:
     # The same names as data (kind, what was said, what it might have been), so the robot can ask
     # about them in the language of the table instead of reading an English sentence out loud.
     unknown_items: list[dict[str, Any]] = field(default_factory=list)
+    # Which parts of the state this narration actually changed ("ancient_one", "investigators",
+    # "mystery", "reserve", "doom"), so the robot can read back what is new instead of
+    # everything it knows.
+    fields: list[str] = field(default_factory=list)
     raw: dict[str, Any] = field(default_factory=dict)
     seconds: float = 0.0
 
@@ -118,6 +122,7 @@ class SetupReading:
             "questions": self.questions,
             "unknown": self.unknown,
             "unknown_items": self.unknown_items,
+            "fields": self.fields,
             "seconds": round(self.seconds, 2),
             "text": self.describe(),
         }
@@ -172,11 +177,13 @@ def apply_reading(data: dict[str, Any], game: GameState, *, speaker: str = "") -
         elif game.ancient_one is None or game.ancient_one.name != found.name:
             game.set_ancient_one(found.name)
             reading.applied.append(f"facing {found.name}, doom starts at {found.starting_doom}")
+        reading.fields.append("ancient_one")
 
     doom = data.get("doom")
     if isinstance(doom, int) and doom > 0:
         game.doom = doom
         reading.applied.append(f"doom at {doom}")
+        reading.fields.append("doom")
 
     for item in data.get("investigators") or []:
         if not isinstance(item, dict):
@@ -200,16 +207,19 @@ def apply_reading(data: dict[str, Any], game: GameState, *, speaker: str = "") -
             continue
         who = "you" if state.is_robot else state.controller
         reading.applied.append(f"{sheet.name} with {who}, starting at {state.space}")
+        reading.fields.append("investigators")
 
     reserve = [str(c).strip() for c in (data.get("reserve") or []) if str(c).strip()]
     if reserve:
         game.reserve = reserve
         reading.applied.append(f"reserve: {', '.join(reserve)}")
+        reading.fields.append("reserve")
 
     mystery = (data.get("mystery") or "").strip()
     if mystery:
         game.mystery = mystery
         reading.applied.append(f"mystery: {mystery}")
+        reading.fields.append("mystery")
 
     reading.questions = questions_for(game, reading)
     return reading

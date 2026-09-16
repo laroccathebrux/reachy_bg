@@ -29,6 +29,7 @@ class _Reading:
     questions: list
     unknown: list
     unknown_items: list = field(default_factory=list)
+    fields: list = field(default_factory=list)
 
     def record(self) -> dict:
         return {"applied": self.applied, "questions": self.questions, "unknown": self.unknown}
@@ -114,8 +115,10 @@ def test_once_the_game_is_known_a_statement_goes_to_the_agent(tmp_path):
     session = _session(tmp_path, said, setup_fn=_setup_fn())
     session.game.set_ancient_one("Azathoth")
     session.game.add_investigator("Lily Chen", controller=ROBOT)
+    session.game.mystery = "Find the Way In"
     assert session.wants_setup is False
     assert session.handle("eu comprei uma carta", "pt-BR") is None
+    assert session.handle("o ancião continua sendo o Azathoth", "pt-BR") is None
 
 
 def test_a_turn_call_still_wins_over_the_setup_ear(tmp_path):
@@ -155,8 +158,9 @@ def test_a_corrupt_file_starts_a_new_game_instead_of_failing(tmp_path):
 def test_nothing_extracted_still_answers_with_what_it_needs(tmp_path):
     said = _Said()
     session = _session(tmp_path, said, setup_fn=lambda *a, **k: _Reading([], [], []))
-    session.handle("acho que vou tomar um café", "pt-BR")
-    assert "Qual Ancient One" in said.last  # it repeats the question rather than going quiet
+    # It sounds like a briefing, so it is taken as one; the model got nothing out of it.
+    session.handle("o ancião é aquele lá, o da caixa", "pt-BR")
+    assert "Qual Ancient One" in said.last  # it asks again rather than going quiet
 
 
 def test_the_briefing_and_the_questions_exist_in_both_languages():
@@ -202,3 +206,86 @@ def test_the_speaker_becomes_the_controller_of_the_investigator_they_claim(tmp_p
     session.handle("eu vou controlar a Jacqueline Fine", "pt-BR", speaker="Alessandro")
     assert seen["speaker"] == "Alessandro"
     assert "Jacqueline Fine (Alessandro)" in said.last
+
+
+def test_the_setup_ear_stays_open_for_the_mystery(tmp_path):
+    # The live session of 17:54: the saved game had the Ancient One and the investigator, so
+    # "O mistério atual diz o seguinte" was table talk and was dropped.
+    said = _Said()
+    session = _session(tmp_path, said, setup_fn=_setup_fn())
+    session.game.set_ancient_one("Azathoth")
+    session.game.add_investigator("Lily Chen", controller=ROBOT)
+    assert session.game.ready is True
+    assert session.wants_setup is True
+    assert session.handle("O mistério atual diz o seguinte, ele é o The Deep Ones Attack", "pt-BR") == "setup"
+    session.game.mystery = "The Deep Ones Attack"
+    assert session.wants_setup is False
+
+
+def test_a_statement_about_anything_else_is_not_hijacked_by_the_setup_ear(tmp_path):
+    said = _Said()
+    session = _session(tmp_path, said, setup_fn=_setup_fn())
+    assert session.wants_setup is True  # nothing is known yet
+    assert session.handle("eu comprei uma carta", "pt-BR") is None
+    assert session.handle("vou pegar um café", "pt-BR") is None
+    assert said.lines == []
+
+
+def test_a_name_from_the_reference_is_enough_to_look_like_setup():
+    from src.integration.game_session import looks_like_setup
+
+    assert looks_like_setup("É a Lily Chen mesmo.")
+    assert looks_like_setup("era o Azathoth sim")
+    assert looks_like_setup("O mistério atual diz o seguinte")
+    assert looks_like_setup("the current Mystery is Find the Way In")
+    assert not looks_like_setup("coloquei um token no espaço 18")
+
+
+def test_a_sentence_that_only_sounded_like_setup_goes_on_to_the_agent(tmp_path):
+    # "Não, tu não entendeu. Esse foi o mistério que eu comprei." carries the word and is not a
+    # briefing: the guess must cost the table nothing, not even a question read back.
+    said = _Said()
+    session = _session(tmp_path, said, setup_fn=lambda *a, **k: _Reading([], [], []))
+    route = session.handle(
+        "não, tu não entendeu, esse foi o mistério que eu comprei", "pt-BR", reason="setup_talk"
+    )
+    assert route is None  # the audio is released, the agent answers it
+    assert said.lines == []
+
+
+def test_a_real_briefing_heard_on_the_guess_is_kept(tmp_path):
+    said = _Said()
+    session = _session(tmp_path, said, setup_fn=_setup_fn(ancient_one="Azathoth"))
+    route = session.handle("o ancião é o Azathoth", "pt-BR", reason="setup_talk")
+    assert route == "setup"
+    assert "Anotado" in said.last
+    assert (tmp_path / "game_state.json").exists()
+
+
+def test_the_same_sentence_after_the_robot_was_named_still_answers(tmp_path):
+    # Named or holding the floor, the person is talking to the robot: it answers even when the
+    # model got nothing out of the sentence.
+    said = _Said()
+    session = _session(tmp_path, said, setup_fn=lambda *a, **k: _Reading([], [], []))
+    route = session.handle("o ancião é aquele lá", "pt-BR", reason="name")
+    assert route == "setup"
+    assert "Qual Ancient One" in said.last
+
+
+def test_only_what_changed_is_read_back(tmp_path):
+    said = _Said()
+
+    def read(text, language, game, **kwargs):
+        game.mystery = "The Deep Ones Attack"
+        r = _Reading(["mystery: The Deep Ones Attack"], [], [])
+        r.fields = ["mystery"]
+        return r
+
+    session = _session(tmp_path, said, setup_fn=read)
+    session.game.set_ancient_one("Azathoth")
+    session.game.add_investigator("Lily Chen", controller=ROBOT)
+    session.game.reserve = ["Bull Whip", "Kerosene", "Dynamite", "Old Journal"]
+    session.handle("o mistério atual é The Deep Ones Attack", "pt-BR", reason="setup_talk")
+    assert "The Deep Ones Attack" in said.last
+    assert "Bull Whip" not in said.last  # the Reserve did not change: it is not read back
+    assert "Azathoth" not in said.last
