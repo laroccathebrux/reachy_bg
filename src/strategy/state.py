@@ -12,6 +12,10 @@ answers "what just changed" at 9 frames a second. Neither keeps a memory, so thi
 seeds it, every move updates it, and it is the only thing that can answer "where is the piece
 that was in Rome" a minute later.
 
+A gallery match is kept as ``guess``, never as ``name``: it was measured at 2 of 13, so a
+confident wrong label would both mislead and, worse, stop the spoken setup from claiming the
+piece later. ``name`` is set only by something that knows - the setup, or a person saying it.
+
 **Identity comes from continuity, not from recognition.** Naming a piece from its picture was
 measured and does not work at this resolution: the ResNet gallery got 2 of 13 labelled crops
 right and a Qwen3-VL 8B got 0 of 13, because a piece is about 250 px of a 1920-wide frame and
@@ -52,7 +56,9 @@ class TrackedPiece:
     space: str | None = None  # the board space it stands on, None when it is between spaces
     near: str | None = None  # the nearest space, when it is on none
     kind: str = "piece"  # piece | die
-    name: str | None = None  # "investigator:Akachi Onyele", once anything names it
+    name: str | None = None  # "investigator:Akachi Onyele", set only by something reliable
+    guess: str | None = None  # what the image gallery thought it was, which is usually wrong
+    guess_score: float = 0.0
     value: int | None = None  # what a die shows
     x: float = 0.0  # last known position on the rectified map
     y: float = 0.0
@@ -68,12 +74,21 @@ class TrackedPiece:
 
     @property
     def label(self) -> str:
-        """What to call it out loud: its name if it has one, otherwise what it is."""
+        """What to call it out loud: its name if it has one, otherwise what it is.
+
+        A gallery guess is never spoken as a name. It was measured at 2 correct out of 13, so
+        saying "Akachi Onyele" because a 250 px blur resembled one would be worse than saying
+        nothing: the state would look certain while being wrong, and a real name from the setup
+        could no longer claim the piece.
+        """
         if self.name:
             kind, _, rest = self.name.partition(":")
             return rest or kind
         if self.kind == "die":
             return f"die showing {self.value}" if self.value is not None else "a die"
+        if self.guess:
+            kind, _, rest = self.guess.partition(":")
+            return f"piece #{self.id} (maybe {rest or kind})"
         return f"piece #{self.id}"
 
     def place(self, space: str | None, near: str | None, x: float, y: float) -> None:
@@ -88,6 +103,8 @@ class TrackedPiece:
             "near": self.near,
             "kind": self.kind,
             "name": self.name,
+            "guess": self.guess,
+            "guess_score": round(self.guess_score, 3),
             "value": self.value,
             "x": round(self.x, 1),
             "y": round(self.y, 1),
@@ -175,10 +192,12 @@ class BoardState:
 
     # ------------------------------------------------------------------ updates
     def _add(self, sighting: Any) -> TrackedPiece:
+        # What a sighting carries as "name" came from the image gallery, which is a guess.
         piece = TrackedPiece(
             id=self._next_id,
             kind=getattr(sighting, "kind", "piece") or "piece",
-            name=getattr(sighting, "name", None),
+            guess=getattr(sighting, "name", None),
+            guess_score=float(getattr(sighting, "name_score", 0.0) or 0.0),
             value=getattr(sighting, "value", None),
         )
         self._next_id += 1

@@ -228,3 +228,18 @@ def test_a_defeated_investigator_is_flagged():
 def test_every_sheet_describes_itself(sheet):
     text = sheet.describe()
     assert sheet.name in text and sheet.starting_space in text
+
+
+def test_the_spoken_setup_wins_over_a_gallery_guess():
+    """The live failure: the gallery called the Shanghai piece Akachi Onyele; it was Lily Chen."""
+    board = BoardState()
+    board.seed([Sighting("Shanghai", x=900, y=100, name="investigator:Akachi Onyele")])
+    game = GameState(board)
+    game.add_investigator("Lily Chen", controller=ROBOT)
+
+    claimed = game.claim_pieces()
+    assert claimed, "the guess blocked the setup from claiming the piece"
+    piece = board.at("Shanghai")[0]
+    assert piece.name == "investigator:Lily Chen"
+    assert piece.guess == "investigator:Akachi Onyele", "the guess is kept, just not believed"
+    assert game.by_name("Lily Chen").piece_id == piece.id

@@ -189,3 +189,23 @@ def test_tracked_piece_history_records_where_it_has_been():
 def test_restore_ignores_fields_it_does_not_know():
     piece = TrackedPiece.restore({"id": 3, "space": "Rome", "something_new": 1})
     assert piece.id == 3 and piece.space == "Rome"
+
+
+def test_a_gallery_match_is_a_guess_and_never_a_name():
+    """Measured at 2 of 13: a confident wrong label is worse than no label.
+
+    It also has to stay out of the way. If the guess were stored as the name, the spoken setup
+    could no longer claim the piece, and "Lily Chen is in Shanghai" would be silently ignored
+    because the gallery had already called that piece Akachi Onyele.
+    """
+    state = BoardState()
+    state.seed([Sighting("Shanghai", x=900, y=100, name="investigator:Akachi Onyele")])
+    piece = state.on_board[0]
+    assert piece.name is None, "a gallery match must not become the name"
+    assert piece.guess == "investigator:Akachi Onyele"
+    assert "maybe Akachi Onyele" in piece.label and f"#{piece.id}" in piece.label
+    assert state.by_name("Akachi Onyele") is None, "a guess must not answer a name lookup"
+
+    state.name(piece.id, "investigator:Lily Chen")
+    assert piece.name == "investigator:Lily Chen"
+    assert piece.label == "Lily Chen", "a real name replaces the guess in what is spoken"
