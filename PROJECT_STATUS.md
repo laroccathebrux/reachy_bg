@@ -574,6 +574,74 @@ window while the overlay canvas kept covering the whole element, pushing every s
 proportion to its distance from the centre. The board looked misregistered when the registration
 was good to 1.4 px. The wrapper's width is capped by the height left over now.
 
+## Done: the robot knows the game it is in (2026-09-16, afternoon)
+
+The vision could say "a piece moved from Rome to Istanbul" and nothing could say *which* piece
+or what the game around it was. Three layers closed that.
+
+**`src/strategy/state.py`** - `BoardState`, the pieces the camera can follow. A scan seeds it,
+every `motion.Move` updates it, and identity comes from **continuity, not recognition**:
+departures pair with arrivals by distance, so a piece that leaves Rome and arrives at Istanbul
+keeps whatever it was called. A gallery match is stored as `guess`, never as `name` - it
+measured 2 of 13, and storing it as a name once made `claim_pieces` skip the piece it had
+mislabelled, so a 2/13 guess was outranking a fact.
+
+**`src/strategy/game.py` + `reference.py`** - `GameState` adds everything the camera can never
+see: doom, Mystery, Omen, health, sanity, cards, round, phase, and who controls which
+investigator. `reference.py` holds the 12 sheets and 4 Ancient Ones as checkable data, with
+lookup tolerant of how people speak ("Lily", "Chen", "lily chan" -> suggestions) and expansion
+names refused rather than guessed.
+
+**`src/strategy/setup.py`** - the spoken briefing becomes that state. The local model extracts
+the fields; `reference.py` decides whether they are real, because the model is good at "who did
+they mean by 'you'" and unreliable at "is Nyarlathotep in the base game". A briefing can arrive
+in pieces, and what is missing comes back as one question at a time.
+
+The two halves meet at `claim_pieces`: the person says "Lily Chen starts in Shanghai", the scan
+finds an unnamed piece at Shanghai, and the piece becomes Lily Chen. **No image recognition is
+on the critical path.** Two pieces on one space is a question, not a guess.
+
+Live on the owner's real two-player setup (Azathoth, Lily Chen with the robot at Shanghai,
+Jacqueline Fine at space 5, four cards in the reserve, a Portal and a Monster at Rome):
+
+| Step | Result |
+|---|---|
+| Narration -> state | every field right, both languages, 26 s cold / 2.7 s warm |
+| Scan | Lily at Shanghai, Portal and Monster at Rome, 4 reserve slots |
+| `claim_pieces` | the Shanghai piece became Lily Chen from the briefing alone |
+| Jacqueline | **not** claimed - she was detected at space 4, not 5, so it asked instead |
+
+Two false positives (glare along the printed banners at San Francisco and Arkham) exposed the
+filter that was missing: every real piece was either seen from two views or confirmed by a
+closer look, and those two were the only sightings that were neither. `detect.doubtful()` also
+refuses a blob more than 2.5x longer than wide. Doubtful sightings are still *mentioned* but
+kept out of the state: a token that is not there is worse than a gap.
+
+**The ear knows the turn is its own.** "É a vez da Lily Chen" now reaches the robot at the same
+confidence as calling its name, because it knows which investigator it plays; a turn call
+naming somebody else's investigator stays refused. The `Gatekeeper` takes it as a callable,
+since setup happens while the ear is already listening.
+
+### The cards, and why the camera is not involved
+
+A list of 391 cards was researched elsewhere and filtered on the way in: **76 are the 2013 box**
+and 315 were expansion content, refused with the reason logged. They live versioned at
+`src/rag/cards/eldritch_base_game.json` and carry the **printed wording** - "Bull Whip: +1
+Strength during Combat Encounters, reroll 1 die" is actionable, a paraphrase is not. 65 are
+assets, 11 are Conditions under their own kind.
+
+The camera is deliberately not asked to read them. It can see *that* a reserve slot holds a
+card, never *which* one from 250 blurred pixels, and never a card in a hand at all. The name
+comes from the person, as investigator names do; what the card *does* comes from here.
+
+`retrieve.card()` looks a card up by its **indexed name, not by embedding**: asked "what does
+Bull Whip do?", the vector search answered Vatican Missionary at 0.32, because a card's name
+says almost nothing about its meaning while its effect text dominates the embedding.
+
+Community strategy is also in `bg_knowledge` under `kind: "strategy"` - 11 entries from a
+Ludopedia dossier, in English, each carrying its source and phrased as advice, with a test that
+fails if one starts reading like a rule.
+
 ## Decisions taken
 
 | Topic | Decision | Where |
@@ -616,6 +684,18 @@ Blocked on the owner deciding where the robot sits at the table.
 3. A recorded 2-3 player session (the annotated dataset) waits until players are available.
 4. ~~Small fixes: the rules tool ran twice across a language switch; the shadow label marked
    an English question as echo; start the diart sidecar by default when present~~ done.
+
+### Next: the robot still does not play
+
+Everything above is perception and memory. The robot can see the board, follow a move, hold the
+whole game state and answer questions about it - and it has no investigator turn of its own. It
+never chooses an action, never justifies one, never acts. That is Phase 3, and it is the only
+thing between here and a real game.
+
+What is already in place for it: the `GameState` (its own investigator's sheet, skills, space,
+health, sanity, possessions), `bg_rules` (the rulebook), `bg_knowledge` (76 cards with printed
+effects, 122 monsters, 4 Ancient Ones, 11 strategy entries), and `llm.ollama_client.chat()` with
+JSON-schema output.
 
 ### Re-ordered after the 2026-09-16 measurements
 
