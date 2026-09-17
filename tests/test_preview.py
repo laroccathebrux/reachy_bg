@@ -348,3 +348,104 @@ def test_the_camera_is_never_letterboxed_under_the_overlay():
     assert "object-fit" not in cam_rule[0], "object-fit letterboxes the image under the canvas"
     # The wrapper's width is capped by the height left over, so the image always fills it.
     assert "#wrap {" in style and "min(100%," in style
+
+
+# --------------------------------------------------------------- a camera that dies under us
+
+
+class DyingCamera:
+    """Frames, then the same object for ever - which is what a dead GStreamer pipeline looks like."""
+
+    def __init__(self, alive: int = 2):
+        self.alive = alive
+        self.stale = np.zeros((8, 8, 3), dtype=np.uint8)
+        self.reopens = 0
+
+    def get_frame(self):
+        if self.alive > 0:
+            self.alive -= 1
+            return np.full((8, 8, 3), self.alive + 1, dtype=np.uint8)
+        return self.stale  # the same object: `frame is not last` is False
+
+    def reopen(self) -> bool:
+        self.reopens += 1
+        self.alive = 2
+        return True
+
+    def look(self, *a, **k):
+        return None
+
+
+def test_a_repeated_frame_is_not_a_frame_and_the_camera_is_rebuilt():
+    """2026-09-17: talk.py asks the SDK for no_media, and on that branch the SDK tells the
+    *daemon* to release the camera this process reads from. The pipeline died mid-startup and
+    get_frame went on handing back the same object, so the preview captured one frame in three
+    minutes - a dark page, and a scan that reported an empty table instead of no camera."""
+    from src.vision.preview import CAMERA_DEAD_S, Preview
+
+    now = [1000.0]
+    camera = DyingCamera(alive=2)
+    preview = Preview(camera)
+    preview.clock = lambda: now[0]
+    preview._fresh_at = now[0]
+
+    assert preview.grab_once() is True and preview.grab_once() is True  # the two live frames
+    assert preview.frames == 2
+
+    # The first stale frame cannot be told from a new one, so it counts and the drought starts
+    # after it. Only the repeats that follow say the pipeline has stopped.
+    assert preview.grab_once() is True
+    assert preview.frames == 3
+
+    now[0] += 1.0
+    assert preview.grab_once() is False
+    assert camera.reopens == 0, "a slow camera is not a broken one"
+
+    now[0] += CAMERA_DEAD_S
+    assert preview.grab_once() is False
+    assert camera.reopens == 1 and preview.reopens == 1
+    assert preview.grab_once() is True  # the rebuilt pipeline delivers again
+
+
+def test_a_camera_that_will_not_come_back_is_not_hammered():
+    from src.vision.preview import CAMERA_DEAD_S, CAMERA_RETRY_S, Preview
+
+    now = [1000.0]
+
+    class Hopeless(DyingCamera):
+        def reopen(self) -> bool:
+            self.reopens += 1
+            return False
+
+    camera = Hopeless(alive=0)
+    preview = Preview(camera)
+    preview.clock = lambda: now[0]
+    preview.grab_once()  # the first stale frame counts; the drought starts here
+
+    now[0] += CAMERA_DEAD_S + 1
+    preview.grab_once()
+    assert camera.reopens == 1
+
+    now[0] += 1.0  # still dead, but the retry window has not passed
+    preview.grab_once()
+    assert camera.reopens == 1
+
+    now[0] += CAMERA_RETRY_S
+    preview.grab_once()
+    assert camera.reopens == 2
+
+
+def test_the_camera_is_not_rebuilt_while_a_scan_is_turning_the_head():
+    """A scan turns the head for seconds at a time and the frames it takes are its own business."""
+    from src.vision.preview import CAMERA_DEAD_S, Preview
+
+    now = [1000.0]
+    camera = DyingCamera(alive=0)
+    preview = Preview(camera)
+    preview.clock = lambda: now[0]
+    preview.grab_once()
+    preview.hold_still(30.0)  # what talk.py does while the voice plays
+
+    now[0] += CAMERA_DEAD_S + 1
+    preview.grab_once()
+    assert camera.reopens == 0

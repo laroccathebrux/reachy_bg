@@ -51,6 +51,11 @@ TABLE_PITCH = 35.0
 SCAN_VIEWS = (("centre", 0.0), ("left", 45.0), ("right", -45.0))
 RESERVE_VIEW = "left"
 SCAN_SETTLE_S = 0.6
+# No new frame for this long means the pipeline died rather than the camera being slow: the
+# grab loop asks the camera to rebuild itself. Generous, because a scan turns the head for
+# seconds at a time and a rebuild is not free.
+CAMERA_DEAD_S = 10.0
+CAMERA_RETRY_S = 20.0  # never hammer a camera that will not come back
 BODY_YAW_MAX = 90.0  # degrees either way; the base turns further but the table is in front
 BODY_YAW_SPEED = 60.0  # deg/s asked of the base when turning between views
 FRAME_WIDTH, FRAME_HEIGHT = 1920, 1080
@@ -595,6 +600,10 @@ class FakeCamera:
         frame[:, :, 2] = (y * 255 // max(1, self.height)).astype(np.uint8)
         return frame
 
+    def reopen(self) -> bool:
+        self.reopens = getattr(self, "reopens", 0) + 1
+        return True
+
     def look(self, pitch: float, yaw: float, body_yaw: float | None = None) -> None:
         self.pitch, self.yaw = pitch, yaw
         if body_yaw is not None:
@@ -616,6 +625,7 @@ class RobotCamera:
 
         from src.robot.reachy import Robot
 
+        self.host, self.port, self.timeout = host, port, timeout
         self._mini = ReachyMini(
             host=host, port=port, connection_mode="network", media_backend="local", timeout=timeout
         )
@@ -677,6 +687,44 @@ class RobotCamera:
         log.warning("body yaw did not reach %.0f (at %s)", target, self.body_angle())
         return False
 
+    def reopen(self) -> bool:
+        """Rebuild the camera pipeline after the daemon released the hardware under us.
+
+        ``talk.py`` asks the SDK for ``media_backend="no_media"``, and on that branch the SDK
+        tells the *daemon* to release camera and audio - which is where this process reads its
+        frames from. A pipeline already running survives it; one still being built dies with an
+        "Internal data stream error" and never comes back, and the page goes dark for the rest
+        of the session (2026-09-17, one frame captured in three minutes).
+
+        ``acquire_media`` is no help here: it returns early unless *this* SDK object released,
+        and it was another process that did. So the connection is rebuilt, which re-runs the
+        backend detection and the pipeline with it. The head is left alone: no wake, no rest.
+        """
+        from reachy_mini import ReachyMini
+
+        from src.robot.reachy import Robot
+
+        old = self._mini
+        try:
+            mini = ReachyMini(
+                host=self.host,
+                port=self.port,
+                connection_mode="network",
+                media_backend="local",
+                timeout=self.timeout,
+            )
+            mini.__enter__()
+        except Exception as exc:
+            log.warning("could not reopen the camera: %s", exc)
+            return False
+        self._mini, self.robot = mini, Robot(mini)
+        try:
+            old.__exit__(None, None, None)
+        except Exception as exc:
+            log.debug("the old connection did not close cleanly: %s", exc)
+        log.info("camera reopened")
+        return True
+
     def close(self) -> None:
         try:
             self.robot.rest()
@@ -733,6 +781,10 @@ class Preview:
         self.state = self._last_board()
         self.motion_state = "starting"
         self.still_until = 0.0  # monotonic deadline: the head is moving, do not read the board
+        self.reopens = 0  # times the camera pipeline had to be rebuilt
+        self._last_frame: Any = None
+        self._fresh_at = 0.0  # when a new frame last arrived
+        self._tried_at = 0.0  # when a rebuild was last attempted
         self._motion_thread: threading.Thread | None = None
 
     def start(self) -> Preview:
@@ -775,7 +827,7 @@ class Preview:
         (:meth:`hold_still`), because only that process knows when the voice is playing - the
         agent's audio goes straight to the USB speaker and never reaches the daemon.
         """
-        if self.still_until and time.monotonic() < self.still_until:
+        if self.still_until and self.clock() < self.still_until:
             return True
         for thread in (self._scan_thread, self._sweep_thread):
             if thread is not None and thread.is_alive():
@@ -789,7 +841,7 @@ class Preview:
         mid-sentence cannot leave the watcher switched off for the rest of the session.
         """
         seconds = max(0.1, min(30.0, float(seconds)))
-        self.still_until = time.monotonic() + seconds
+        self.still_until = self.clock() + seconds
         return {"held_for": round(seconds, 2)}
 
     def _motion_loop(self) -> None:
@@ -809,7 +861,7 @@ class Preview:
                 if self.watcher is not None:
                     log.info("motion: robot busy, watcher dropped until the view settles")
                 self.watcher, self.motion_state = None, "paused: the robot is moving"
-                if self.still_until and time.monotonic() < self.still_until:
+                if self.still_until and self.clock() < self.still_until:
                     self.motion_state = "paused: the robot is speaking"
                 continue
             with self._lock:
@@ -895,6 +947,7 @@ class Preview:
     def moves_json(self) -> dict[str, Any]:
         return {
             "state": self.motion_state,
+            "reopens": self.reopens,
             "count": len(self.moves),
             "moves": self.moves[-12:][::-1],  # newest first, as the page lists them
         }
@@ -1376,18 +1429,43 @@ class Preview:
 
     def _grab_loop(self) -> None:
         period = 1.0 / self.fps
-        last = None
         while not self._stop.is_set():
             started = self.clock()
-            try:
-                frame = self.camera.get_frame()
-            except Exception as exc:
-                log.warning("get_frame failed: %s", exc)
-                frame = None
-            if frame is not None and frame is not last:
-                last = frame
-                self.publish(frame)
+            self.grab_once()
             time.sleep(max(0.0, period - (self.clock() - started)))
+
+    def grab_once(self) -> bool:
+        """Take one frame, or rebuild the camera when they have stopped coming. True on a frame.
+
+        A repeated frame is not a frame: when the pipeline dies, ``get_frame`` goes on returning
+        the same object and nothing else in this process notices. Everything downstream - the
+        scan, the board registration, the motion watcher - then reads "no frame" and reports an
+        empty table, which is worse than saying the camera is gone.
+        """
+        now = self.clock()
+        try:
+            frame = self.camera.get_frame()
+        except Exception as exc:
+            log.warning("get_frame failed: %s", exc)
+            frame = None
+        if frame is not None and frame is not self._last_frame:
+            self._last_frame = frame
+            self._fresh_at = now
+            self.publish(frame)
+            return True
+        if (
+            now - self._fresh_at > CAMERA_DEAD_S
+            and now - self._tried_at > CAMERA_RETRY_S
+            and not self.busy_with_robot()
+            and hasattr(self.camera, "reopen")
+        ):
+            log.warning("no new frame for %.0fs; rebuilding the camera", now - self._fresh_at)
+            self._tried_at = now
+            self.reopens += 1
+            if self.camera.reopen():
+                self._fresh_at = self.clock()
+                self.watcher = None  # the view it registered went with the old pipeline
+        return False
 
     def publish(self, frame: np.ndarray) -> None:
         factor, cx, cy = self.zoom

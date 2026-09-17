@@ -305,6 +305,22 @@ can say when that is, because the agent's audio goes straight to the USB speaker
 never sees it. It is a deadline rather than a flag, so a crash mid-sentence cannot leave the
 camera switched off, and a preview that is down never blocks the voice.
 
+The camera dying under the preview: `talk.py` asks the SDK for `media_backend="no_media"`,
+and on that branch the SDK tells the **daemon** to release camera and audio - which is exactly
+where the preview's LOCAL backend reads its frames from. A pipeline already running survives it;
+one still being built dies with an "Internal data stream error" and never comes back. On
+2026-09-17 the release landed 0.2 s before the preview finished starting: one frame captured in
+three minutes, a dark page, and a scan reporting an empty table. `acquire_media()` is no help,
+because it returns early unless *that* SDK object released. So `RobotCamera.reopen()` rebuilds
+the connection (no wake, no rest), and `Preview.grab_once` calls it after `CAMERA_DEAD_S`
+without a new frame, at most once every `CAMERA_RETRY_S`, never while the head is turning. A
+repeated frame is not a frame: `get_frame` keeps handing back the same object, and the first one
+cannot be told from a new one, so the drought is counted from the second. `/status` carries
+`reopens`, so a session that went blind says so.
+
+Startup order still matters: leave the preview fully up (its "camera preview at ..." line)
+before starting `talk.py`, or the other way round - what breaks is the overlap.
+
 Scanning on request: the sweep used to be a button on the preview page, so a table that
 asked the robot to look at the board got a robot that could not. `scan_board` starts the
 preview's three-view sweep and waits for `/scan_result`. It pauses the speech sway first,
