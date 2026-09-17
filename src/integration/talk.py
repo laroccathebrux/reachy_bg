@@ -76,6 +76,8 @@ from src.config import (
     GAME_LOG_DIR,
     HEAD_SWAY,
     LANGUAGE_LOCK,
+    REACHY_HOST,
+    REACHY_PORT,
     SPOKEN_LANGUAGES,
     validate_config,
 )
@@ -411,8 +413,15 @@ class Table:
         log.info("turn latency %d ms", ms)
 
     def on_tool(self, name: str, parameters: dict, result: dict) -> None:
-        self.diary.write("tool", name=name, parameters=parameters, passages=result.get("passages", "")[:400])
-        log.info("tool %s %s -> %d chars", name, parameters, len(result.get("passages", "")))
+        """Log what a tool actually answered.
+
+        It used to log the length of ``passages``, which only the rules lookup returns: every
+        other tool was logged as "0 chars" whatever it said, and a take_turn that came back with
+        "no game is loaded" looked exactly like one that had worked.
+        """
+        answer = result.get("passages") or result.get("say") or result.get("note") or ""
+        self.diary.write("tool", name=name, parameters=parameters, result=result)
+        log.info("tool %s -> %s", name, str(answer)[:160] or f"{len(str(result))} chars")
 
 
 def enrol(
@@ -448,6 +457,13 @@ def _say_line(robot: Robot, text: str, language: str, speak: bool) -> None:
         robot.say(synthesize(text, language))
     except TTSError as exc:
         log.warning("%s", exc)
+
+
+def daemon_is_up(host: str = REACHY_HOST, port: int = REACHY_PORT, timeout: float = 1.5) -> bool:
+    """Is the robot daemon answering? Without it there are no motors and no camera."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        probe.settimeout(timeout)
+        return probe.connect_ex((host, int(port))) == 0
 
 
 def warm_up_reasoning() -> None:
@@ -585,6 +601,12 @@ def main(argv: list[str] | None = None) -> int:
     diary = Diary()
     players = [n.strip() for n in args.players.split(",") if n.strip()]
 
+    if not args.no_robot and not daemon_is_up():
+        log.warning(
+            "the reachy daemon is not answering on %s: no camera and no movement this session. "
+            "Start it from a terminal app that has camera permission (iTerm): reachy-mini-daemon",
+            f"{REACHY_HOST}:{REACHY_PORT}",
+        )
     locked = LANGUAGE_LOCK and not args.free_language
     agent_id = ensure_agent(language=args.lang, language_lock=locked)
     log.info(
@@ -594,14 +616,23 @@ def main(argv: list[str] | None = None) -> int:
     conversation = None
     sway = None
     try:
-        with Robot.connect(simulated=args.no_robot) as robot:
+        # Motors only. This process never looks at a camera - the preview does - and asking the
+        # daemon for one opens a second GStreamer pipeline on the same device, which is how a
+        # morning session got "Internal data stream error" and then no camera and no movement at
+        # all. Its speech goes out of the USB audio device directly, and enrolment through the
+        # daemon's own REST endpoint, so neither needs the media backend either.
+        with Robot.connect(simulated=args.no_robot, media_backend="no_media") as robot:
             table = Table(robot, ear, diary, TurnLogger(), audio)
             table.transcriber = transcriber
             from elevenlabs.conversational_ai.conversation import ConversationInitiationData
 
+            def current_session() -> Any:
+                """The game session the agent's tools reach into, once it has been built."""
+                return getattr(table, "game_session", None)
+
             def current_game() -> Any:
                 """What the agent's game_state tool reads - the robot's own memory, live."""
-                playing = getattr(table, "game_session", None)
+                playing = current_session()
                 return playing.game if playing is not None else None
 
             def open_session(language: str) -> Any:
@@ -613,7 +644,10 @@ def main(argv: list[str] | None = None) -> int:
                     requires_auth=True,
                     audio_interface=audio,
                     client_tools=client_tools(
-                        on_call=table.on_tool, active=alive.is_set, game=current_game
+                        on_call=table.on_tool,
+                        active=alive.is_set,
+                        game=current_game,
+                        session=current_session,
                     ),  # fresh per session
                     config=ConversationInitiationData(
                         conversation_config_override=session_override(language)

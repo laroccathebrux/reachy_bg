@@ -356,3 +356,20 @@ def test_a_session_without_a_voice_never_speaks(tmp_path):
     session.setup_report("o ancião é Azathoth")  # would have spoken before
     session.turn_report()
     assert session.say("anything", "pt-BR") is None
+
+
+def test_the_agents_tools_reach_the_session_that_was_built(tmp_path):
+    # The tools were wired to the game but not to the session, so take_turn answered "no game is
+    # loaded" all through a live session while game_state answered correctly.
+    import json
+
+    from src.speech.eleven_agent import client_tools
+
+    session = GameSession.open(tmp_path / "game.json", language="pt-BR", background=False)
+    session.game.add_investigator("Lily Chen", controller=ROBOT)
+    tools = client_tools(session=lambda: session, game=lambda: session.game)
+    for name in ("take_turn", "remember_setup", "game_state", "encounter_card"):
+        assert name in tools.tools
+    report = json.loads(tools.tools["take_turn"][0]({}))
+    assert report["note"] != "No game is loaded, so there is no turn for me to take."
+    assert report.get("investigator") == "Lily Chen"

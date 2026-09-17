@@ -59,7 +59,13 @@ class Robot:
     # ------------------------------------------------------------------ lifecycle
     @classmethod
     @contextmanager
-    def connect(cls, *, simulated: bool = False, timeout: float = 10.0):
+    def connect(
+        cls,
+        *,
+        simulated: bool = False,
+        timeout: float = 10.0,
+        media_backend: str = REACHY_MEDIA_BACKEND,
+    ):
         if simulated:
             log.info("robot simulated: gestures logged, audio through the Mac speaker")
             yield cls(None)
@@ -70,7 +76,7 @@ class Robot:
             host=REACHY_HOST,
             port=REACHY_PORT,
             connection_mode=REACHY_CONNECTION_MODE,
-            media_backend=REACHY_MEDIA_BACKEND,
+            media_backend=media_backend,
             timeout=timeout,
         )
         with mini:
