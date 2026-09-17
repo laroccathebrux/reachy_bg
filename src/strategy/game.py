@@ -152,6 +152,90 @@ class GameState:
         self.notes.append(text)
         return text
 
+    # ------------------------------------------------------------------ skill tests
+    def test_result(self, name: str, dice: list[int]) -> dict[str, Any]:
+        """Count the successes in a roll somebody read out loud, and say whether it passed.
+
+        GAME_REFERENCE.md, Skill Tests: a 5 or 6 is a success and any success passes; Blessed
+        counts 4s as well and Cursed counts only 6s. This is arithmetic, not judgement, and it
+        belongs here for the same reason the legal moves do: on 2026-09-17 the robot quoted the
+        rule correctly and then called two 4s "dois sucessos", which silently changes the game.
+        """
+        state = self.by_name(name) if name else self.robot_investigator
+        conditions = {c.strip().lower() for c in (state.conditions if state else [])}
+        blessed, cursed = "blessed" in conditions, "cursed" in conditions
+        floor = 4 if blessed else 6 if cursed else 5
+        rolled = [int(d) for d in dice if isinstance(d, (int, float))]
+        successes = sum(1 for d in rolled if d >= floor)
+        return {
+            "investigator": state.name if state else name,
+            "dice": rolled,
+            "successes": successes,
+            "passed": successes > 0,
+            "counts_as_success": f"{floor} or more",
+            "blessed": blessed,
+            "cursed": cursed,
+        }
+
+    def apply_effect(
+        self,
+        name: str = "",
+        *,
+        health: int = 0,
+        sanity: int = 0,
+        clues: int = 0,
+        gain: list[str] | None = None,
+        lose: list[str] | None = None,
+        conditions_gained: list[str] | None = None,
+        conditions_lost: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """What a resolved encounter or effect did to an investigator, written into the state.
+
+        Deltas, not totals, because the table says "perde 1 de Sanity" and never "fica com 5".
+        Health and Sanity are held between 0 and the sheet's maximum. Until this existed the
+        robot said "vou atualizar isso aqui" and nothing moved: the state has the fields and the
+        conversation had no door to them.
+        """
+        state = self.by_name(name) if name else self.robot_investigator
+        if state is None:
+            return {"applied": False, "note": f"I do not know an investigator called {name!r}."}
+        before = (state.health, state.sanity, state.clues)
+        state.health = max(0, min(state.sheet.health, state.health + int(health)))
+        state.sanity = max(0, min(state.sheet.sanity, state.sanity + int(sanity)))
+        state.clues = max(0, state.clues + int(clues))
+        for card in gain or []:
+            if card and card not in state.possessions:
+                state.possessions.append(card)
+        for card in lose or []:
+            if card in state.possessions:
+                state.possessions.remove(card)
+        for item in conditions_gained or []:
+            if item and item not in state.conditions:
+                state.conditions.append(item)
+        for item in conditions_lost or []:
+            if item in state.conditions:
+                state.conditions.remove(item)
+        log.info(
+            "game: %s now %d/%d health, %d/%d sanity, %d clue(s)",
+            state.name,
+            state.health,
+            state.sheet.health,
+            state.sanity,
+            state.sheet.sanity,
+            state.clues,
+        )
+        return {
+            "applied": True,
+            "investigator": state.name,
+            "health": state.health,
+            "sanity": state.sanity,
+            "clues": state.clues,
+            "possessions": list(state.possessions),
+            "conditions": list(state.conditions),
+            "defeated": state.defeated,
+            "changed": (state.health, state.sanity, state.clues) != before,
+        }
+
     # ------------------------------------------------------------------ the round
     # GAME_REFERENCE.md, "Round structure": every round is Action Phase -> Encounter Phase ->
     # Mythos Phase, the Lead Investigator acts first and then round the table. Until this

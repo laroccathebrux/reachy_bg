@@ -345,3 +345,46 @@ def test_the_round_survives_the_file(tmp_path):
     assert again.by_name("Lily Chen").actions == ["travel"]
     assert again.by_name("Lily Chen").encountered is True
     assert again.where_we_are() == game.where_we_are()
+
+
+def test_two_fours_are_not_two_successes():
+    """2026-09-17, live: the robot quoted "a 5 or 6 is a success" and then called two 4s "dois
+    sucessos". A wrong success count changes the game in silence, and counting is arithmetic."""
+    game = _table()
+    assert game.test_result("Lily Chen", [4, 4])["successes"] == 0
+    assert game.test_result("Lily Chen", [4, 4])["passed"] is False
+    assert game.test_result("Lily Chen", [4, 5, 6])["successes"] == 2
+    assert game.test_result("Lily Chen", [])["passed"] is False
+
+
+def test_blessed_counts_fours_and_cursed_only_sixes():
+    game = _table()
+    who = game.by_name("Lily Chen")
+    who.conditions.append("Blessed")
+    assert game.test_result("Lily Chen", [4, 4])["successes"] == 2
+    who.conditions = ["Cursed"]
+    assert game.test_result("Lily Chen", [5, 5, 6])["successes"] == 1
+
+
+def test_an_effect_moves_the_sheet_and_is_bounded():
+    """The robot said "vou atualizar isso aqui" and the sheet did not move, because no tool
+    could move it. Deltas, because the table says "perde 1 de Sanity", never "fica com 5"."""
+    game = _table()
+    before = game.by_name("Lily Chen").sanity
+    out = game.apply_effect("Lily Chen", sanity=-1, clues=+1)
+    assert out["applied"] and out["sanity"] == before - 1 and out["clues"] == 1
+
+    game.apply_effect("Lily Chen", sanity=-99)
+    assert game.by_name("Lily Chen").sanity == 0  # never below zero
+    game.apply_effect("Lily Chen", sanity=+99)
+    assert game.by_name("Lily Chen").sanity == game.by_name("Lily Chen").sheet.sanity  # nor above the sheet
+
+
+def test_an_effect_carries_cards_and_conditions():
+    game = _table()
+    game.apply_effect("Lily Chen", gain=["Bull Whip"], conditions_gained=["Blessed"])
+    who = game.by_name("Lily Chen")
+    assert "Bull Whip" in who.possessions and "Blessed" in who.conditions
+    game.apply_effect("Lily Chen", lose=["Bull Whip"], conditions_lost=["Blessed"])
+    assert "Bull Whip" not in who.possessions and "Blessed" not in who.conditions
+    assert game.apply_effect("Nobody At All", sanity=-1)["applied"] is False

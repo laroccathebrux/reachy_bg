@@ -437,3 +437,47 @@ def test_a_short_clip_is_too_little_voice_to_call_it_the_robots_own(tmp_path):
     long = utterance(100.0, speech_s=3.0)
     k2.audio.last_played_at = 100.2
     assert k2.judge(long, "", 0.10).route == "discarded"
+
+
+def test_a_reading_holds_the_floor_through_the_readers_pauses(tmp_path):
+    """The owner announced he was reading the Shanghai encounter and the robot answered into
+    the middle of it: he paused for breath, VAD_SILENCE_MS is 600 ms, so the VAD closed his
+    sentence, the gate released it and the agent decided his turn was over."""
+    k, audio, asr, clock, _ = keeper(
+        tmp_path,
+        [Result("você procura por cópias antigas do jornal"), Result("e encontra histórias estranhas")],
+        answer_everything=True,
+    )
+    k.hold_floor(seconds=60)
+    assert k.holding_floor
+
+    first = k.judge(utterance(200.0), "Alessandro", 0.7)
+    assert first.route == "listening"
+    assert audio.calls == []  # nothing released and nothing dropped: it waits in the buffer
+
+    clock["t"] = 203.0  # a breath, shorter than LISTEN_SILENCE_S from the end of that sentence
+    assert k.check_floor() is False and k.holding_floor
+
+    second = k.judge(utterance(203.0), "Alessandro", 0.7)
+    assert second.route == "listening" and audio.calls == []
+
+    clock["t"] = 210.0  # he has stopped for good
+    assert k.check_floor() is True and not k.holding_floor
+    assert audio.calls == [("release", 210.0, None)]  # the whole reading, as one turn
+
+
+def test_the_robots_name_cuts_through_a_reading(tmp_path):
+    """Holding the floor must not be a gag: somebody who stops to call the robot by name is
+    deliberately talking to it."""
+    k, audio, asr, _, _ = keeper(tmp_path, [Result("Reachy, espera")], answer_everything=True)
+    k.hold_floor(seconds=60)
+    verdict = k.judge(utterance(200.0), "Alessandro", 0.7)
+    assert verdict.decision.reason == "name"
+    assert verdict.route == "released"
+
+
+def test_a_reading_cannot_hold_the_floor_for_ever(tmp_path):
+    k, audio, asr, clock, _ = keeper(tmp_path, [], answer_everything=True)
+    k.hold_floor(seconds=5)
+    clock["t"] = 206.0  # past the deadline, whatever the reader is doing
+    assert k.check_floor() is True and not k.holding_floor

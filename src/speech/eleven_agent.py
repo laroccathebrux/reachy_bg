@@ -72,6 +72,10 @@ How you talk: you are speaking out loud, so keep it to one to three short senten
 
 {addressing} If someone says "stop", "wait", "hold on" or talks over you, stop at once, without finishing the sentence, and only say you are listening.
 
+Whose investigator is whose: yours is yours. When your own investigator takes the damage, loses the Sanity, rolls the dice or has the encounter, say "I" - "I lose 1 Sanity", "my Observation test" - in the language of the table, and never "your Sanity" or "how many dice do you have", which hands your own turn to the table and makes them explain their own game back to you. game_state marks your investigator; read it before you speak about anybody's sheet.
+
+Somebody announcing what they are about to do is not a question. "Vou ler a carta de Shanghai", "deixa eu rolar os dados", "espera que eu estou lendo" - answer with one short line that you are listening, and nothing else: no rule, no tool, no summary of how encounters work. They will tell you the result, and the result is when you speak. While somebody is reading a card out loud, stay quiet until they stop, even through their pauses.
+
 You are a player, not an assistant. Your investigator's moves are yours: decide them and say what you are doing, never ask whether you may. "Shall I buy the Bull Whip?", "May I carry on?", "Do you want me to do that now?" - none of those are yours to ask; say "I am buying the Bull Whip" and let the table resolve it. Never end a turn offering more help: when you are done, say whose turn it is next and stop. Ask the table for exactly two things - something only they can see (a die result, a card nobody has read to you, where a piece is) and a decision that is theirs (another investigator's move, whether the round moves on). If the answer would not change what you do, do not ask at all.
 
 The game has a shape and you keep it: every round is Action Phase, then Encounter Phase, then Mythos Phase. game_state tells you the round, the phase and who the table is waiting on - read it, never ask. take_turn is the robot's own two actions and it records them, so once it has acted it says so instead of deciding again: do not ask it twice in one round and do not repeat the plan back a second time. next_phase is how the table moves the game on. If somebody reads out what a Reserve card costs, call card_value at once - asking for the same number twice is the fastest way to look like you were not listening.\n\nWhen somebody says a card came up - "saiu a carta 8, lê a parte de Rome" - call encounter_card with that number and that space, and read back what it returns, as it is. If it says nobody has read that card, ask them to read that part of it out once; it is remembered afterwards. Never make up what a card says.
@@ -227,6 +231,90 @@ _TOOLS: list[dict[str, Any]] = [
                 }
             },
             "required": ["cards"],
+        },
+        "expects_response": True,
+        "response_timeout_secs": 10,
+        "pre_tool_speech": "auto",
+    },
+    {
+        "type": "client",
+        "name": "listening",
+        "description": (
+            "Somebody says they are about to read something out loud - a card, an encounter, a "
+            "rule from the box - or asks you to wait because they are still talking. Call this "
+            "first, then say one short line that you are listening and nothing else. It keeps "
+            "you quiet through the pauses people take while reading, which is when you were "
+            "interrupting them. You will hear the whole thing at once when they stop."
+        ),
+        "parameters": {"type": "object", "properties": {}, "required": []},
+        "expects_response": True,
+        "response_timeout_secs": 10,
+    },
+    {
+        "type": "client",
+        "name": "skill_test",
+        "description": (
+            "Somebody read out the dice of a skill test: pass every number they said and this "
+            "counts the successes. Always call it - never count the dice yourself, and never say "
+            "how many successes there were before it answers. It knows what counts as a success, "
+            "Blessed and Cursed included."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "dice": {
+                    "type": "array",
+                    "items": {"type": "integer"},
+                    "description": "Every die face they read out, in any order.",
+                },
+                "investigator": {
+                    "type": "string",
+                    "description": "Whose test it is, in English. Leave it out for your own.",
+                },
+            },
+            "required": ["dice"],
+        },
+        "expects_response": True,
+        "response_timeout_secs": 10,
+    },
+    {
+        "type": "client",
+        "name": "apply_effect",
+        "description": (
+            "What a resolved encounter, card or Mythos effect did to an investigator - Health or "
+            "Sanity lost or recovered, Clues gained or spent, a card gained or discarded, a "
+            "Condition taken or removed. Give the change, not the total: losing 1 Sanity is "
+            "sanity -1. Call it the moment the effect is resolved; saying you will write it down "
+            "without calling it leaves the sheet wrong for the rest of the game."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "investigator": {
+                    "type": "string",
+                    "description": "Whose sheet, in English. Leave it out for your own.",
+                },
+                "health": {"type": "integer", "description": "Health gained (+) or lost (-)."},
+                "sanity": {"type": "integer", "description": "Sanity gained (+) or lost (-)."},
+                "clues": {"type": "integer", "description": "Clues gained (+) or spent (-)."},
+                "gain": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Cards gained, English names.",
+                },
+                "lose": {"type": "array", "items": {"type": "string"}, "description": "Cards discarded."},
+                "conditions_gained": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Conditions taken.",
+                },
+                "conditions_lost": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Conditions removed.",
+                },
+            },
+            "required": [],
         },
         "expects_response": True,
         "response_timeout_secs": 10,
@@ -653,6 +741,7 @@ def client_tools(
     active: Callable[[], bool] | None = None,
     game: Callable[[], Any] | None = None,
     session: Callable[[], Any] | None = None,
+    keeper: Callable[[], Any] | None = None,
 ) -> Any:
     """SDK ``ClientTools`` with the local implementations registered.
 
@@ -791,6 +880,40 @@ def client_tools(
             on_call("card_value", parameters, result)
         return json.dumps(result, ensure_ascii=False)
 
+    def listening(parameters: dict) -> str:
+        result = (
+            keeper().hold_floor()
+            if keeper is not None and keeper() is not None
+            else {"listening": False, "note": "Say that you are listening and wait."}
+        )
+        if on_call:
+            on_call("listening", parameters, result)
+        return json.dumps(result, ensure_ascii=False)
+
+    def skill_test(parameters: dict) -> str:
+        playing = session() if session is not None else None
+        dice = parameters.get("dice") or []
+        result = (
+            {"note": "There is no game loaded, so I do not know whose test this is."}
+            if playing is None
+            else playing.test_report(list(dice), str(parameters.get("investigator", "")))
+        )
+        if on_call:
+            on_call("skill_test", parameters, result)
+        return json.dumps(result, ensure_ascii=False)
+
+    def apply_effect(parameters: dict) -> str:
+        playing = session() if session is not None else None
+        if playing is None:
+            result: dict = {"applied": False, "note": "There is no game to write it in yet."}
+        else:
+            fields = ("health", "sanity", "clues", "gain", "lose", "conditions_gained", "conditions_lost")
+            deltas = {k: parameters[k] for k in fields if parameters.get(k) not in (None, "", [])}
+            result = playing.effect_report(str(parameters.get("investigator", "")), **deltas)
+        if on_call:
+            on_call("apply_effect", parameters, result)
+        return json.dumps(result, ensure_ascii=False)
+
     def next_phase(parameters: dict) -> str:
         playing = session() if session is not None else None
         result = {"note": "There is no game to move on yet."} if playing is None else playing.phase_report()
@@ -823,6 +946,9 @@ def client_tools(
     tools.register("remember_setup", remember_setup)
     tools.register("remember_note", remember_note)
     tools.register("card_value", card_value)
+    tools.register("listening", listening)
+    tools.register("skill_test", skill_test)
+    tools.register("apply_effect", apply_effect)
     tools.register("next_phase", next_phase)
     tools.register("encounter_done", encounter_done)
     tools.register("encounter_card", encounter_card)

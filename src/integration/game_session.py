@@ -426,6 +426,23 @@ class GameSession:
             "note": "Say the sentence in 'say' as it is. Do not add anything to it.",
         }
 
+    def test_report(self, dice: list[int], investigator: str = "") -> dict[str, Any]:
+        """Count a roll the table read out. Arithmetic, never the model's."""
+        result = self.game.test_result(investigator, dice or [])
+        result["note"] = (
+            "This is the count, not an opinion. Say it as it is: how many successes and whether "
+            "it passed. Do not recount the dice yourself."
+        )
+        return result
+
+    def effect_report(self, investigator: str = "", **deltas: Any) -> dict[str, Any]:
+        """Write what an encounter did into the investigator's sheet, and read it back."""
+        result = self.game.apply_effect(investigator, **deltas)
+        if result.get("applied"):
+            self.save()
+            result["note"] = "It is written down and it survives the session. Say the new numbers."
+        return result
+
     def phase_report(self) -> dict[str, Any]:
         """Move the game on one phase - the table said the phase or the round is over."""
         was = self.game.where_we_are()

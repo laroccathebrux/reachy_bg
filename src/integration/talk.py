@@ -408,6 +408,8 @@ class Table:
         while not stop.is_set():
             time.sleep(0.1)
             self.check_agent_alive()
+            if self.keeper is not None:
+                self.keeper.check_floor()  # a reading that ended hands the agent the whole thing
             if not self.audio.gated:
                 checker = None
                 if spotter is not None and self.audio.holding:
@@ -699,6 +701,7 @@ def main(argv: list[str] | None = None) -> int:
                         active=alive.is_set,
                         game=current_game,
                         session=current_session,
+                        keeper=lambda: table.keeper,
                     ),  # fresh per session
                     config=ConversationInitiationData(
                         conversation_config_override=session_override(language)

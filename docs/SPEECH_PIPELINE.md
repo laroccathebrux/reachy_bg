@@ -284,6 +284,16 @@ is the bridge: the preview's `GET /state` while it is up, `board_state.json` whe
 line of it on every turn and `look_at_board` has the piece list. The preview also reads
 `board_state.json` back at start now, so restarting the camera no longer throws away the scan.
 
+Holding the floor: `VAD_SILENCE_MS` is 600 ms, and somebody reading a card out loud pauses
+for longer than that. The VAD closed the reader's sentence mid-card, the gate released it and the
+agent answered over them (2026-09-17). `hold_floor()` stops releasing until the reader has been
+quiet for `LISTEN_SILENCE_S`, or until `LISTEN_MAX_S` runs out; their audio still accumulates in
+the utterance buffer and goes up as one turn when the reading ends, so the robot hears the whole
+card once instead of interrupting it. The robot's own name still cuts through, because a person
+who stops to call it is deliberately talking to it. The agent enters the mode through the
+`listening` tool. The buffer caps at `HOLD_MAX_FRAMES` (30 s), so a very long reading loses its
+oldest frames.
+
 What the agent may write: `remember_setup` for the setup (Ancient One, investigators, Mystery,
 Reserve) and `remember_note` for everything else the table asks it to keep - where a Gate is
 open, which monster stands where, what was agreed. Both land in the same `game_state.json`,

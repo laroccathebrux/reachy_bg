@@ -41,6 +41,11 @@ MIN_OVER_S = 0.7  # voice left after the robot stopped, below which there is not
 # measured live on 2026-09-17, where 0.8 s of the owner saying "Valeu!" scored 0.10 and was
 # dropped as the robot's own.
 MIN_VOICEPRINT_S = 1.5
+# Somebody reading a card out loud pauses to breathe, and VAD_SILENCE_MS is 600 ms, so the local
+# VAD closes their sentence mid-reading, the gate releases it and the agent answers over them.
+# While the floor is held, nothing is released until the reader has been quiet this long.
+LISTEN_SILENCE_S = 3.0
+LISTEN_MAX_S = 120.0  # a reading cannot hold the floor for ever
 
 
 @dataclass(frozen=True)
@@ -116,6 +121,8 @@ class Gatekeeper:
         self.addressed_at: float | None = None
         self.addressed_label = ""
         self.early_release_at: float | None = None
+        self.floor_held_until: float | None = None  # a reading in progress: hold everything
+        self.last_voice_at = 0.0
         self.early_text = ""
         self.early_language = ""
         self.verdicts: list[Verdict] = []
@@ -142,6 +149,42 @@ class Gatekeeper:
         self.last_addressed = speaker
         self.addressed_label = label
         self.addressed_at = self.clock()
+
+    # ------------------------------------------------------------------ holding the floor
+    @property
+    def holding_floor(self) -> bool:
+        return self.floor_held_until is not None and self.clock() < self.floor_held_until
+
+    def hold_floor(self, seconds: float = LISTEN_MAX_S) -> dict[str, Any]:
+        """Somebody is about to read something out: stay quiet until they stop for good.
+
+        Their audio still reaches the utterance buffer, and goes to the agent in one piece when
+        the reading ends - so the robot hears the whole card, once, instead of answering into
+        the middle of it.
+        """
+        self.floor_held_until = self.clock() + max(1.0, seconds)
+        self.last_voice_at = self.clock()
+        log.info("holding the floor for a reading (up to %.0fs)", seconds)
+        return {"listening": True, "note": "Say in one short line that you are listening, then stop."}
+
+    def release_floor(self) -> int:
+        """The reading ended: hand the agent everything that was held, as one turn."""
+        if self.floor_held_until is None:
+            return 0
+        self.floor_held_until = None
+        sent = self.audio.release_utterance(self.clock()) if self.active else 0
+        log.info("the reading ended; %d frame(s) go to the agent as one turn", sent)
+        return sent
+
+    def check_floor(self) -> bool:
+        """Called on the watcher's tick: end a hold once the reader has gone quiet, or timed out."""
+        if self.floor_held_until is None:
+            return False
+        now = self.clock()
+        if now < self.floor_held_until and now - self.last_voice_at < LISTEN_SILENCE_S:
+            return False
+        self.release_floor()
+        return True
 
     # ------------------------------------------------------------------ early release
     def early_release(self, text: str, language: str) -> int:
@@ -287,6 +330,14 @@ class Gatekeeper:
             and decision.reason != "self_echo"
             and not anonymous_echo
         )
+
+        self.last_voice_at = max(self.last_voice_at, utterance.ended_at)
+        if self.holding_floor and decision.reason != "name":
+            # Held, not judged away: the frames stay in the buffer and go up in one piece when
+            # the reading ends. Naming the robot still cuts through, because that is a person
+            # deliberately stopping to talk to it.
+            verdict = Verdict("listening", decision, text, language, 0, 0, 0, whisper_ms)
+            return self._done(verdict, utterance, speaker, score, label, since)
 
         forwarded = dropped = 0
         confident_switch = (
