@@ -250,6 +250,7 @@ class Table:
         # The agent going quiet is invisible from here: the gate keeps releasing, the frames keep
         # going out, and the table gets silence. On 2026-09-17 three sentences were forwarded
         # (107, 112 and 41 frames) and never answered, and the log said nothing for 90 seconds.
+        self.sway: Any = None  # HeadSway, once the body is up; the scan pauses it
         self.held_camera_at = 0.0  # last time the camera was told the head is moving
         self.waiting_since: float | None = None  # a released utterance with no transcript yet
         self.waiting_text = ""
@@ -721,6 +722,7 @@ def main(argv: list[str] | None = None) -> int:
                         game=current_game,
                         session=current_session,
                         keeper=lambda: table.keeper,
+                        sway=lambda: table.sway,
                     ),  # fresh per session
                     config=ConversationInitiationData(
                         conversation_config_override=session_override(language)
@@ -796,6 +798,7 @@ def main(argv: list[str] | None = None) -> int:
                 log.info("live diarizer connected")
             if HEAD_SWAY and not args.no_sway and not robot.simulated:
                 sway = HeadSway(robot._mini, lambda: audio.level_db).start()
+                table.sway = sway  # the scan_board tool pauses it before turning the head
             conversation.start_session()
             stop_watch = threading.Event()
             threading.Thread(

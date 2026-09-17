@@ -22,6 +22,7 @@ This is the link, and it prefers the living one:
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
 from typing import Any
 
@@ -125,6 +126,53 @@ def hold_still(seconds: float = 1.5, *, url: str = VISION_URL, timeout: float = 
         return False
 
 
+def scan(*, url: str = VISION_URL, wait_s: float = 40.0, poll_s: float = 1.0) -> dict[str, Any]:
+    """Sweep the three scan views and find the pieces, then report what was found.
+
+    The preview runs the sweep on its own thread and leaves the answer in ``/scan_result``, so
+    this starts it and waits. The head turns through the sweep, which is why the caller pauses
+    the speech sway first: two processes commanding the same motor at once blurs every view.
+    """
+    import httpx
+
+    base = url.rstrip("/")
+    try:
+        started = httpx.post(f"{base}/scan", json={"mode": "detect"}, timeout=5.0)
+        if started.status_code == 409:
+            return {"scanned": False, "note": "A scan is already running; ask again in a moment."}
+        started.raise_for_status()
+    except Exception as exc:
+        log.warning("could not start a scan (%s)", exc)
+        return {"scanned": False, "note": "The camera is not running, so I cannot look at the board."}
+
+    deadline = time.monotonic() + wait_s
+    while time.monotonic() < deadline:
+        time.sleep(poll_s)
+        try:
+            result = httpx.get(f"{base}/scan_result", timeout=3.0).json()
+        except Exception:
+            continue
+        if isinstance(result, dict) and result.get("ok") and result.get("mode") == "detect":
+            pieces = [
+                {"where": p.get("space") or p.get("near") or "off the spaces", "kind": p.get("kind", "piece")}
+                for p in (result.get("believed") or [])
+            ]
+            return {
+                "scanned": True,
+                "count": len(pieces),
+                "pieces": pieces[:MAX_PIECES],
+                "unsure": len(result.get("doubtful") or []),
+                "note": (
+                    "This is what the camera found just now. It reports where pieces are, never "
+                    "which is which: ask the table to name anything that matters."
+                ),
+            }
+    return {
+        "scanned": False,
+        "note": "The scan did not finish in time. Say so, and look again in a moment.",
+    }
+
+
 def summary(board: dict[str, Any] | None = None) -> str:
     """One short line for ``game_state``, which is read on every turn and paid for in latency.
 
@@ -145,4 +193,4 @@ def summary(board: dict[str, Any] | None = None) -> str:
     return f"the camera sees {count} piece(s){stale}; known: {where}"
 
 
-__all__ = ["board_now", "hold_still", "summary", "STATE_FILE", "MAX_PIECES"]
+__all__ = ["board_now", "hold_still", "scan", "summary", "STATE_FILE", "MAX_PIECES"]

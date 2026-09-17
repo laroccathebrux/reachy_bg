@@ -110,3 +110,65 @@ def test_the_camera_is_told_to_hold_still_and_a_missing_preview_is_not_fatal(mon
 
     monkeypatch.setattr(httpx, "post", dead)
     assert hold_still(2.0) is False  # a preview that is down must not stop the robot talking
+
+
+def test_a_scan_is_started_and_waited_for(monkeypatch):
+    """The preview sweeps on its own thread and leaves the answer in /scan_result, so the call
+    starts it and waits rather than reporting a scan that has not happened yet."""
+    import httpx
+
+    from src.vision.board_link import scan
+
+    posts, polls = [], [0]
+    found = {
+        "ok": True,
+        "mode": "detect",
+        "believed": [{"space": "Rome", "kind": "piece"}, {"space": None, "near": "Tokyo", "kind": "die"}],
+        "doubtful": [{"space": "London"}],
+    }
+
+    monkeypatch.setattr(
+        httpx,
+        "post",
+        lambda url, **k: (
+            posts.append(url) or type("R", (), {"status_code": 200, "raise_for_status": lambda self: None})()
+        ),
+    )
+
+    def get(url, **k):
+        polls[0] += 1
+        body = {} if polls[0] < 2 else found  # not finished on the first poll
+        return type("R", (), {"json": lambda self: body})()
+
+    monkeypatch.setattr(httpx, "get", get)
+    out = scan(wait_s=10, poll_s=0.01)
+    assert posts and posts[0].endswith("/scan")
+    assert out["scanned"] is True and out["count"] == 2 and out["unsure"] == 1
+    assert out["pieces"][0]["where"] == "Rome"
+    assert out["pieces"][1]["where"] == "near Tokyo" or out["pieces"][1]["where"] == "Tokyo"
+
+
+def test_a_scan_already_running_is_said_plainly(monkeypatch):
+    import httpx
+
+    from src.vision.board_link import scan
+
+    monkeypatch.setattr(
+        httpx,
+        "post",
+        lambda url, **k: type("R", (), {"status_code": 409, "raise_for_status": lambda self: None})(),
+    )
+    assert scan()["scanned"] is False
+
+
+def test_no_camera_is_not_a_crash(monkeypatch):
+    import httpx
+
+    from src.vision.board_link import scan
+
+    def dead(*a, **k):
+        raise httpx.ConnectError("nobody home")
+
+    monkeypatch.setattr(httpx, "post", dead)
+    out = scan()
+    assert out["scanned"] is False and "camera is not running" in out["note"]

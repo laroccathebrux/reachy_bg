@@ -72,6 +72,8 @@ How you talk: you are speaking out loud, so keep it to one to three short senten
 
 {addressing} If someone says "stop", "wait", "hold on" or talks over you, stop at once, without finishing the sentence, and only say you are listening.
 
+Read before you answer. Anything about this game - where a piece is, who is where, whose turn it is, what somebody told you, what a card costs, how much Health or Sanity anybody has, what the table agreed - comes from game_state, called first, every time. What you remember of the conversation is not the record: 'notes' is what the table asked you to keep, and the sheets are what has been written down. Answer from those and say the numbers they give. If game_state does not have it, say you were not told and ask for that one thing - never fill the gap with a guess, because the table then has to correct you, and being corrected costs them more than being asked.
+
 Whose investigator is whose: yours is yours. When your own investigator takes the damage, loses the Sanity, rolls the dice or has the encounter, say "I" - "I lose 1 Sanity", "my Observation test" - in the language of the table, and never "your Sanity" or "how many dice do you have", which hands your own turn to the table and makes them explain their own game back to you. game_state marks your investigator; read it before you speak about anybody's sheet.
 
 Somebody announcing what they are about to do is not a question. "Vou ler a carta de Shanghai", "deixa eu rolar os dados", "espera que eu estou lendo" - answer with one short line that you are listening, and nothing else: no rule, no tool, no summary of how encounters work. They will tell you the result, and the result is when you speak. While somebody is reading a card out loud, stay quiet until they stop, even through their pauses.
@@ -235,6 +237,22 @@ _TOOLS: list[dict[str, Any]] = [
         },
         "expects_response": True,
         "response_timeout_secs": 10,
+        "pre_tool_speech": "auto",
+    },
+    {
+        "type": "client",
+        "name": "scan_board",
+        "description": (
+            "Look at the whole board properly: the robot turns its head through three views and "
+            "finds every piece on the table. Use it when the table asks you to look, when pieces "
+            "have been moved while you were talking, or when look_at_board finds nothing and you "
+            "believe there is something there. It takes about half a minute and the head moves, "
+            "so say you are going to look before you call it, and do not call it twice in a row. "
+            "It reports where pieces are and never which is which."
+        ),
+        "parameters": {"type": "object", "properties": {}, "required": []},
+        "expects_response": True,
+        "response_timeout_secs": 60,
         "pre_tool_speech": "auto",
     },
     {
@@ -716,7 +734,9 @@ def game_state_report(game: Any, board: str = "") -> dict[str, Any]:
         "board": board,
         "still_missing": game.missing(),
         "note": (
-            "This is what the robot remembers. Speak from it, do not ask for anything in it, and "
+            "This is the record, not a summary: it is what the robot has been told and has "
+            "written down, and it beats anything you remember of the conversation. Speak from it, "
+            "do not ask for anything in it, and "
             "ask only for what still_missing lists. 'notes' is what the table asked it to write "
             "down; answer from it instead of saying you do not know. 'board' is what the camera "
             "sees; call look_at_board for which piece is where. 'where_we_are' is the round and "
@@ -767,6 +787,7 @@ def client_tools(
     game: Callable[[], Any] | None = None,
     session: Callable[[], Any] | None = None,
     keeper: Callable[[], Any] | None = None,
+    sway: Callable[[], Any] | None = None,
 ) -> Any:
     """SDK ``ClientTools`` with the local implementations registered.
 
@@ -905,6 +926,26 @@ def client_tools(
             on_call("card_value", parameters, result)
         return json.dumps(result, ensure_ascii=False)
 
+    def scan_board(parameters: dict) -> str:
+        from src.vision.board_link import scan
+
+        # The sway commands the head at 10 Hz from this process while the scan turns it from the
+        # other one. Two hands on the same motor blurs every view, so the voice stops moving it.
+        swaying = sway() if sway is not None else None
+        if swaying is not None:
+            swaying.pause()
+        try:
+            result = scan()
+        except Exception as exc:
+            log.warning("the scan failed: %s", exc)
+            result = {"scanned": False, "note": f"I could not use the camera: {exc}"}
+        finally:
+            if swaying is not None:
+                swaying.resume()
+        if on_call:
+            on_call("scan_board", parameters, result)
+        return json.dumps(result, ensure_ascii=False)
+
     def listening(parameters: dict) -> str:
         result = (
             keeper().hold_floor()
@@ -971,6 +1012,7 @@ def client_tools(
     tools.register("remember_setup", remember_setup)
     tools.register("remember_note", remember_note)
     tools.register("card_value", card_value)
+    tools.register("scan_board", scan_board)
     tools.register("listening", listening)
     tools.register("skill_test", skill_test)
     tools.register("apply_effect", apply_effect)

@@ -27,6 +27,7 @@ def test_agent_config_has_the_native_voice_and_the_local_tools():
         "remember_note",
         "look_at_board",
         "card_value",
+        "scan_board",
         "listening",
         "skill_test",
         "apply_effect",

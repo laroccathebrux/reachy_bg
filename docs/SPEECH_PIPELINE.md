@@ -305,6 +305,12 @@ can say when that is, because the agent's audio goes straight to the USB speaker
 never sees it. It is a deadline rather than a flag, so a crash mid-sentence cannot leave the
 camera switched off, and a preview that is down never blocks the voice.
 
+Scanning on request: the sweep used to be a button on the preview page, so a table that
+asked the robot to look at the board got a robot that could not. `scan_board` starts the
+preview's three-view sweep and waits for `/scan_result`. It pauses the speech sway first,
+because the sway commands the head at 10 Hz from the conversation process while the sweep turns
+it from the camera process, and two hands on one motor blur every view.
+
 What the agent may write: `remember_setup` for the setup (Ancient One, investigators, Mystery,
 Reserve) and `remember_note` for everything else the table asks it to keep - where a Gate is
 open, which monster stands where, what was agreed. Both land in the same `game_state.json`,
