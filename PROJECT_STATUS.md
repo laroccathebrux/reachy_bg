@@ -1152,6 +1152,106 @@ is where a slow loop belongs.
 - **The baselines are from 2026-09-16 09:42.** A new sweep needs the board empty, or the pieces
   on it become part of "empty board" and detection never sees them again.
 
+## Done: the gate holds itself, the turn can be taken back, and the model stops choosing (2026-09-17, evening)
+
+Three of the items left open this morning, and the two decisions that were waiting for the
+owner. Every one of them was measured before it was changed.
+
+### The three that were open
+
+- **`listening` was never called.** The prompt produced the visible half - the robot said "estou
+  ouvindo" - and the tool that actually holds the floor went a whole session without being
+  called once, so nothing stopped the next breath of a card reading from being answered over.
+  The rule is local now: `announces_reading` runs on the transcript the gate already has,
+  arms the hold *after* the announcement has been routed (so the agent still says its one short
+  line), and refreshes it when the reader says "espera" again. A question never holds the floor,
+  because "espera, quantos dados eu rolo?" is a question with a word in front of it. Measured
+  against the 462 transcribed utterances in the log: **2 fire, both right, no false positives** -
+  and one of the two is a sentence that produced a false "the agent is dead" warning the same
+  afternoon. The agent keeps the tool; it is no longer the only way in.
+
+- **The watchdog fired on Whisper's own noise.** The fix is not to filter speech - 16 of 422 real
+  sentences fail every test worth having and they are the Portuguese ones with English names -
+  but to not start the clock for what does not look like a voice. `voiced_fraction` measures how
+  much of a clip stands above *its own* quiet floor, so a change of microphone gain does not
+  retune it. Over the 218 clips forwarded on 2026-09-17 (51 of them `'E aí'` over room noise,
+  167 real): at 0.60, **2 of 51 noise clips still arm the clock and 96 of 167 real sentences
+  still arm it**. Absolute peak level was measured too and separates worse - noise p95 -25.3 dBFS
+  against speech p05 -31.5 - so the scale-free measure is the one kept. Nothing is dropped:
+  the audio reaches the agent exactly as before, and missing one costs a warning, never a
+  sentence, because the next real sentence arms it.
+
+- **A recorded action had no undo.** `GameState.checkpoint`/`undo` snapshot the state at each
+  write door, `undo_that` is the tool, and the prompt now tells the robot that being corrected is
+  part of playing - never that it cannot be changed, and never to argue that it already did it,
+  because the table is looking at the board and it is not. Two things had to be got right:
+  a checkpoint that changed nothing is skipped, so one "refaz" always reaches one real change;
+  and investigators are restored **in place** rather than replaced, because undo runs mid-session
+  where the turn taker is holding those objects and a fresh list would leave it updating a sheet
+  nobody reads.
+
+### The model stops choosing turns
+
+`scripts/decide_replay.py` was run again before anything was decided. Over 16 more decisions
+`qwen3.6:35b-mlx` agreed with the score **13 times (81%)** and **all three disagreements made the
+turn worse**: it dropped the Rest of a hurt investigator, it added an Acquire Assets against an
+empty Reserve, and it gave up a Trade that was only possible because another investigator was
+standing on that space. It also **answered differently on the same situation in 3 of the 8**, so
+the same table state did not produce the same turn twice.
+
+So the score takes the best turn and the model is handed that turn, and the score's own words for
+why it won, and asked only for the sentence. `NARRATION_PROMPT` names its measured failure - the
+facts are real and the links are invented - and answers it by handing over the real reason and
+forbidding the rest: a fact may be used only when it is about an action in *this* turn. Measured
+after the change, on the game as it stands: **the same turn on all six runs of three situations,
+1.3-1.6 s warm against a 4.4 s median**, and a model that cannot answer now costs a plainer
+sentence instead of a different move. `decide(model_picks=True)` keeps the old arrangement
+reachable, and `decide_replay.py` uses it, so this can be re-measured when a model changes.
+
+### The loop in the dead time
+
+`src/strategy/reflect.py` thinks between rounds, on its own thread, while the humans take their
+turns. It is not in the turn path and must not be put there.
+
+What it may hand over is not prose: `src/strategy/intent.py` defines three shapes - reach a
+space, prefer an action, avoid a space - and the code checks every one before the score sees it.
+The space has to be on the map table, the action one of the six on the reference card, the weight
+is clamped, and no round gets more than four. The score's term for an intent is the same size as
+one Monster on the space a turn ends on, so a priority **re-ranks turns that were nearly level
+and cannot overturn a fight**.
+
+Two of the checks exist because it was run against the real game instead of reasoned about. On
+the first live run it **committed on step one without looking anything up**, and explained a Rest
+by *"o combate iminente no espaço do Mar"* - there is no such space, there was no combat, and it
+had read neither. Having tools is not the same as using them, and a prompt asking nicely is not a
+mechanism. So: at least one lookup is required **in code**, and every intent has to cite words
+that actually appear in something it read. After that it looked up the Mystery in play, quoted
+the card - *"An Eldritch token goes on the Sea space nearest each investigator"* - and its
+priorities followed from the quote.
+
+**What is checked is that the fact is real and was read. What is not checked is whether the link
+from that fact to the target holds** - "prefer Acquire Assets" citing "spend a Clue to take the
+token" is still a leap. The bounded weight is the safety net, and every round's thinking,
+refusals included, goes into the diary as a `thinking` line for the owner to argue with.
+
+### The game state
+
+The note said San Francisco and the sheet said space 5. The owner settled it: she moved from 5 to
+San Francisco, and the game is at the Mythos Phase. Both were written, and note 4 now records the
+move rather than standing as a second, competing record of where she is.
+
+### Still open
+
+- **The setup ear and the local turn are not wired into `talk.py`.** `Gatekeeper` takes
+  `on_addressed` and `wants_setup`, both of them are exercised in the tests, and `main()` passes
+  neither - so `setup_talk` never fires live and the local `TurnTaker.handle` path never runs.
+  The turn reaches the table through the `take_turn` tool, which is the "one mouth" decision, so
+  this may be deliberate; the setup half looks like it is not. Not touched, because it changes
+  what the robot does with an utterance in a live session.
+- **The empty-board baselines are still from 2026-09-16 09:42.**
+- **The path table has still not been checked against the board**, so the robot still will not
+  move a piece.
+
 ## Decisions taken
 
 | Topic | Decision | Where |
@@ -1167,6 +1267,8 @@ is where a slow loop belongs.
 | Turn-taking | the local ear decides speak/stay-quiet before any audio reaches the agent (rules on the local Whisper transcript; a local LLM classifier only if the rules prove insufficient). Switchable: with `ADDRESSEE_GATE=false` the robot answers everything and the rules only watch, which is how the owner is running it for now | src/speech/gatekeeper.py |
 | Game setup | verbal briefing + knowledge base, no card OCR | docs/SETUP_PROTOCOL.md |
 | Card text | the 76 base assets and the 16 Mysteries ship with the repository (effects, and what solving one takes); the encounter, Mythos and Other World decks are read from the owner's own box when the table needs one, never scraped | src/rag/dictate.py |
+| Choosing a turn | the **score** chooses; the reasoning model only says it out loud. Measured twice with `scripts/decide_replay.py` (88% and 81% agreement, every disagreement worse, unstable across repeats); `decide(model_picks=True)` keeps the old arrangement measurable | src/strategy/decide.py |
+| Slow reasoning | a loop with tools between rounds, never in the turn path, writing checked `Intent`s the score reads - bounded so they re-rank near-ties and cannot overturn a fight | src/strategy/reflect.py, src/strategy/intent.py |
 | Vision | YOLO-World + image-embedding gallery, SAM not used | docs/DESIGN_DOCUMENT.md |
 | Prior project | read for lessons only; no code copied | CLAUDE.md |
 
@@ -1269,12 +1371,17 @@ small and soft for either. Pixels first, recogniser second.
 
 ## Open items
 
-- **`listening` is never called by the agent**, so nothing holds the gate while somebody reads
-  a card out loud. The prompt gets the visible behaviour right and the mechanism stays idle.
-- **The agent-quiet watchdog fires on Whisper's hallucinations** (`'E aí'` on near-silence).
-  Do not filter speech on language confidence: 16 of 422 real sentences fall under any useful
-  threshold, and they are the Portuguese ones with English names in them.
-- **A recorded action has no undo**, so a turn resolved wrongly cannot be taken back.
+- ~~`listening` is never called by the agent~~ done: the ear arms the hold itself
+  (`announces_reading`), and the tool stays as a second way in.
+- ~~The agent-quiet watchdog fires on Whisper's hallucinations~~ done: the clock is not started
+  for audio that does not look like a voice (`voiced_fraction`), and nothing is filtered.
+- ~~A recorded action has no undo~~ done: `undo_that`, one real change per call.
+- **`on_addressed` and `wants_setup` are never wired in `talk.py`**, so the local setup ear and
+  the local turn path do not run in a live session. Worth the owner's decision: the turn half
+  follows from "one mouth at the table", the setup half looks like an oversight.
+- **An intent's citation is checked; the link from it is not.** "prefer Acquire Assets" citing
+  "spend a Clue to take the token" passes every check there is. The bounded weight is what keeps
+  that cheap, and the `thinking` lines in the diary are where it would be caught.
 - **CAMERA_REBUILD is off by default** until there is a way to tell which camera the pipeline
   bound to. Frames arriving is not evidence of the right one.
 - **The empty-board baselines are from 2026-09-16 09:42.** A new sweep needs the board clear.
