@@ -26,6 +26,9 @@ def test_agent_config_has_the_native_voice_and_the_local_tools():
         "remember_setup",
         "remember_note",
         "look_at_board",
+        "card_value",
+        "next_phase",
+        "encounter_done",
         "encounter_card",
         "game_knowledge",
     ]
@@ -214,3 +217,33 @@ def test_game_state_carries_one_line_of_board_and_the_tool_has_the_detail():
     assert report["board"] == "the camera sees 2 piece(s); known: Lily Chen at Rome"
     assert "look_at_board" in report["note"]
     assert game_state_report(GameState())["board"] == ""  # no camera, no claim
+
+
+def test_a_value_read_out_at_the_table_stops_acquire_assets_asking_again(tmp_path):
+    """2026-09-17: "Lucky Cigarette Case é dois" was heard, thanked for and forgotten, because
+    card values could only arrive through the offline dictate script. Forty seconds later the
+    robot asked for the same numbers: "Eu acabei de falar." """
+    from src.rag.dictate import remember_value
+    from src.strategy import moves
+
+    cards = tmp_path / "cards.json"
+    remember_value("Lucky Cigarette Case", 2, path=cards)
+    remember_value("Kerosene", 1, path=cards)
+
+    saved = {c["name"]: c["value"] for c in __import__("json").loads(cards.read_text())}
+    assert saved == {"Lucky Cigarette Case": 2, "Kerosene": 1}
+    # card_value reads through an lru_cache, so a mid-session write has to drop it or the
+    # process that wrote the number still cannot see it.
+    assert moves._dictated.cache_info().currsize == 0
+
+
+def test_game_state_says_where_the_round_is():
+    from src.speech.eleven_agent import game_state_report
+    from src.strategy.game import ROBOT, GameState
+
+    game = GameState()
+    game.set_ancient_one("Azathoth")
+    game.add_investigator("Lily Chen", controller=ROBOT)
+    assert "has not started" in game_state_report(game)["where_we_are"]
+    game.begin_round()
+    assert "round 1, Action Phase" in game_state_report(game)["where_we_are"]

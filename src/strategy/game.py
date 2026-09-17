@@ -42,6 +42,8 @@ log = get_logger(__name__)
 
 ROBOT = "reachy"  # the controller value that means "the robot plays this investigator"
 PHASES = ("action", "encounter", "mythos")
+MAX_ACTIONS = 2  # GAME_REFERENCE.md: "up to 2 actions, each distinct action at most once per round"
+PHASE_NAMES = {"action": "Action Phase", "encounter": "Encounter Phase", "mythos": "Mythos Phase"}
 
 
 @dataclass
@@ -59,6 +61,10 @@ class InvestigatorState:
     piece_id: int | None = None  # the tracked piece on the board, once claimed
     train_tickets: int = 0  # Travel tickets held; two of any kind is the printed maximum
     ship_tickets: int = 0
+    # What this investigator has already done in the round in progress. Cleared by begin_round.
+    actions: list[str] = field(default_factory=list)  # distinct action keys, at most MAX_ACTIONS
+    components: list[str] = field(default_factory=list)  # components used; each once per round
+    encountered: bool = False  # resolved its encounter in this round's Encounter Phase
 
     def __post_init__(self) -> None:
         self.space = self.space or self.sheet.starting_space
@@ -106,6 +112,9 @@ class InvestigatorState:
             "piece_id": self.piece_id,
             "train_tickets": self.train_tickets,
             "ship_tickets": self.ship_tickets,
+            "actions": list(self.actions),
+            "components": list(self.components),
+            "encountered": self.encountered,
         }
 
 
@@ -142,6 +151,129 @@ class GameState:
             return None
         self.notes.append(text)
         return text
+
+    # ------------------------------------------------------------------ the round
+    # GAME_REFERENCE.md, "Round structure": every round is Action Phase -> Encounter Phase ->
+    # Mythos Phase, the Lead Investigator acts first and then round the table. Until this
+    # existed the robot re-derived the same plan from an unchanged state every time it was
+    # asked to play, so it repeated its strategy and never got anywhere.
+
+    @property
+    def started(self) -> bool:
+        """Has round 1 begun? Round 0 with no phase is a game that is still being set up."""
+        return self.round > 0 and self.phase in PHASES
+
+    @property
+    def phase_name(self) -> str:
+        return PHASE_NAMES.get(self.phase, "")
+
+    def begin_round(self) -> int:
+        """Open the next round at the Action Phase and forget what everyone did in the last."""
+        self.round += 1
+        self.phase = PHASES[0]
+        for state in self.investigators:
+            state.actions = []
+            state.components = []
+            state.encountered = False
+        return self.round
+
+    def advance_phase(self) -> str:
+        """Move to the next phase, opening a new round after the Mythos Phase. Returns the phase."""
+        if not self.started:
+            self.begin_round()
+        elif self.phase == PHASES[-1]:
+            self.begin_round()
+        else:
+            self.phase = PHASES[PHASES.index(self.phase) + 1]
+        return self.phase
+
+    def order(self) -> list[InvestigatorState]:
+        """Turn order: the Lead Investigator first, then the others as they sit round the table."""
+        names = [i.name for i in self.investigators]
+        start = names.index(self.lead) if self.lead in names else 0
+        return self.investigators[start:] + self.investigators[:start]
+
+    def actions_left(self, name: str) -> int:
+        state = self.by_name(name)
+        return 0 if state is None else max(0, MAX_ACTIONS - len(state.actions))
+
+    def may_act(self, name: str, action: str, component: str = "") -> tuple[bool, str]:
+        """May this investigator take this action now? ``(allowed, why not)``."""
+        state = self.by_name(name)
+        if state is None:
+            return False, f"{name} is not in this game"
+        if self.phase != PHASES[0]:
+            return False, f"it is the {self.phase_name}, not the Action Phase"
+        if not self.actions_left(name):
+            return False, f"{name} has already taken {MAX_ACTIONS} actions this round"
+        # A Component Action is limited per component rather than per action: the reference
+        # gives it its own rule, "each component once per round", which would say nothing if
+        # the action itself could only be taken once.
+        if component:
+            if component in state.components:
+                return False, f"{component} has already been used this round"
+            return True, ""
+        if action in state.actions:
+            return False, f"{name} has already used {action} this round"
+        return True, ""
+
+    def record_action(self, name: str, action: str, component: str = "") -> tuple[bool, str]:
+        """Write down that this investigator took this action. ``(recorded, why not)``."""
+        allowed, why = self.may_act(name, action, component)
+        if not allowed:
+            return False, why
+        state = self.by_name(name)
+        assert state is not None
+        if action not in state.actions:
+            state.actions.append(action)
+        if component:
+            state.components.append(component)
+        return True, ""
+
+    def record_encounter(self, name: str) -> tuple[bool, str]:
+        state = self.by_name(name)
+        if state is None:
+            return False, f"{name} is not in this game"
+        if self.phase != PHASES[1]:
+            return False, f"it is the {self.phase_name}, not the Encounter Phase"
+        if state.encountered:
+            return False, f"{name} has already had an encounter this round"
+        state.encountered = True
+        return True, ""
+
+    def to_act(self) -> InvestigatorState | None:
+        """Whose turn it is in the Action Phase, in turn order; None when everyone has acted."""
+        if self.phase != PHASES[0]:
+            return None
+        for state in self.order():
+            if not state.defeated and self.actions_left(state.name):
+                return state
+        return None
+
+    def to_encounter(self) -> InvestigatorState | None:
+        if self.phase != PHASES[1]:
+            return None
+        for state in self.order():
+            if not state.defeated and not state.encountered:
+                return state
+        return None
+
+    def where_we_are(self) -> str:
+        """One line for the agent: the round, the phase and who the table is waiting on."""
+        if not self.started:
+            return "the game has not started; round 1 has not been opened yet"
+        head = f"round {self.round}, {self.phase_name}"
+        if self.phase == PHASES[0]:
+            waiting = self.to_act()
+            if waiting is None:
+                return f"{head}; everyone has acted, the Encounter Phase is next"
+            return f"{head}; {waiting.name} to act ({self.actions_left(waiting.name)} action(s) left)"
+        if self.phase == PHASES[1]:
+            waiting = self.to_encounter()
+            if waiting is None:
+                return f"{head}; everyone has had an encounter, the Mythos Phase is next"
+            return f"{head}; {waiting.name} has an encounter to resolve"
+        return f"{head}; the Lead Investigator draws the Mythos card, then the round ends"
 
     # ------------------------------------------------------------------ setup
     def set_ancient_one(self, name: str) -> AncientOne | None:
@@ -333,7 +465,10 @@ class GameState:
                     setattr(state, key, item[key])
             state.possessions = list(item.get("possessions", state.possessions))
             state.conditions = list(item.get("conditions", []))
+            state.actions = list(item.get("actions", []))
+            state.components = list(item.get("components", []))
+            state.encountered = bool(item.get("encountered", False))
         return game
 
 
-__all__ = ["PHASES", "ROBOT", "GameState", "InvestigatorState"]
+__all__ = ["MAX_ACTIONS", "PHASES", "PHASE_NAMES", "ROBOT", "GameState", "InvestigatorState"]

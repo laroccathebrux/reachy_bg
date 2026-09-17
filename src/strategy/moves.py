@@ -481,19 +481,43 @@ def _after(situation: Situation, candidate: Candidate) -> Situation:
     return situation
 
 
+def _still_free(game: GameState, name: str, candidate: Candidate) -> bool:
+    """Has this investigator still got this action in the round in progress?
+
+    The planner used to see a fresh round on every call, because nothing wrote down what the
+    robot had done. Once take_turn started recording, replanning went on offering the action it
+    had just spent and the game refused it. A game that has not started yet has every action.
+    """
+    if not game.started:
+        return True
+    allowed, _ = game.may_act(
+        name, candidate.key, component=candidate.detail if candidate.key == COMPONENT else ""
+    )
+    return allowed
+
+
 def plans(game: GameState, situation: Situation) -> list[TurnPlan]:
     """Every legal turn: one action, or two distinct ones in order, the second seen from the first.
 
     A second Travel is not offered because an action may be taken only once per round, and two
-    Component Actions are allowed only when they are different components.
+    Component Actions are allowed only when they are different components. Actions already spent
+    earlier in this round are gone too, and so is the second half of the turn once one of the
+    two actions has been used.
     """
     out: list[TurnPlan] = []
-    first_round = candidates(game, situation)
+    left = game.actions_left(situation.name) if game.started else MAX_ACTIONS
+    if left <= 0:
+        return []
+    first_round = [c for c in candidates(game, situation) if _still_free(game, situation.name, c)]
     for first in first_round:
         out.append(TurnPlan((first,), situation.space, unknowns=first.unknowns))
+        if left < 2:
+            continue
         moved = _after(situation, first)
         for second in candidates(game, moved):
             if second.key == first.key and not (second.key == COMPONENT and second.detail != first.detail):
+                continue
+            if not _still_free(game, situation.name, second):
                 continue
             out.append(
                 TurnPlan(

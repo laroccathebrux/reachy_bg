@@ -395,3 +395,62 @@ def test_the_same_note_twice_is_not_written_twice(tmp_path):
     assert session.note_report("o portal está em Roma")["written"] == "o portal está em Roma"
     repeated = session.note_report("o  portal  está  em  Roma")
     assert repeated["written"] == "" and session.game.notes == ["o portal está em Roma"]
+
+
+def test_the_second_take_turn_in_a_round_does_not_decide_all_over_again(tmp_path):
+    """2026-09-17: asked to play twice, the robot returned the same plan and asked the same
+    question both times, because take_turn derived a move from a state it never wrote to.
+    "Fica o tempo todo me perguntando os valores das cartas e repetindo a estratégia." """
+    from src.strategy.game import ROBOT
+
+    session = _session(tmp_path, _Said())
+    session.game.set_ancient_one("Azathoth")
+    session.game.add_investigator("Lily Chen", controller=ROBOT)
+
+    first = session.turn_report()
+    assert first["move"]  # it planned something, and round 1 opened by itself
+    assert session.game.round == 1 and session.game.phase == "action"
+    spent = 2 - session.game.actions_left("Lily Chen")
+    assert spent >= 1  # the actions are written into the game, not only into the diary
+
+    moves = [first["move"]]
+    while session.game.actions_left("Lily Chen"):
+        again = session.turn_report()
+        assert again["move"] and again["move"] not in moves  # never the same plan twice
+        moves.append(again["move"])
+
+    done = session.turn_report()
+    assert done.get("already_acted") is True
+    assert done["took_a_turn"] is False
+    assert "already taken my two actions" in done["note"]
+    assert "everyone has acted" in done["where"]
+
+
+def test_a_turn_is_refused_outside_the_action_phase(tmp_path):
+    from src.strategy.game import ROBOT
+
+    session = _session(tmp_path, _Said())
+    session.game.set_ancient_one("Azathoth")
+    session.game.add_investigator("Lily Chen", controller=ROBOT)
+    session.game.begin_round()
+    session.game.advance_phase()  # the Encounter Phase
+
+    report = session.turn_report()
+    assert report["took_a_turn"] is False
+    assert "Encounter Phase" in report["note"]
+
+
+def test_the_phase_moves_on_and_survives_the_session(tmp_path):
+    from src.strategy.game import ROBOT
+
+    session = _session(tmp_path, _Said())
+    session.game.set_ancient_one("Azathoth")
+    session.game.add_investigator("Lily Chen", controller=ROBOT)
+
+    assert session.phase_report()["phase"] == "Action Phase"
+    assert session.phase_report()["phase"] == "Encounter Phase"
+    assert session.encounter_report()["recorded"] is True
+
+    again = _session(tmp_path, _Said())
+    assert again.game.round == 1 and again.game.phase == "encounter"
+    assert again.game.by_name("Lily Chen").encountered is True

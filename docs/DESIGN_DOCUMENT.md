@@ -91,6 +91,30 @@ Changes arrive as **patches** (what changed, not the whole state): "Lily loses 1
 can see; the speech module proposes patches from what players say; the human confirms
 anything ambiguous.
 
+### The round
+
+`round`, `phase` and `lead` are a state machine, not labels. `GameState.begin_round` opens the
+Action Phase and clears what everyone did; `advance_phase` walks Action -> Encounter -> Mythos
+and opens the next round after the Mythos Phase; `order()` puts the Lead Investigator first and
+then goes round the table; `record_action` enforces up to two actions with each distinct action
+once per round (a Component Action is limited by component, which is the only reading that
+makes the reference's separate rule for it mean anything); `record_encounter` allows one
+encounter each in the Encounter Phase. `where_we_are()` is the one line the agent reads.
+
+It exists because it did not. `take_turn` used to be a planner with no memory: it derived a
+move, logged it to the diary and wrote nothing into the state, so `round` sat at 0 for a whole
+session and every call re-derived the same move from an unchanged game. On 2026-09-17 the owner
+asked twice and got the same strategy and the same question both times - "fica o tempo todo me
+perguntando os valores das cartas na reserva e repetindo a estratégia". The planner now also
+reads the round: `moves.plans` drops an action already spent and stops offering a second one
+once the investigator has only one left.
+
+Card values are the other half of that loop. `card_value` reads what the table has dictated,
+and dictation only ever happened offline through `scripts/dictate_cards.py`, so a value said out
+loud during a game was heard and forgotten. `dictate.remember_value` is the live door, the agent
+calls it through the `card_value` tool, and it drops the `lru_cache` that would otherwise hide
+the write from the process that made it.
+
 ## 4. The robot's decision space
 
 The robot decides, for its investigator only:

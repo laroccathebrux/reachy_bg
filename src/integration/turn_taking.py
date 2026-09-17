@@ -33,6 +33,7 @@ from src.logger import get_logger
 from src.speech.addressee import is_turn_call, names_investigator
 from src.strategy.decide import Decision, decide
 from src.strategy.game import GameState
+from src.strategy.moves import COMPONENT
 
 log = get_logger(__name__)
 
@@ -109,6 +110,24 @@ class TurnTaker:
             self._take(language)
         return True
 
+    def _record(self, decision: Decision) -> None:
+        """Write the move into the game, so the next call is not the same plan all over again.
+
+        Until this existed take_turn was a planner and nothing else: it derived a move, logged
+        it to the diary and touched no state, so being asked twice produced the same move twice
+        and the round never moved. The table still moves the pieces; what is recorded is that
+        the robot spent these actions in this Action Phase.
+        """
+        mine = self.game.robot_investigator
+        if mine is None or decision.plan is None:
+            return
+        for action in decision.plan.actions:
+            ok, why = self.game.record_action(
+                mine.name, action.key, component=action.detail if action.key == COMPONENT else ""
+            )
+            if not ok:
+                log.warning("turn: could not record %s for %s (%s)", action.key, mine.name, why)
+
     def decide_now(self, language: str = "") -> Decision | None:
         """Work the turn out and return it, without saying anything.
 
@@ -128,6 +147,7 @@ class TurnTaker:
                 return None
             self.last = decision
             self.turns += 1
+            self._record(decision)
             log.info(
                 "turn %d: %s (%s, %.1fs)",
                 self.turns,
@@ -152,6 +172,7 @@ class TurnTaker:
                 return
             self.last = decision
             self.turns += 1
+            self._record(decision)
             text = self.sentence(decision, language)
             log.info(
                 "turn %d: %s (%s, %.1fs total)",

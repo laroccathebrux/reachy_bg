@@ -40,7 +40,7 @@ from typing import Any
 from src.integration.turn_taking import TurnTaker
 from src.logger import get_logger
 from src.speech.addressee import is_question
-from src.strategy.game import GameState
+from src.strategy.game import PHASES, GameState
 from src.strategy.reference import ANCIENT_ONES, INVESTIGATORS
 from src.strategy.setup import SetupReading, pending, read_setup
 
@@ -364,11 +364,42 @@ class GameSession:
                 "say": "",
                 "note": "I do not know which investigator I am playing. Ask the table.",
             }
+        game = self.game
+        if not game.started:
+            game.begin_round()  # "vamos começar o primeiro turno" opens round 1
+            self.save()
+        if game.phase != PHASES[0]:
+            return {
+                "took_a_turn": False,
+                "say": "",
+                "where": game.where_we_are(),
+                "note": (
+                    f"It is the {game.phase_name}, so there is no action to take. Say where the "
+                    "round is and call next_phase when the table moves on."
+                ),
+            }
+        if not game.actions_left(who):
+            # Already played this round. Repeating the plan is what made the robot look like it
+            # had not understood: same state in, same strategy out, every time it was asked.
+            last = self.taker.last
+            return {
+                "took_a_turn": False,
+                "already_acted": True,
+                "move": last.plan.describe() if last is not None and last.plan else "",
+                "where": game.where_we_are(),
+                "say": "",
+                "note": (
+                    "I have already taken my two actions this round. Say what I did, do not "
+                    "decide again, and ask the table to move on to the next phase."
+                ),
+            }
         decision = self.taker.decide_now(language)
         if decision is None:
             return {"took_a_turn": False, "say": "", "note": "The turn could not be worked out."}
+        self.save()
         return {
             "took_a_turn": decision.acted,
+            "where": game.where_we_are(),
             "investigator": who,
             "move": decision.plan.describe() if decision.plan else "",
             "ends_at": decision.plan.ends_at if decision.plan else "",
@@ -393,6 +424,32 @@ class GameSession:
             "still_missing": self.game.missing(),
             "say": self.sentence(reading, language),
             "note": "Say the sentence in 'say' as it is. Do not add anything to it.",
+        }
+
+    def phase_report(self) -> dict[str, Any]:
+        """Move the game on one phase - the table said the phase or the round is over."""
+        was = self.game.where_we_are()
+        self.game.advance_phase()
+        self.save()
+        return {
+            "was": was,
+            "now": self.game.where_we_are(),
+            "round": self.game.round,
+            "phase": self.game.phase_name,
+            "note": "Say in one sentence where the game is now. Do not list what everybody did.",
+        }
+
+    def encounter_report(self, name: str = "") -> dict[str, Any]:
+        """The table says an investigator has resolved its encounter this round."""
+        who = name.strip() or (self.taker.investigator or "")
+        ok, why = self.game.record_encounter(who)
+        if ok:
+            self.save()
+        return {
+            "recorded": ok,
+            "who": who,
+            "where": self.game.where_we_are(),
+            "note": "" if ok else why,
         }
 
     def note_report(self, said: str) -> dict[str, Any]:

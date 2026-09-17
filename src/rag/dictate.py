@@ -277,6 +277,52 @@ def save(records: list[dict[str, Any]], path: Path = CARDS_FILE) -> Path:
     return path
 
 
+def remember_value(name: str, value: int, *, read_by: str = "", path: Path = CARDS_FILE) -> dict[str, Any]:
+    """Keep the number printed on an Asset card, as the table read it out loud.
+
+    The value is the one thing about a Reserve card the robot cannot work out: the card list in
+    this repository carries what each card does and never what it costs. Until now it could
+    only arrive through ``scripts/dictate_cards.py``, offline, so a value said during a game was
+    heard, thanked for and forgotten - and Acquire Assets asked for it again on the next turn,
+    which is what made the robot look like it was not listening.
+
+    An existing record for the card keeps its text and gains the value; a card nobody has
+    dictated gets a minimal one, enough for ``card_value`` to find it.
+    """
+    name = " ".join(name.split())
+    if not name:
+        return {}
+    known = {str(r.get("name", "")).lower(): r for r in load(path) if r.get("kind") == "asset"}
+    record = dict(known.get(name.lower()) or {})
+    record.update(
+        {
+            "game_id": GAME_ID,
+            "kind": "asset",
+            "name": name,
+            "expansion": BASE_GAME,
+            "base_game": True,
+            "value": int(value),
+            "confidence": "dictated",
+            "source_kind": "read_from_the_box",
+            "source_author": read_by,
+            "recorded_at": round(time.time(), 3),
+        }
+    )
+    record.setdefault("ancient_one", "")
+    record.setdefault("deck", "")
+    record.setdefault("number", None)
+    record.setdefault("space", "")
+    record.setdefault("text", f"Asset: {name}. Value {int(value)}.")
+    save([record], path)
+    # card_value() reads through an lru_cache, so a value written into the file mid-session is
+    # invisible to the process that wrote it until the cache is dropped.
+    from src.strategy.moves import _dictated
+
+    _dictated.cache_clear()
+    log.info("dictate: %s costs %d", name, int(value))
+    return record
+
+
 def point_id(record: dict[str, Any]) -> str:
     """The id the rest of the knowledge base uses for a card, so a dictated one *corrects* it.
 

@@ -72,7 +72,7 @@ How you talk: you are speaking out loud, so keep it to one to three short senten
 
 {addressing} If someone says "stop", "wait", "hold on" or talks over you, stop at once, without finishing the sentence, and only say you are listening.
 
-When somebody says a card came up - "saiu a carta 8, lê a parte de Rome" - call encounter_card with that number and that space, and read back what it returns, as it is. If it says nobody has read that card, ask them to read that part of it out once; it is remembered afterwards. Never make up what a card says.
+The game has a shape and you keep it: every round is Action Phase, then Encounter Phase, then Mythos Phase. game_state tells you the round, the phase and who the table is waiting on - read it, never ask. take_turn is the robot's own two actions and it records them, so once it has acted it says so instead of deciding again: do not ask it twice in one round and do not repeat the plan back a second time. next_phase is how the table moves the game on. If somebody reads out what a Reserve card costs, call card_value at once - asking for the same number twice is the fastest way to look like you were not listening.\n\nWhen somebody says a card came up - "saiu a carta 8, lê a parte de Rome" - call encounter_card with that number and that space, and read back what it returns, as it is. If it says nobody has read that card, ask them to read that part of it out once; it is remembered afterwards. Never make up what a card says.
 
 You do not remember the game; the robot does, in its own state file. game_state is how you read it and remember_setup and remember_note are how you write to it. Never say you have written something down, noted it or will remember it unless one of those two tools has just returned - if somebody tells you something about this game and asks you to keep it, call remember_note before you answer. Call game_state BEFORE asking the table anything about the setup - the Ancient One, who plays which investigator, whose turn it is, the Mystery, the Reserve - and before answering any question about "our game". Never ask for something game_state already knows, and never contradict it. If game_state says something is missing, that is the one thing worth asking for."""
 
@@ -191,6 +191,70 @@ _TOOLS: list[dict[str, Any]] = [
         "expects_response": True,
         "response_timeout_secs": 10,
         "pre_tool_speech": "auto",
+    },
+    {
+        "type": "client",
+        "name": "card_value",
+        "description": (
+            "Use the moment somebody reads out what a Reserve card costs - 'Lucky Cigarette Case "
+            "é dois', 'o Kerosene custa um'. Pass every card and number they said. The robot "
+            "knows what each card does and never what it costs, so without this it asks for the "
+            "same numbers again on the next turn. Call it before answering, then say you wrote "
+            "them down, in one sentence."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "cards": {
+                    "type": "array",
+                    "description": "One entry per card whose value was read out.",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "name": {"type": "string", "description": "The card name, in English."},
+                            "value": {"type": "integer", "description": "The number printed on it."},
+                        },
+                        "required": ["name", "value"],
+                    },
+                }
+            },
+            "required": ["cards"],
+        },
+        "expects_response": True,
+        "response_timeout_secs": 10,
+        "pre_tool_speech": "auto",
+    },
+    {
+        "type": "client",
+        "name": "next_phase",
+        "description": (
+            "Move the game on one phase when the table says so - 'acabou a Action Phase', 'vamos "
+            "pro Mythos', 'próxima rodada', 'terminou o turno'. Every round is Action Phase, then "
+            "Encounter Phase, then Mythos Phase, and after the Mythos Phase a new round opens. "
+            "Returns where the game now is; say that in one sentence. Do not call it to answer a "
+            "question about where the game is - game_state already says that."
+        ),
+        "parameters": {"type": "object", "properties": {}, "required": []},
+        "expects_response": True,
+        "response_timeout_secs": 10,
+        "pre_tool_speech": "auto",
+    },
+    {
+        "type": "client",
+        "name": "encounter_done",
+        "description": (
+            "The table says an investigator has resolved its encounter in the Encounter Phase. "
+            "Give the investigator's name; leave it out for the robot's own."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "investigator": {"type": "string", "description": "Whose encounter it was, in English."}
+            },
+            "required": [],
+        },
+        "expects_response": True,
+        "response_timeout_secs": 10,
     },
     {
         "type": "client",
@@ -480,6 +544,7 @@ def game_state_report(game: Any, board: str = "") -> dict[str, Any]:
         "doom": game.doom,
         "mystery": game.mystery,
         "round": game.round,
+        "where_we_are": game.where_we_are(),
         "my_investigator": None
         if mine is None
         else {
@@ -505,7 +570,9 @@ def game_state_report(game: Any, board: str = "") -> dict[str, Any]:
             "This is what the robot remembers. Speak from it, do not ask for anything in it, and "
             "ask only for what still_missing lists. 'notes' is what the table asked it to write "
             "down; answer from it instead of saying you do not know. 'board' is what the camera "
-            "sees; call look_at_board for which piece is where."
+            "sees; call look_at_board for which piece is where. 'where_we_are' is the round and "
+            "the phase: never ask the table what phase it is, and never take a turn out of the "
+            "Action Phase."
         ),
     }
 
@@ -658,6 +725,54 @@ def client_tools(
             on_call("remember_note", parameters, result)
         return json.dumps(result, ensure_ascii=False)
 
+    def card_value(parameters: dict) -> str:
+        from src.rag.dictate import remember_value
+
+        cards = parameters.get("cards") or []
+        written, refused = [], []
+        for item in cards if isinstance(cards, list) else []:
+            name = str((item or {}).get("name", "")).strip()
+            try:
+                value = int((item or {}).get("value"))
+            except (TypeError, ValueError):
+                refused.append(name or "a card with no number")
+                continue
+            try:
+                remember_value(name, value, read_by="the table")
+            except Exception as exc:
+                log.warning("could not keep the value of %s: %s", name, exc)
+                refused.append(name)
+                continue
+            written.append({"name": name, "value": value})
+        result = {
+            "written": written,
+            "not_written": refused,
+            "note": "The values are kept and I will not ask for them again."
+            if written
+            else "I did not catch a card and a number; ask them to say it again.",
+        }
+        if on_call:
+            on_call("card_value", parameters, result)
+        return json.dumps(result, ensure_ascii=False)
+
+    def next_phase(parameters: dict) -> str:
+        playing = session() if session is not None else None
+        result = {"note": "There is no game to move on yet."} if playing is None else playing.phase_report()
+        if on_call:
+            on_call("next_phase", parameters, result)
+        return json.dumps(result, ensure_ascii=False)
+
+    def encounter_done(parameters: dict) -> str:
+        playing = session() if session is not None else None
+        result = (
+            {"recorded": False, "note": "There is no game to write it in yet."}
+            if playing is None
+            else playing.encounter_report(str(parameters.get("investigator", "")))
+        )
+        if on_call:
+            on_call("encounter_done", parameters, result)
+        return json.dumps(result, ensure_ascii=False)
+
     def encounter_card(parameters: dict) -> str:
         try:
             number = int(parameters.get("number"))
@@ -671,6 +786,9 @@ def client_tools(
     tools.register("take_turn", take_turn)
     tools.register("remember_setup", remember_setup)
     tools.register("remember_note", remember_note)
+    tools.register("card_value", card_value)
+    tools.register("next_phase", next_phase)
+    tools.register("encounter_done", encounter_done)
     tools.register("encounter_card", encounter_card)
     tools.register("game_rules", game_rules)
     tools.register("game_knowledge", game_knowledge)

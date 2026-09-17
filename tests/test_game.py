@@ -243,3 +243,105 @@ def test_the_spoken_setup_wins_over_a_gallery_guess():
     assert piece.name == "investigator:Lily Chen"
     assert piece.guess == "investigator:Akachi Onyele", "the guess is kept, just not believed"
     assert game.by_name("Lily Chen").piece_id == piece.id
+
+
+# --------------------------------------------------------------------------- the round
+
+
+def _table():
+    from src.strategy.game import ROBOT, GameState
+
+    game = GameState()
+    game.set_ancient_one("Azathoth")
+    game.add_investigator("Lily Chen", controller=ROBOT)
+    game.add_investigator("Jacqueline Fine", controller="Alessandro")
+    return game
+
+
+def test_a_game_being_set_up_has_not_started():
+    game = _table()
+    assert game.started is False and game.round == 0
+    assert "has not started" in game.where_we_are()
+    assert game.to_act() is None
+
+
+def test_the_round_runs_action_encounter_mythos_and_opens_the_next():
+    """GAME_REFERENCE.md: every round is Action Phase -> Encounter Phase -> Mythos Phase."""
+    game = _table()
+    assert game.advance_phase() == "action" and game.round == 1
+    assert game.advance_phase() == "encounter"
+    assert game.advance_phase() == "mythos"
+    assert game.advance_phase() == "action" and game.round == 2
+
+
+def test_two_distinct_actions_each_at_most_once():
+    game = _table()
+    game.begin_round()
+    assert game.record_action("Lily Chen", "travel") == (True, "")
+    assert game.record_action("Lily Chen", "travel")[0] is False  # the same action twice
+    assert game.record_action("Lily Chen", "rest") == (True, "")
+    allowed, why = game.record_action("Lily Chen", "acquire_assets")
+    assert allowed is False and "already taken 2 actions" in why
+    assert game.actions_left("Lily Chen") == 0
+
+
+def test_a_component_is_limited_by_component_not_by_action():
+    """The reference gives Component Action its own rule, "each component once per round",
+    which would say nothing if the action itself could only be taken once."""
+    game = _table()
+    game.begin_round()
+    assert game.record_action("Lily Chen", "component", component="Lucky Rabbit's Foot")[0] is True
+    assert game.record_action("Lily Chen", "component", component="Protective Amulet")[0] is True
+    game.begin_round()
+    assert game.record_action("Lily Chen", "component", component="Protective Amulet")[0] is True
+    assert game.record_action("Lily Chen", "component", component="Protective Amulet")[0] is False
+
+
+def test_the_lead_investigator_acts_first_and_then_round_the_table():
+    game = _table()
+    game.lead = "Jacqueline Fine"
+    game.begin_round()
+    assert [i.name for i in game.order()] == ["Jacqueline Fine", "Lily Chen"]
+    assert game.to_act().name == "Jacqueline Fine"
+    game.record_action("Jacqueline Fine", "travel")
+    game.record_action("Jacqueline Fine", "rest")
+    assert game.to_act().name == "Lily Chen"
+
+
+def test_no_action_outside_the_action_phase():
+    game = _table()
+    game.begin_round()
+    game.advance_phase()
+    allowed, why = game.record_action("Lily Chen", "travel")
+    assert allowed is False and "Encounter Phase" in why
+    assert game.record_encounter("Lily Chen") == (True, "")
+    assert game.record_encounter("Lily Chen")[0] is False  # one encounter each
+
+
+def test_a_new_round_forgets_what_everyone_did():
+    game = _table()
+    game.begin_round()
+    game.record_action("Lily Chen", "travel")
+    game.advance_phase()
+    game.record_encounter("Lily Chen")
+    game.advance_phase()
+    game.advance_phase()  # past the Mythos Phase, into round 2
+    assert game.round == 2 and game.actions_left("Lily Chen") == 2
+    assert game.by_name("Lily Chen").encountered is False
+
+
+def test_the_round_survives_the_file(tmp_path):
+    from src.strategy.game import GameState
+
+    game = _table()
+    game.begin_round()
+    game.record_action("Lily Chen", "travel")
+    game.advance_phase()
+    game.record_encounter("Lily Chen")
+    path = game.save(tmp_path / "game_state.json")
+
+    again = GameState.load(path)
+    assert again.round == 1 and again.phase == "encounter"
+    assert again.by_name("Lily Chen").actions == ["travel"]
+    assert again.by_name("Lily Chen").encountered is True
+    assert again.where_we_are() == game.where_we_are()

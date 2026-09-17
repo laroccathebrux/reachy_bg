@@ -231,3 +231,28 @@ def test_a_value_read_from_the_box_stops_being_a_question(monkeypatch):
     assert "Arcane Scholar" in asked  # nobody has read its value
     assert "Bull Whip" not in asked  # this one has been read
     assert moves.card_value("Bull Whip") == 2
+
+
+def test_the_planner_does_not_offer_an_action_already_spent_this_round():
+    """The other half of the loop: once take_turn writes its actions into the game, replanning
+    has to stop offering the action it just spent, or every call returns the same move."""
+    from src.strategy.game import ROBOT, GameState
+    from src.strategy.moves import plans, situation_of
+
+    game = GameState()
+    game.set_ancient_one("Azathoth")
+    game.add_investigator("Lily Chen", controller=ROBOT)
+    game.begin_round()
+    who = game.by_name("Lily Chen")
+
+    before = plans(game, situation_of(game, who))
+    assert any(len(p.actions) == 2 for p in before)  # two actions while both are free
+
+    game.record_action("Lily Chen", "rest")
+    after = plans(game, situation_of(game, who))
+    assert after, "one action is still left, so there are still plans"
+    assert all(len(p.actions) == 1 for p in after)  # only one action left to spend
+    assert all(a.key != "rest" for p in after for a in p.actions)
+
+    game.record_action("Lily Chen", "travel")
+    assert plans(game, situation_of(game, who)) == []  # nothing left this round
