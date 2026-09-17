@@ -64,7 +64,7 @@ ADDRESSING_OPEN = (
     "the person being spoken to."
 )
 
-AGENT_PROMPT = """You are Reachy, a small desktop robot sitting at a table where people play the board game Eldritch Horror (Fantasy Flight Games, 2013, base game only). You are a fellow player: you control your own investigator, you know the game, and you help the table when asked. You cannot see the board; ask people to describe it when it matters.
+AGENT_PROMPT = """You are Reachy, a small desktop robot sitting at a table where people play the board game Eldritch Horror (Fantasy Flight Games, 2013, base game only). You are a fellow player: you control your own investigator, you know the game, and you help the table when asked. You have a camera on the table and look_at_board is how you use it, so call it before saying anything about where pieces are - never say you cannot see the board. It sees pieces and where they stand, not what is printed on them, so a piece it has not been told the name of is just a piece; ask the table who it is.
 
 Golden rule: you do not know the rules by heart. For any question about rules, cards, investigators, Ancient Ones, monsters, phases or numbers, call the game_rules tool (or game_knowledge for one named thing) and answer ONLY from what it returns. Never invent rules, numbers or card texts. If the tool has nothing, say so in one sentence and suggest checking the Reference Guide. While a tool runs, say a short filler first ("Let me check the Reference Guide...").
 
@@ -173,6 +173,21 @@ _TOOLS: list[dict[str, Any]] = [
             },
             "required": ["said"],
         },
+        "expects_response": True,
+        "response_timeout_secs": 10,
+        "pre_tool_speech": "auto",
+    },
+    {
+        "type": "client",
+        "name": "look_at_board",
+        "description": (
+            "Look at the table through the robot's camera: every piece it is tracking and the "
+            "space each one stands on. Call it whenever the table asks what is on the board, "
+            "where something is, or whether you can see it. It reports positions, not identities "
+            "- a piece nobody has named is 'a piece', so ask the table who it is rather than "
+            "guessing. If it says the camera is not running, say that instead of pretending."
+        ),
+        "parameters": {"type": "object", "properties": {}, "required": []},
         "expects_response": True,
         "response_timeout_secs": 10,
         "pre_tool_speech": "auto",
@@ -450,7 +465,7 @@ CLOSING_RESULT: dict[str, Any] = {
 }
 
 
-def game_state_report(game: Any) -> dict[str, Any]:
+def game_state_report(game: Any, board: str = "") -> dict[str, Any]:
     """The state the agent is allowed to speak from: what is known, and what is missing.
 
     Written as data rather than prose so the agent cannot mistake a summary for a rule, and kept
@@ -483,11 +498,14 @@ def game_state_report(game: Any) -> dict[str, Any]:
         # What the table asked the robot to keep: gates, monsters, whatever has no field of its
         # own. Without this the robot could be told where a Gate was and never read it back.
         "notes": list(game.notes),
+        # One line, because game_state is read on every turn. look_at_board has the detail.
+        "board": board,
         "still_missing": game.missing(),
         "note": (
             "This is what the robot remembers. Speak from it, do not ask for anything in it, and "
             "ask only for what still_missing lists. 'notes' is what the table asked it to write "
-            "down; answer from it instead of saying you do not know."
+            "down; answer from it instead of saying you do not know. 'board' is what the camera "
+            "sees; call look_at_board for which piece is where."
         ),
     }
 
@@ -569,9 +587,28 @@ def client_tools(
         return json.dumps(result, ensure_ascii=False)  # the orchestrator validates the result as text
 
     def game_state(parameters: dict) -> str:
-        result = game_state_report(game() if game is not None else None)
+        from src.vision.board_link import summary
+
+        try:
+            board = summary()
+        except Exception as exc:  # the camera must never take the conversation down
+            log.warning("reading the board failed: %s", exc)
+            board = ""
+        result = game_state_report(game() if game is not None else None, board)
         if on_call:
             on_call("game_state", parameters, result)
+        return json.dumps(result, ensure_ascii=False)
+
+    def look_at_board(parameters: dict) -> str:
+        from src.vision.board_link import board_now
+
+        try:
+            result = board_now()
+        except Exception as exc:
+            log.warning("looking at the board failed: %s", exc)
+            result = {"seen": False, "note": f"I could not use the camera: {exc}"}
+        if on_call:
+            on_call("look_at_board", parameters, result)
         return json.dumps(result, ensure_ascii=False)
 
     def take_turn(parameters: dict) -> str:
@@ -638,6 +675,7 @@ def client_tools(
     tools.register("game_rules", game_rules)
     tools.register("game_knowledge", game_knowledge)
     tools.register("game_state", game_state)
+    tools.register("look_at_board", look_at_board)
     return tools
 
 

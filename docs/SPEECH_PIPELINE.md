@@ -262,6 +262,16 @@ gate that was off and answered by nobody. So `ensure_agent(answer_everything=...
 between `ADDRESSING_GATED` and `ADDRESSING_OPEN` in `src/speech/eleven_agent.py`, and
 `talk.py` settles the gate before it configures the agent rather than after.
 
+What the agent may see: the camera is in the preview process and the conversation is in
+`talk.py`, and for two days they were strangers - the preview wrote `board_state.json` and
+nobody read it, while `GameState.board` sat empty in the other process and was saved as "the
+board is empty". The prompt still opened with "You cannot see the board", so on 2026-09-17 the
+robot answered "Não consigo ver o tabuleiro" to a direct question. `src/vision/board_link.py`
+is the bridge: the preview's `GET /state` while it is up, `board_state.json` when it is not
+(said as stale, never as live), nothing claimed when there is neither. `game_state` carries one
+line of it on every turn and `look_at_board` has the piece list. The preview also reads
+`board_state.json` back at start now, so restarting the camera no longer throws away the scan.
+
 What the agent may write: `remember_setup` for the setup (Ancient One, investigators, Mystery,
 Reserve) and `remember_note` for everything else the table asks it to keep - where a Gate is
 open, which monster stands where, what was agreed. Both land in the same `game_state.json`,

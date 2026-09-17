@@ -25,6 +25,7 @@ def test_agent_config_has_the_native_voice_and_the_local_tools():
         "take_turn",
         "remember_setup",
         "remember_note",
+        "look_at_board",
         "encounter_card",
         "game_knowledge",
     ]
@@ -191,3 +192,25 @@ def test_the_prompt_forbids_claiming_a_note_that_was_never_written():
     prompt = _config()["agent"]["prompt"]["prompt"]
     assert "remember_note" in prompt
     assert "Never say you have written something down" in prompt
+
+
+def test_the_prompt_no_longer_says_it_cannot_see_the_board():
+    """Two days of board detection, and the prompt still opened with "You cannot see the
+    board" - so on 2026-09-17 she answered "Não consigo ver o tabuleiro" to a direct question,
+    which was true of the process she was speaking from and false of the robot."""
+    prompt = _config()["agent"]["prompt"]["prompt"]
+    assert "You cannot see the board" not in prompt
+    assert "never say you cannot see the board" in prompt
+    assert "look_at_board" in prompt
+    names = [t["name"] for t in _config()["agent"]["prompt"]["tools"]]
+    assert "look_at_board" in names
+
+
+def test_game_state_carries_one_line_of_board_and_the_tool_has_the_detail():
+    from src.speech.eleven_agent import game_state_report
+    from src.strategy.game import GameState
+
+    report = game_state_report(GameState(), "the camera sees 2 piece(s); known: Lily Chen at Rome")
+    assert report["board"] == "the camera sees 2 piece(s); known: Lily Chen at Rome"
+    assert "look_at_board" in report["note"]
+    assert game_state_report(GameState())["board"] == ""  # no camera, no claim

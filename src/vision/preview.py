@@ -726,7 +726,11 @@ class Preview:
         self._board_thread: threading.Thread | None = None
         self.watcher: Any = None  # MotionWatcher of the current view, built once a board is found
         self.moves: list[dict[str, Any]] = []  # what it reported, newest last
-        self.state = BoardState()  # where every piece is: seeded by a scan, moved by the watcher
+        # Where every piece is: seeded by a scan, moved by the watcher - and read back from the
+        # file the last preview left, because it was being saved on every change and loaded by
+        # nobody. Restarting the camera threw away the scan and the robot went back to seeing
+        # an empty board it had already read.
+        self.state = self._last_board()
         self.motion_state = "starting"
         self._motion_thread: threading.Thread | None = None
 
@@ -825,6 +829,20 @@ class Preview:
 
     def state_path(self) -> Path:
         return GAME_LOG_DIR / "board_state.json"
+
+    def _last_board(self) -> BoardState:
+        """The board the last run left behind, or an empty one when there is none to read."""
+        path = self.state_path()
+        try:
+            state = BoardState.load(path)
+        except FileNotFoundError:
+            return BoardState()
+        except Exception as exc:
+            log.warning("could not read the board from %s (%s); starting empty", path, exc)
+            return BoardState()
+        if len(state):
+            log.info("board read back from %s: %s", path, state.describe())
+        return state
 
     def state_json(self) -> dict[str, Any]:
         return {
