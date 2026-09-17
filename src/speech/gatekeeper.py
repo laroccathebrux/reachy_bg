@@ -270,7 +270,9 @@ class Gatekeeper:
         # it matched nobody at all, and the voice began while the speaker was playing. That is
         # the robot, not a player. Only meaningful when somebody is enrolled - with an empty
         # registry no voice ever has a name and this would drop the whole table.
-        judged_s = audio.size / (utterance.sample_rate or 1)
+        # An utterance carries samples, but a caller may hand raw bytes; len() covers both.
+        samples = getattr(audio, "size", None)
+        judged_s = (len(audio) if samples is None else samples) / (utterance.sample_rate or 1)
         anonymous_echo = (
             bool(self.names)
             and not speaker
