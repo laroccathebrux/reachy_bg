@@ -408,3 +408,32 @@ def test_with_nobody_enrolled_the_guard_does_not_swallow_the_table(tmp_path):
     u = utterance(100.0)
     k.audio.last_played_at = 100.2
     assert k.judge(u, "", 0.0).route == "released"
+
+
+def test_a_short_clip_is_too_little_voice_to_call_it_the_robots_own(tmp_path):
+    """The guard above, an hour old, ate the owner's "Valeu!": 0.8 s of real speech scored 0.10
+    because a speaker embedding needs more voice than that to match anybody. Under
+    MIN_VOICEPRINT_S the voiceprint saying nothing is not evidence, and the words decide."""
+    k, audio, asr, _, _ = keeper(
+        tmp_path,
+        [Result("Valeu!")],
+        answer_everything=True,
+        names=("Alessandro",),
+        spoken_recently=lambda: "A Lily Chen está em Shanghai, não em Tóquio.",
+    )
+    u = utterance(100.0, speech_s=0.6)  # 1.2 s of audio in all, under the threshold
+    k.audio.last_played_at = 100.2
+    verdict = k.judge(u, "", 0.10)
+    assert verdict.route == "released"  # the words are not the robot's, so it goes through
+
+    # The same voice, long enough for the embedding to mean something, is still caught.
+    k2, audio2, _, _, _ = keeper(
+        tmp_path,
+        [Result("Valeu!")],
+        answer_everything=True,
+        names=("Alessandro",),
+        spoken_recently=lambda: "A Lily Chen está em Shanghai, não em Tóquio.",
+    )
+    long = utterance(100.0, speech_s=3.0)
+    k2.audio.last_played_at = 100.2
+    assert k2.judge(long, "", 0.10).route == "discarded"

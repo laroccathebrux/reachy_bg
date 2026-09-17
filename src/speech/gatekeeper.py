@@ -36,6 +36,11 @@ SWITCH_MIN_WORDS = 3  # shorter fragments get a wrong language too easily to res
 SWITCH_MIN_CONFIDENCE = 0.8
 ECHO_SLACK_S = 0.5  # an utterance that started this long after playback ended can still be echo
 MIN_OVER_S = 0.7  # voice left after the robot stopped, below which there is nothing to judge
+# A speaker embedding needs about this much voice to mean anything. Under it, pyannote
+# matches nobody whoever spoke, so "no voice matched" stops being evidence of an echo -
+# measured live on 2026-09-17, where 0.8 s of the owner saying "Valeu!" scored 0.10 and was
+# dropped as the robot's own.
+MIN_VOICEPRINT_S = 1.5
 
 
 @dataclass(frozen=True)
@@ -265,9 +270,11 @@ class Gatekeeper:
         # it matched nobody at all, and the voice began while the speaker was playing. That is
         # the robot, not a player. Only meaningful when somebody is enrolled - with an empty
         # registry no voice ever has a name and this would drop the whole table.
+        judged_s = audio.size / (utterance.sample_rate or 1)
         anonymous_echo = (
             bool(self.names)
             and not speaker
+            and judged_s >= MIN_VOICEPRINT_S
             and utterance.started_at <= self.audio.last_played_at + ECHO_SLACK_S
         )
         if anonymous_echo and not decision.addressed:
