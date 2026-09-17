@@ -1240,8 +1240,41 @@ The note said San Francisco and the sheet said space 5. The owner settled it: sh
 San Francisco, and the game is at the Mythos Phase. Both were written, and note 4 now records the
 move rather than standing as a second, competing record of where she is.
 
+### bg_sessions had been empty all along
+
+The owner noticed `bg_sessions` had no points and asked whether that is only written at the end.
+It is not: `docs/SETUP_PROTOCOL.md` says it "receives its first entry at the end of round 1" and
+`docs/DESIGN_DOCUMENT.md` says "after every round". It was empty because **nothing called
+`record_round`** - `grep` over `src`, `scripts` and `tools` found only the module's own
+docstring, and the one test covers `session_text`, the string formatter, so the suite passed
+with the module dead. The same shape as the eleven from the morning.
+
+Three things were missing, not one: the caller, a `session_id` (the string appeared nowhere
+outside `sessions.py`), and the summary, which nothing produced.
+
+- **The session id is derived, not stored**: `"YYYYMMDD-HHMM"` of `started_at`, so it cannot
+  drift from it and a game read back keeps the id it had. `--new-game` makes a new one.
+- **The summary is a template, not the model.** `GameState.round_summary()` compares against
+  `round_start`, a snapshot taken by `begin_round`, so it says what the round *did* and not only
+  what is true now. A model asked to narrate a round has exactly the failure measured all day -
+  the facts are real and the links are invented - and this text is what the robot will read back
+  months later. It names the investigator, never "I", because the text is what gets embedded and
+  somebody searching for Lily Chen has to find it. A round whose opening was never recorded says
+  so instead of claiming every note was said in it.
+- **The write is off the conversation's thread.** It is reached from the agent's `next_phase`
+  tool, which has ten seconds before the table hears a tool error, and it costs an embedding
+  through Ollama - which may be busy with the between-rounds thinking, on the same model server.
+  Nothing the table waits for depends on this write, so nothing the table waits for can fail on
+  it. `REMEMBER_ROUNDS` switches it off, and like the thinking it follows `background`, so the
+  test suite never reaches Qdrant.
+
+Round 1 of the game in progress was written by hand afterwards and `recall()` reads it back:
+`bg_sessions` went from 0 points to 1, and "what happened against Azathoth?" returns it at 0.489.
+
 ### Still open
 
+- **`recall()` is not an agent tool yet**, so the round memory can be written and not asked
+  about. That is the last door on this one, and it is the owner's call.
 - **The setup ear and the local turn are not wired into `talk.py`.** `Gatekeeper` takes
   `on_addressed` and `wants_setup`, both of them are exercised in the tests, and `main()` passes
   neither - so `setup_talk` never fires live and the local `TurnTaker.handle` path never runs.
@@ -1268,6 +1301,7 @@ move rather than standing as a second, competing record of where she is.
 | Game setup | verbal briefing + knowledge base, no card OCR | docs/SETUP_PROTOCOL.md |
 | Card text | the 76 base assets and the 16 Mysteries ship with the repository (effects, and what solving one takes); the encounter, Mythos and Other World decks are read from the owner's own box when the table needs one, never scraped | src/rag/dictate.py |
 | Choosing a turn | the **score** chooses; the reasoning model only says it out loud. Measured twice with `scripts/decide_replay.py` (88% and 81% agreement, every disagreement worse, unstable across repeats); `decide(model_picks=True)` keeps the old arrangement measurable | src/strategy/decide.py |
+| Round memory | one `bg_sessions` point per closed round, summarised **from the state by template** rather than by the model, and written on its own thread so the tool call that closes a round cannot fail on it | src/strategy/game.py, src/integration/game_session.py |
 | Slow reasoning | a loop with tools between rounds, never in the turn path, writing checked `Intent`s the score reads - bounded so they re-rank near-ties and cannot overturn a fight | src/strategy/reflect.py, src/strategy/intent.py |
 | Vision | YOLO-World + image-embedding gallery, SAM not used | docs/DESIGN_DOCUMENT.md |
 | Prior project | read for lessons only; no code copied | CLAUDE.md |
@@ -1379,6 +1413,8 @@ small and soft for either. Pixels first, recogniser second.
 - **`on_addressed` and `wants_setup` are never wired in `talk.py`**, so the local setup ear and
   the local turn path do not run in a live session. Worth the owner's decision: the turn half
   follows from "one mouth at the table", the setup half looks like an oversight.
+- **`bg_sessions` is written but never read**: `recall()` has no caller and is not an agent
+  tool, so "what happened the last time we faced Azathoth?" is still unanswerable.
 - **An intent's citation is checked; the link from it is not.** "prefer Acquire Assets" citing
   "spend a Clue to take the token" passes every check there is. The bounded weight is what keeps
   that cheap, and the `thinking` lines in the diary are where it would be caught.

@@ -137,6 +137,10 @@ class GameState:
         self.unresolved: list[str] = []  # names said that the reference did not recognise
         self.started_at = time.time()
         self.notes: list[str] = []
+        # How each investigator stood when the round in progress opened, so that closing it can
+        # say what the round *did* rather than only what is true now. Written to the file, so a
+        # session that restarts mid-round still closes it with a summary that means something.
+        self.round_start: dict[str, Any] = {}
         # What the state looked like before each of the last few things the table asked for, so
         # that "you resolved that wrong, do it again" has somewhere to go. In memory only: a
         # correction belongs to the conversation it happens in, and a file that carried every
@@ -299,6 +303,16 @@ class GameState:
     # asked to play, so it repeated its strategy and never got anywhere.
 
     @property
+    def session_id(self) -> str:
+        """"YYYYMMDD-HHMM" of when this game was started: the key rounds are filed under.
+
+        Derived from ``started_at`` rather than kept as a field of its own, so it cannot drift
+        from it and so a game read back from its file keeps the id it already had. ``--new-game``
+        makes a fresh ``GameState``, and therefore a new session.
+        """
+        return time.strftime("%Y%m%d-%H%M", time.localtime(self.started_at))
+
+    @property
     def started(self) -> bool:
         """Has round 1 begun? Round 0 with no phase is a game that is still being set up."""
         return self.round > 0 and self.phase in PHASES
@@ -315,7 +329,27 @@ class GameState:
             state.actions = []
             state.components = []
             state.encountered = False
+        self.round_start = self.round_record()
         return self.round
+
+    def round_record(self) -> dict[str, Any]:
+        """The few numbers a round summary compares: where everyone stood and what they held."""
+        return {
+            "doom": self.doom,
+            "mysteries_solved": self.mysteries_solved,
+            "notes": len(self.notes),
+            "investigators": {
+                state.name: {
+                    "space": state.space,
+                    "health": state.health,
+                    "sanity": state.sanity,
+                    "clues": state.clues,
+                    "possessions": list(state.possessions),
+                    "conditions": list(state.conditions),
+                }
+                for state in self.investigators
+            },
+        }
 
     def advance_phase(self) -> str:
         """Move to the next phase, opening a new round after the Mythos Phase. Returns the phase."""
@@ -380,6 +414,75 @@ class GameState:
             return False, f"{name} has already had an encounter this round"
         state.encountered = True
         return True, ""
+
+    def round_summary(self) -> str:
+        """What this round did, in English, for ``bg_sessions``.
+
+        Built from the state rather than written by a model, and deliberately so. The one thing
+        this text has to be is *true*: it is what the robot will read back months later when
+        somebody asks what happened the last time the table faced Azathoth, and a model asked to
+        narrate a round has exactly the failure that was measured all through 2026-09-17 - the
+        facts are real and the links between them are invented. A template cannot invent a link.
+        It is also free, and it cannot fail while the table is waiting.
+
+        Compared against ``round_start``, so it says what changed and not only what is true.
+        """
+        from src.strategy.moves import BY_KEY  # late: moves imports this module
+
+        before = self.round_start.get("investigators", {}) if self.round_start else {}
+        head = f"Round {self.round}"
+        if self.ancient_one is not None:
+            head += f" against {self.ancient_one.name}"
+        if self.doom is not None:
+            was = (self.round_start or {}).get("doom")
+            head += f", doom {self.doom}" + (f" (was {was})" if was is not None and was != self.doom else "")
+        if self.mystery:
+            head += f", working on the Mystery {self.mystery}"
+        parts = [head + "."]
+
+        for state in self.investigators:
+            was = before.get(state.name, {})
+            did: list[str] = []
+            if was.get("space") and was["space"] != state.space:
+                did.append(f"moved from {was['space']} to {state.space}")
+            if state.actions:
+                did.append("took " + " and ".join(BY_KEY[a].name if a in BY_KEY else a for a in state.actions))
+            if state.encountered:
+                did.append(f"had an encounter at {state.space}")
+            gained = [c for c in state.possessions if c not in was.get("possessions", state.possessions)]
+            lost = [c for c in was.get("possessions", []) if c not in state.possessions]
+            if gained:
+                did.append("gained " + ", ".join(gained))
+            if lost:
+                did.append("lost " + ", ".join(lost))
+            for field, label in (("health", "Health"), ("sanity", "Sanity"), ("clues", "Clue")):
+                delta = getattr(state, field) - was.get(field, getattr(state, field))
+                if delta:
+                    plural = "s" if label == "Clue" and abs(delta) != 1 else ""
+                    did.append(f"{'gained' if delta > 0 else 'lost'} {abs(delta)} {label}{plural}")
+            new_conditions = [c for c in state.conditions if c not in was.get("conditions", [])]
+            if new_conditions:
+                did.append("became " + ", ".join(new_conditions))
+            doing = "; ".join(did) if did else "did nothing the state recorded"
+            standing = (
+                f"at {state.space} on {state.health}/{state.sheet.health} Health, "
+                f"{state.sanity}/{state.sheet.sanity} Sanity, {state.clues} Clue(s)"
+            )
+            # Always the investigator's name, never "I": this text is what gets embedded, and
+            # somebody asking months later what happened to Lily Chen searches for Lily Chen.
+            controller = "the robot" if state.is_robot else state.controller
+            parts.append(f"{state.name} ({controller}) {doing}; ended {standing}.")
+
+        if not before:
+            # No record of how the round opened - a game from before round_start existed, or one
+            # read back mid-round from an older file. Saying what is true now is honest; claiming
+            # every note was said this round would not be.
+            parts.append("How this round opened was not recorded, so nothing here is a change.")
+        else:
+            told = self.notes[self.round_start.get("notes", 0) :]
+            if told:
+                parts.append("The table said: " + " ".join(told))
+        return " ".join(parts)
 
     def to_act(self) -> InvestigatorState | None:
         """Whose turn it is in the Action Phase, in turn order; None when everyone has acted."""
@@ -581,6 +684,8 @@ class GameState:
             "investigators": [i.record() for i in self.investigators],
             "unresolved": list(self.unresolved),
             "notes": list(self.notes),
+            "session_id": self.session_id,
+            "round_start": dict(self.round_start),
             "board": self.board.record(),
             "briefing": self.briefing(),
             "missing": self.missing(),
@@ -615,6 +720,7 @@ class GameState:
         self.reserve = list(data.get("reserve", []))
         self.unresolved = list(data.get("unresolved", []))
         self.notes = list(data.get("notes", []))
+        self.round_start = dict(data.get("round_start") or {})
         self.started_at = float(data.get("started_at", time.time()))
         saved = data.get("investigators", [])
         keep = {investigator(item["name"]).name for item in saved if investigator(item.get("name", ""))}

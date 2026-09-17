@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 from dataclasses import dataclass, field
 
 from src.integration.game_session import GameSession, briefing, next_question
@@ -533,3 +534,89 @@ def test_the_phase_can_be_moved_back(tmp_path):
     assert game.phase == "encounter"
     assert session.undo_report()["undone"] == "moving the game on a phase"
     assert game.phase == "action" and game.round == 1
+
+
+def test_closing_a_round_keeps_it_in_the_session_memory(tmp_path):
+    """bg_sessions had record_round written, tested at its edges, and no caller anywhere: the
+    collection sat at 0 points through a whole game. This is the door."""
+    from src.strategy.game import ROBOT, GameState
+
+    game = GameState()
+    game.set_ancient_one("Azathoth")
+    game.add_investigator("Lily Chen", controller=ROBOT, space="Shanghai")
+    game.begin_round()
+    session = GameSession(game, path=tmp_path / "game.json", background=False, remember=True)
+
+    kept: list[tuple[int, str]] = []
+    session.keep_round = lambda number, summary: kept.append((number, summary))
+
+    session.phase_report()  # action -> encounter
+    session.phase_report()  # encounter -> mythos
+    assert kept == []  # nothing has closed yet
+
+    session.phase_report()  # mythos -> round 2 opens: round 1 closed
+    assert len(kept) == 1
+    number, summary = kept[0]
+    assert number == 1 and "Round 1 against Azathoth" in summary
+    assert game.round == 2
+
+
+def test_the_summary_is_built_before_the_round_is_cleared(tmp_path):
+    """advance_phase opens the next round and forgets what everybody did, so a summary built
+    after it would be a summary of nothing."""
+    from src.strategy.game import ROBOT, GameState
+
+    game = GameState()
+    game.set_ancient_one("Azathoth")
+    game.add_investigator("Lily Chen", controller=ROBOT, space="Shanghai")
+    game.begin_round()
+    game.record_action("Lily Chen", "acquire_assets")
+    game.phase = "mythos"
+    session = GameSession(game, path=tmp_path / "game.json", background=False, remember=True)
+
+    kept: list[str] = []
+    session.keep_round = lambda number, summary: kept.append(summary)
+    session.phase_report()
+
+    assert "took Acquire Assets" in kept[0]
+    assert game.by_name("Lily Chen").actions == []  # and the new round really is clear
+
+
+def test_nothing_is_kept_when_the_session_is_not_remembering(tmp_path):
+    """Which is how the test suite never reaches Qdrant or Ollama."""
+    from src.strategy.game import ROBOT, GameState
+
+    game = GameState()
+    game.set_ancient_one("Azathoth")
+    game.add_investigator("Lily Chen", controller=ROBOT)
+    game.begin_round()
+    game.phase = "mythos"
+    session = GameSession(game, path=tmp_path / "game.json", background=False)
+    assert session.remembers is False
+
+    session.keep_round(1, "something happened")  # the real one, not a stand-in
+    assert session.rounds_kept == 0
+
+
+def test_a_write_that_fails_never_reaches_the_table(tmp_path):
+    """Qdrant down or Ollama busy with the between-rounds thinking must not fail next_phase."""
+    import src.rag.sessions as sessions_module
+    from src.strategy.game import ROBOT, GameState
+
+    game = GameState()
+    game.set_ancient_one("Azathoth")
+    game.add_investigator("Lily Chen", controller=ROBOT)
+    game.begin_round()
+    game.phase = "mythos"
+    session = GameSession(game, path=tmp_path / "game.json", background=False, remember=True)
+
+    was = sessions_module.record_round
+    sessions_module.record_round = lambda **kw: (_ for _ in ()).throw(RuntimeError("qdrant is down"))
+    try:
+        report = session.phase_report()  # must not raise
+    finally:
+        sessions_module.record_round = was
+    for thread in threading.enumerate():
+        if thread.name == "keep-round":
+            thread.join(2.0)
+    assert report["round"] == 2 and session.rounds_kept == 0

@@ -189,6 +189,11 @@ ELEVEN_MAX_DURATION_S = _env_int("ELEVEN_MAX_DURATION_S", 7200)
 # rejected - so switching it off costs turns nothing and only makes them less deliberate.
 REFLECT_BETWEEN_ROUNDS = os.getenv("REFLECT_BETWEEN_ROUNDS", "true").lower() not in ("0", "false", "no")
 
+# Does the robot keep what each round did in ``bg_sessions``? One point per closed round, written
+# on its own thread: it costs an embedding (Ollama) and an upsert (Qdrant), and the tool call
+# that closes a round has 10 seconds before the table hears an error.
+REMEMBER_ROUNDS = os.getenv("REMEMBER_ROUNDS", "true").lower() not in ("0", "false", "no")
+
 AGENT_QUIET_S = float(os.getenv("AGENT_QUIET_S", "12"))
 # How much of an utterance has to stand above its own quiet floor before the "the agent has gone
 # silent" clock is started for it (src/speech/microphone.py, voiced_fraction). Whisper writes
@@ -340,6 +345,7 @@ __all__ = [
     "ELEVEN_MAX_DURATION_S",
     "AGENT_QUIET_S",
     "REFLECT_BETWEEN_ROUNDS",
+    "REMEMBER_ROUNDS",
     "AGENT_QUIET_MIN_VOICE",
     "AUDIO_OUTPUT_DEVICE",
     "HEAD_SWAY",

@@ -37,7 +37,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from src.config import REFLECT_BETWEEN_ROUNDS
+from src.config import REFLECT_BETWEEN_ROUNDS, REMEMBER_ROUNDS
 from src.integration.turn_taking import TurnTaker
 from src.logger import get_logger
 from src.speech.addressee import is_question
@@ -226,6 +226,7 @@ class GameSession:
         taker: TurnTaker | None = None,
         background: bool = True,
         reflect: bool | None = None,
+        remember: bool | None = None,
         on_setup: Callable[[SetupReading, str], None] | None = None,
     ) -> None:
         self.game = game
@@ -248,6 +249,10 @@ class GameSession:
         # which keeps the test suite off Ollama.
         self.reflects = (background and REFLECT_BETWEEN_ROUNDS) if reflect is None else reflect
         self.thinker = Thinker(game, language=language, background=True)
+        # One point in bg_sessions per closed round. Same rule as the thinking: it follows
+        # ``background`` in whether it happens at all, so the test suite never reaches Qdrant.
+        self.remembers = (background and REMEMBER_ROUNDS) if remember is None else remember
+        self.rounds_kept = 0
         self.taker = taker or TurnTaker(
             game,
             say=self.say,
@@ -473,8 +478,14 @@ class GameSession:
         """Move the game on one phase - the table said the phase or the round is over."""
         was = self.game.where_we_are()
         self.game.checkpoint("moving the game on a phase")
+        # The round is about to close: advance_phase opens the next one from the Mythos Phase and
+        # clears what everybody did, so the summary is built here, before that is thrown away.
+        closing = self.game.round if self.game.started and self.game.phase == PHASES[-1] else 0
+        summary = self.game.round_summary() if closing else ""
         self.game.advance_phase()
         self.save()
+        if closing:
+            self.keep_round(closing, summary)
         return {
             "was": was,
             "now": self.game.where_we_are(),
@@ -496,6 +507,37 @@ class GameSession:
             "where": self.game.where_we_are(),
             "note": "" if ok else why,
         }
+
+    def keep_round(self, number: int, summary: str) -> None:
+        """Write one closed round into ``bg_sessions``, off the conversation's thread.
+
+        Never inline. It costs an embedding through Ollama and an upsert to Qdrant, and it is
+        reached from the agent's ``next_phase`` tool, which has ten seconds before the table
+        hears a tool error - and Ollama may be busy with the between-rounds thinking on the very
+        same model server. Nothing the table is waiting for depends on this write, so nothing the
+        table is waiting for should be able to fail on it.
+        """
+        if not self.remembers or not summary.strip():
+            return
+
+        def write() -> None:
+            from src.rag.sessions import record_round
+
+            try:
+                record_round(
+                    session_id=self.game.session_id,
+                    round_number=number,
+                    summary=summary,
+                    ancient_one=self.game.ancient_one.name if self.game.ancient_one else None,
+                    investigators=[i.name for i in self.game.investigators],
+                )
+            except Exception as exc:  # Qdrant down, Ollama busy: the game goes on regardless
+                log.warning("sessions: round %d was not kept (%s)", number, exc)
+                return
+            self.rounds_kept += 1
+            log.info("sessions: round %d of %s kept: %s", number, self.game.session_id, summary[:120])
+
+        threading.Thread(target=write, name="keep-round", daemon=True).start()
 
     def undo_report(self) -> dict[str, Any]:
         """Take back the last thing the table had the robot write down.

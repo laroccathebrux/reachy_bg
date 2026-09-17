@@ -402,3 +402,71 @@ def test_the_mythos_line_names_who_draws():
 
     game.lead = "Jacqueline Fine"
     assert "Jacqueline Fine draws the Mythos card" in game.where_we_are()
+
+
+def test_the_session_id_is_the_game_it_belongs_to_and_survives_the_file():
+    """Rounds are filed under it, so it must not change when the game is read back."""
+    import time as _time
+
+    from src.strategy.game import GameState
+
+    game = GameState()
+    game.started_at = _time.mktime((2026, 9, 16, 13, 39, 0, 0, 0, -1))
+    assert game.session_id == "20260916-1339"
+
+
+def test_the_session_id_comes_back_with_the_game(tmp_path):
+    from src.strategy.game import ROBOT, GameState
+
+    game = GameState()
+    game.set_ancient_one("Azathoth")
+    game.add_investigator("Lily Chen", controller=ROBOT)
+    was = game.session_id
+    game.save(tmp_path / "game.json")
+    assert GameState.load(tmp_path / "game.json").session_id == was
+
+
+def test_a_round_summary_says_what_the_round_did_not_only_what_is_true():
+    from src.strategy.game import ROBOT, GameState
+
+    game = GameState()
+    game.set_ancient_one("Azathoth")
+    game.mystery = "The Deep One's Attack"
+    mine = game.add_investigator("Lily Chen", controller=ROBOT, space="Shanghai")
+    game.add_investigator("Jacqueline Fine", controller="Alessandro", space="San Francisco")
+    game.begin_round()
+
+    mine.space = "Tokyo"
+    mine.health -= 2
+    mine.clues += 1
+    mine.possessions.append("Lucky Cigarette Case")
+    game.record_action("Lily Chen", "travel")
+    game.phase = "encounter"
+    game.record_encounter("Lily Chen")
+    game.note("O Gate em Roma foi fechado.")
+
+    summary = game.round_summary()
+    assert "Round 1 against Azathoth" in summary
+    assert "moved from Shanghai to Tokyo" in summary
+    assert "took Travel" in summary and "had an encounter at Tokyo" in summary
+    assert "gained Lucky Cigarette Case" in summary
+    assert "lost 2 Health" in summary and "gained 1 Clue;" in summary
+    assert "The table said: O Gate em Roma foi fechado." in summary
+    # The robot is named, never "I": this text is what gets embedded and searched later.
+    assert "Lily Chen (the robot)" in summary and " I (" not in summary
+
+
+def test_a_round_whose_opening_was_never_recorded_does_not_pretend_to_know_what_changed():
+    """An older saved game has no round_start. Saying what is true now is honest; calling every
+    note something the table said this round would not be."""
+    from src.strategy.game import ROBOT, GameState
+
+    game = GameState()
+    game.set_ancient_one("Azathoth")
+    game.add_investigator("Lily Chen", controller=ROBOT, space="Shanghai")
+    game.round, game.phase = 1, "mythos"
+    game.note("Em Roma tem um portal aberto.")
+
+    summary = game.round_summary()
+    assert "How this round opened was not recorded" in summary
+    assert "The table said" not in summary
