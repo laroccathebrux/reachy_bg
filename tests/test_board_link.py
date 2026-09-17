@@ -84,3 +84,29 @@ def test_the_preview_reads_back_the_board_it_left(tmp_path):
     assert len(again) == 1
     assert again.on_board[0].name == "investigator:Lily Chen"
     assert json.loads(path.read_text())["pieces"][0]["space"] == "Rome"
+
+
+def test_the_camera_is_told_to_hold_still_and_a_missing_preview_is_not_fatal(monkeypatch):
+    """The camera is in the head, and the speech-synced sway moves it while the agent talks.
+    On 2026-09-17 that read as three pieces leaving three different spaces in one instant and
+    emptied a board nobody had touched."""
+    import httpx
+
+    from src.vision.board_link import hold_still
+
+    sent = {}
+
+    def post(url, json=None, timeout=None):
+        sent.update(url=url, json=json, timeout=timeout)
+        return type("R", (), {})()
+
+    monkeypatch.setattr(httpx, "post", post)
+    assert hold_still(2.0, url="http://127.0.0.1:8090") is True
+    assert sent["url"].endswith("/still") and sent["json"] == {"seconds": 2.0}
+    assert sent["timeout"] and sent["timeout"] < 1.5  # never block the voice on the camera
+
+    def dead(*a, **k):
+        raise httpx.ConnectError("nobody home")
+
+    monkeypatch.setattr(httpx, "post", dead)
+    assert hold_still(2.0) is False  # a preview that is down must not stop the robot talking

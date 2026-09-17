@@ -106,6 +106,25 @@ def board_now(*, url: str = VISION_URL, path: Path = STATE_FILE, timeout: float 
     }
 
 
+def hold_still(seconds: float = 1.5, *, url: str = VISION_URL, timeout: float = 0.6) -> bool:
+    """Tell the camera not to read the board for ``seconds``: the head is moving.
+
+    The camera sits in the head, and the speech-synced sway runs while the agent talks. Only the
+    conversation knows when that is - the agent's audio goes straight to the USB speaker and the
+    daemon never sees it - so the conversation is what says so. Best effort: a preview that is
+    not running is not a reason to stop talking, and the call is given a short timeout for the
+    same reason.
+    """
+    import httpx
+
+    try:
+        httpx.post(f"{url.rstrip('/')}/still", json={"seconds": seconds}, timeout=timeout)
+        return True
+    except Exception as exc:
+        log.debug("could not hold the camera still (%s)", exc)
+        return False
+
+
 def summary(board: dict[str, Any] | None = None) -> str:
     """One short line for ``game_state``, which is read on every turn and paid for in latency.
 
@@ -126,4 +145,4 @@ def summary(board: dict[str, Any] | None = None) -> str:
     return f"the camera sees {count} piece(s){stale}; known: {where}"
 
 
-__all__ = ["board_now", "summary", "STATE_FILE", "MAX_PIECES"]
+__all__ = ["board_now", "hold_still", "summary", "STATE_FILE", "MAX_PIECES"]

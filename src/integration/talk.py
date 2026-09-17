@@ -250,6 +250,7 @@ class Table:
         # The agent going quiet is invisible from here: the gate keeps releasing, the frames keep
         # going out, and the table gets silence. On 2026-09-17 three sentences were forwarded
         # (107, 112 and 41 frames) and never answered, and the log said nothing for 90 seconds.
+        self.held_camera_at = 0.0  # last time the camera was told the head is moving
         self.waiting_since: float | None = None  # a released utterance with no transcript yet
         self.waiting_text = ""
         self.mute_warnings = 0
@@ -315,6 +316,23 @@ class Table:
                 verdict.whisper_ms,
                 verdict.decision_ms,
             )
+
+    def hold_camera_while_speaking(self, every_s: float = 1.0, hold_s: float = 2.0) -> bool:
+        """While the voice plays, keep the board watcher from reading a head that is moving.
+
+        Refreshed rather than switched on and off, so a crash mid-sentence cannot leave the
+        camera blind: the hold expires by itself. Skipped entirely when nothing is speaking, so
+        a quiet table costs no calls at all.
+        """
+        if not self.audio.speaking:
+            return False
+        now = time.monotonic()
+        if now - self.held_camera_at < every_s:
+            return False
+        self.held_camera_at = now
+        from src.vision.board_link import hold_still
+
+        return hold_still(hold_s)
 
     def released(self, text: str) -> None:
         """The gate sent an utterance to the agent: start waiting for it to come back."""
@@ -407,6 +425,7 @@ class Table:
         )
         while not stop.is_set():
             time.sleep(0.1)
+            self.hold_camera_while_speaking()
             self.check_agent_alive()
             if self.keeper is not None:
                 self.keeper.check_floor()  # a reading that ended hands the agent the whole thing

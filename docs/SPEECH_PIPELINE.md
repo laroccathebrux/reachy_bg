@@ -294,6 +294,17 @@ who stops to call it is deliberately talking to it. The agent enters the mode th
 `listening` tool. The buffer caps at `HOLD_MAX_FRAMES` (30 s), so a very long reading loses its
 oldest frames.
 
+The camera is in the head, so speaking moves it. The speech-synced sway runs at 10 Hz while
+the agent talks, which is small enough to slip under the motion watcher's "view moved" check and
+large enough to shift where every space sits: on 2026-09-17 it read as three pieces leaving
+three different spaces in the same instant, and emptied a board nobody had touched - the watcher
+even attributed the departure to space 5 while the tracked piece stood on Rome. The preview
+already drops its watcher while a scan turns the robot; it now also honours `hold_still`, and
+`talk.py` refreshes that hold about once a second while the voice plays. Only the conversation
+can say when that is, because the agent's audio goes straight to the USB speaker and the daemon
+never sees it. It is a deadline rather than a flag, so a crash mid-sentence cannot leave the
+camera switched off, and a preview that is down never blocks the voice.
+
 What the agent may write: `remember_setup` for the setup (Ancient One, investigators, Mystery,
 Reserve) and `remember_note` for everything else the table asks it to keep - where a Gate is
 open, which monster stands where, what was agreed. Both land in the same `game_state.json`,

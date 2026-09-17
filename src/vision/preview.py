@@ -732,6 +732,7 @@ class Preview:
         # an empty board it had already read.
         self.state = self._last_board()
         self.motion_state = "starting"
+        self.still_until = 0.0  # monotonic deadline: the head is moving, do not read the board
         self._motion_thread: threading.Thread | None = None
 
     def start(self) -> Preview:
@@ -764,11 +765,32 @@ class Preview:
             time.sleep(max(0.0, period_s - (self.clock() - started)))
 
     def busy_with_robot(self) -> bool:
-        """Is a scan or a sweep turning the robot right now?"""
+        """Is the robot moving its head right now, for any reason?
+
+        A scan or a sweep turns it on purpose. Speaking turns it too: the camera is in the head
+        and the speech-synced sway runs at 10 Hz while the agent talks, which is small enough to
+        slip under the "view moved" check and large enough to shift where every space sits. On
+        2026-09-17 that read as three pieces leaving three different spaces in the same instant,
+        and emptied a board nobody had touched. talk.py holds the view still while it speaks
+        (:meth:`hold_still`), because only that process knows when the voice is playing - the
+        agent's audio goes straight to the USB speaker and never reaches the daemon.
+        """
+        if self.still_until and time.monotonic() < self.still_until:
+            return True
         for thread in (self._scan_thread, self._sweep_thread):
             if thread is not None and thread.is_alive():
                 return True
         return False
+
+    def hold_still(self, seconds: float = 1.5) -> dict[str, Any]:
+        """Do not read the board for this long: something is moving the head.
+
+        A deadline rather than a flag, refreshed while the voice plays, so a caller that dies
+        mid-sentence cannot leave the watcher switched off for the rest of the session.
+        """
+        seconds = max(0.1, min(30.0, float(seconds)))
+        self.still_until = time.monotonic() + seconds
+        return {"held_for": round(seconds, 2)}
 
     def _motion_loop(self) -> None:
         """Feed every new frame to a MotionWatcher and keep what it reports.
@@ -787,6 +809,8 @@ class Preview:
                 if self.watcher is not None:
                     log.info("motion: robot busy, watcher dropped until the view settles")
                 self.watcher, self.motion_state = None, "paused: the robot is moving"
+                if self.still_until and time.monotonic() < self.still_until:
+                    self.motion_state = "paused: the robot is speaking"
                 continue
             with self._lock:
                 frame, seq = self.frame, self.frames
@@ -1572,7 +1596,13 @@ def make_handler(preview: Preview, table_pitch: float = TABLE_PITCH) -> type[Bas
         def do_POST(self) -> None:
             length = int(self.headers.get("Content-Length") or 0)
             raw = self.rfile.read(length) if length else b""
-            if self.path.startswith("/look"):
+            if self.path.startswith("/still"):
+                try:
+                    body = json.loads(raw or b"{}")
+                    self._json(preview.hold_still(float(body.get("seconds", 1.5))))
+                except (ValueError, TypeError) as exc:
+                    self._json({"error": str(exc)}, 400)
+            elif self.path.startswith("/look"):
                 try:
                     body = json.loads(raw or b"{}")
                     turn = body.get("body")
