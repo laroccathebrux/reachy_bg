@@ -72,6 +72,8 @@ How you talk: you are speaking out loud, so keep it to one to three short senten
 
 {addressing} If someone says "stop", "wait", "hold on" or talks over you, stop at once, without finishing the sentence, and only say you are listening.
 
+You are a player, not an assistant. Your investigator's moves are yours: decide them and say what you are doing, never ask whether you may. "Shall I buy the Bull Whip?", "May I carry on?", "Do you want me to do that now?" - none of those are yours to ask; say "I am buying the Bull Whip" and let the table resolve it. Never end a turn offering more help: when you are done, say whose turn it is next and stop. Ask the table for exactly two things - something only they can see (a die result, a card nobody has read to you, where a piece is) and a decision that is theirs (another investigator's move, whether the round moves on). If the answer would not change what you do, do not ask at all.
+
 The game has a shape and you keep it: every round is Action Phase, then Encounter Phase, then Mythos Phase. game_state tells you the round, the phase and who the table is waiting on - read it, never ask. take_turn is the robot's own two actions and it records them, so once it has acted it says so instead of deciding again: do not ask it twice in one round and do not repeat the plan back a second time. next_phase is how the table moves the game on. If somebody reads out what a Reserve card costs, call card_value at once - asking for the same number twice is the fastest way to look like you were not listening.\n\nWhen somebody says a card came up - "saiu a carta 8, lê a parte de Rome" - call encounter_card with that number and that space, and read back what it returns, as it is. If it says nobody has read that card, ask them to read that part of it out once; it is remembered afterwards. Never make up what a card says.
 
 You do not remember the game; the robot does, in its own state file. game_state is how you read it and remember_setup and remember_note are how you write to it. Never say you have written something down, noted it or will remember it unless one of those two tools has just returned - if somebody tells you something about this game and asks you to keep it, call remember_note before you answer. Call game_state BEFORE asking the table anything about the setup - the Ancient One, who plays which investigator, whose turn it is, the Mystery, the Reserve - and before answering any question about "our game". Never ask for something game_state already knows, and never contradict it. If game_state says something is missing, that is the one thing worth asking for."""
@@ -134,6 +136,9 @@ _TOOLS: list[dict[str, Any]] = [
         "description": (
             "Use when somebody tells the robot how this game is set up or corrects it - the "
             "Ancient One, who plays which investigator, the Mystery, what is in the Reserve. "
+            "The Reserve changes during play: when cards are bought and new ones replace them, "
+            "say so through this, not as a note, or the robot goes on offering cards that are "
+            "gone. Their values go to card_value in the same breath. "
             "Pass what they said, word for word. The robot checks the names against the box, "
             "writes down what it can and returns what it wrote and what it still needs. Say that "
             "back. Do not use it for rules questions."
@@ -156,12 +161,15 @@ _TOOLS: list[dict[str, Any]] = [
         "type": "client",
         "name": "remember_note",
         "description": (
-            "Use when the table tells the robot something about this game that the setup does not "
-            "cover and asks it to keep it - where a Gate is open, which monster stands on which "
-            "space, a Clue somebody picked up, what the table agreed to do next, 'grava isso'. "
-            "Pass what they said, word for word. It is written into the robot's state file and it "
-            "is still there in the next session. Never claim you wrote something down without "
-            "calling this. Not for rules questions and not for the setup - that is remember_setup."
+            "Use when the table tells the robot something about this game that no other tool "
+            "holds - where a Gate is open, which monster stands on which space, a Clue somebody "
+            "picked up, what the table agreed to do next. Pass their own words, and only what "
+            "they actually said: never write down something you worked out yourself from "
+            "game_state, and never write down what you just did or decided - that is already "
+            "recorded. Anything that has its own tool goes there instead, because a note is text "
+            "nobody can act on: what a Reserve card costs is card_value, what is in the Reserve "
+            "and who plays which investigator is remember_setup, a rules question is game_rules. "
+            "Never claim you wrote something down without calling this."
         ),
         "parameters": {
             "type": "object",
@@ -511,14 +519,42 @@ def rules_lookup(question: str, *, retriever: Any = None) -> dict[str, Any]:
     }
 
 
+def _card_by_name(name: str) -> str:
+    """The printed text of a base-game card, matched on the name alone, or "".
+
+    The 76 base Assets ship in this repository with what each one does, and only the planner
+    ever read them: the agent went to the vector search, where an exact name is exactly what
+    embeddings are worst at. "Witch Doctor" came back as Diana Stanley and the Witch monster
+    while the card sat in the file, and "Double Barreled Shotgun" missed because the box spells
+    it with a hyphen. So the name is tried here first, ignoring punctuation and case.
+    """
+    from src.strategy.moves import _cards
+
+    def key(text: str) -> str:
+        return "".join(c for c in text.lower() if c.isalnum())
+
+    wanted = key(name)
+    if not wanted:
+        return ""
+    cards = _cards()
+    for card_name, card in cards.items():
+        if key(card_name) == wanted:
+            return str(card.get("effect") or "")
+    return ""
+
+
 def knowledge_lookup(name: str, question: str = "", *, retriever: Any = None) -> dict[str, Any]:
-    """``game_knowledge`` implementation: the knowledge base only, keyed by an exact name."""
+    """``game_knowledge`` implementation: the card list first, then the knowledge base."""
     from src.rag.retrieve import retrieve
 
+    printed = _card_by_name(name)
     query = f"{name} {question}".strip()
     passages = (retriever or retrieve)(query, rules_limit=1, knowledge_limit=4)
+    text = format_passages(passages)
+    if printed:
+        text = f"{name} (printed on the card): {printed}\n\n{text}".strip()
     return {
-        "passages": format_passages(passages),
+        "passages": text,
         "note": "Answer ONLY from these passages, in the player's language, one to three sentences.",
     }
 

@@ -247,3 +247,23 @@ def test_game_state_says_where_the_round_is():
     assert "has not started" in game_state_report(game)["where_we_are"]
     game.begin_round()
     assert "round 1, Action Phase" in game_state_report(game)["where_we_are"]
+
+
+def test_a_card_is_found_by_its_name_before_the_vector_search():
+    """2026-09-17: "Não encontrei a descrição do efeito do Witch Doctor" - while the card sat in
+    the repository with its text. game_knowledge went to the embeddings, which are worst at
+    exactly this: "Witch Doctor" came back as Diana Stanley and the Witch monster."""
+    from src.speech.eleven_agent import _card_by_name, knowledge_lookup
+
+    assert "recover" in _card_by_name("Witch Doctor")
+    # The box hyphenates it and the table does not; punctuation and case must not decide.
+    assert _card_by_name("Double Barreled Shotgun") == _card_by_name("double-barreled shotgun")
+    assert _card_by_name("Double Barreled Shotgun")
+    assert _card_by_name("a card this box does not have") == ""
+
+    found = knowledge_lookup("Witch Doctor", retriever=lambda *a, **k: [])
+    assert "printed on the card" in found["passages"]
+    assert "recover" in found["passages"]
+
+    missing = knowledge_lookup("Nonesuch", retriever=lambda *a, **k: [])
+    assert "printed on the card" not in missing["passages"]
