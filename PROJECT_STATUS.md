@@ -1019,6 +1019,139 @@ Live check of both tools, on the owner's saved game:
                     -> "Anotado. O Mystery é The Deep Ones Attack!."
     game_state      -> mystery: "The Deep Ones Attack!"
 
+## Done: the state the robot writes to, and a camera that admits what it is (2026-09-17, a long day with the owner)
+
+Eleven fixes, in two halves. The first half closed holes that had been there for days; the
+second half was mostly undoing damage this session caused, and the lesson from it is worth more
+than the code.
+
+### The holes that were already there
+
+Every one of them had the same shape: **the state existed and there was no door to it.**
+
+- **Barge-in judged the whole voice segment.** While the robot speaks the segment opens on its
+  own echo and never closes, so after two seconds it is mostly the robot whatever the player
+  says, and `looks_like_echo` ruled echo every time. A player's sentence over the robot was
+  heard and ignored. Checks now judge the newest two seconds, and by voiceprint where players
+  are enrolled - 0.02 s against Whisper's 1.4 s, and it does not care what proportion of the
+  segment is the robot. Measured separation: the robot's own echo scores at most 0.25 against
+  an enrolled player, the player 0.45 and up.
+- **The addressee gate could be left stuck open.** `release_gate` opens it and only
+  `utterance_ended` closes it, which fires when the local VAD closes a voice - so a barge-in
+  decided after the voice had ended armed nothing. A whole sentence then streamed live instead
+  of being held, and the release that should have closed the agent's turn reported
+  `forwarded=0`. The turn-closing silence also went out only when frames had been held, and
+  holding the microphone is not silence to the agent: it is no audio at all, which its turn
+  detector waits on for ever.
+- **A player talking over the end of a sentence was thrown out with the echo.** One unbroken
+  voice, first half the robot's; judged whole it read as echo, and `self_echo` is the one
+  verdict that survives `answer_everything`. `_after_playback` now cuts at the moment the
+  speaker fell silent.
+- **There was a second gate, in the cloud.** The agent's prompt ended with "answer when you are
+  addressed... otherwise stay quiet", which is right while the local gate is on and a second
+  gate when it is off. A question asked straight at the robot went unanswered in a session
+  started with `ADDRESSEE_GATE=false`.
+- **"Anotado" without writing anything.** Asked to remember where a Gate was, the agent called
+  the read-only `game_state` and said it had noted it. `remember_note` is the write door;
+  `game_state` returns the notes; the prompt forbids claiming a note without the tool.
+- **The camera never reached the conversation.** The preview owned it and wrote
+  `board_state.json`; `talk.py` carried its own empty `GameState.board`. The prompt opened with
+  "you cannot see the board". `src/vision/board_link.py` is the bridge, `look_at_board` and
+  `scan_board` are the tools, and the preview reads its board file back at startup instead of
+  throwing away every scan on restart.
+- **The game had no round.** `take_turn` derived a move, logged it to the diary and wrote
+  nothing, so `round` sat at 0 for a whole session and every call re-derived the same move.
+  `GameState` now holds the round structure from GAME_REFERENCE.md, `take_turn` records its
+  actions, and `moves.plans` stops offering an action already spent.
+- **Card values had only an offline door.** `card_value()` reads what
+  `scripts/dictate_cards.py` dictated, so a value said out loud was heard and forgotten and
+  Acquire Assets asked again on the next turn. `dictate.remember_value` is the live door, and
+  it drops the `lru_cache` that hid the write from the process that made it.
+- **Two 4s became two successes**, ninety seconds after the robot quoted the rule correctly.
+  Counting is arithmetic: `GameState.test_result` does it, Blessed and Cursed included.
+- **Nothing could write Health, Sanity or Clues.** "Vou atualizar isso aqui" left the sheet
+  untouched, because none of the eleven tools wrote them - the whole Encounter Phase happened
+  outside the game state. `apply_effect` takes deltas, because the table says "perde 1 de
+  Sanity" and never "fica com 5".
+- **An exact card name is what embeddings are worst at.** "Witch Doctor" came back as Diana
+  Stanley and the Witch monster while the card sat in the repository with its text.
+  `game_knowledge` tries the 76-asset list by name first, ignoring case and punctuation.
+
+### The camera, and reading a log wrong for three hours
+
+The scan reported nothing all afternoon and the robot honestly told the table the board was
+empty. This session read that as a board problem - framing, light, stale baselines - and
+reasoned confidently from `frames: 215`, `unseen: none` and `board: 72 inliers`.
+
+All three were true and meaningless. The owner said the page looked dark, a frame was fetched
+and looked at, and it was **a different camera**: a wide view of the room with the board on a
+table off to one side. This Mac has three cameras that do 1080p. The board matcher had found a
+confident homography with 26 inliers over a photograph of a sitting room.
+
+The cause is ours: `talk.py` asks the SDK for `media_backend="no_media"`, and on that branch the
+SDK tells the **daemon** to release camera and audio - which is where the preview reads its
+frames. A pipeline already running survives it (at 15:10 the release landed 17 s after the
+preview was up and the camera kept working); one still being built dies with an "Internal data
+stream error" and never comes back. This morning those two GStreamer lines were dismissed here
+as harmless, which they are when `talk.py` goes first.
+
+Three faults were then added trying to fix it, and each is a better lesson than the fix:
+
+- A rebuild that **bound to the wrong camera and reported success**. Frames arriving is not
+  evidence of the right camera, and nothing the SDK or the daemon exposes says which device was
+  taken - so `CAMERA_REBUILD` is off by default. The drought warning stays, because that half
+  is what turned "the scan finds nothing" into "the camera is gone".
+- `scan_board` **read the scan that was already there** as its own and came back in a second:
+  the robot answered before it had looked, talked over its own sweep, and the `finally` resumed
+  the speech sway mid-sweep, blurring the views the pause existed to protect. The result now
+  carries the time it was made.
+- The tool **claimed a piece the vision layer would not claim**. The scan withholds what it is
+  unsure of ("not reporting 8: seen from one view only") while `believed` still carries it.
+
+The head moving is its own problem, and the owner worked it out from the log: the camera is in
+the head and the speech sway runs at 10 Hz, small enough to slip under the "view moved" check
+and large enough to shift where every space sits. It read as three pieces leaving three
+different spaces in one instant, and emptied a board nobody had touched. `hold_still` is
+refreshed while the voice plays.
+
+The first legitimate scan of the day, at 15:58: *Investigator at Shanghai, confirmed by a closer
+look; Portal at Rome, confirmed by a closer look; Monster at Rome*, and it declined to report
+what it had seen from one view only. It agreed with a note the table had dictated the day before.
+
+### What the model turns out not to be doing
+
+`scripts/decide_replay.py` measures what the reasoning model adds over the score that already
+ranks the turns. Over 24 decisions each, warm: `qwen3.6:35b-mlx` agrees with the score **21
+times (88%)**, median 1.9 s and 8.9 s at worst; `qwen2.5:3b` agrees 18 times. The one turn the
+35B changed, it changed for the worse - the score took the Trade that was only possible because
+another investigator stood on that space, and the model took the plan that would serve any turn,
+explaining that acquiring assets was risky before choosing a plan whose second action is
+acquiring assets.
+
+Its failure mode is consistent and worth naming: **the facts are grounded and the causal links
+are not.** It justified a move by the Protective Amulet's +1 Will, which is printed on the card
+and in the prompt, welded to Prepare for Travel, which has nothing to do with it. Pick first,
+justify from whatever is in the context window. An agent loop with tools would address exactly
+that, and cannot sit in the turn path: `think=True` was measured at 114 s against 4 s and
+rejected, because a table does not wait two minutes for a move. The dead time while humans play
+is where a slow loop belongs.
+
+### Still open
+
+- **`listening` is never called.** The prompt makes the robot say "estou ouvindo" and stop,
+  which is the visible half; the tool that actually holds the gate was not called once in a
+  whole session, so nothing protects a card reading from being interrupted.
+- **The watchdog fires on Whisper's own noise.** `'E aí'` on near-silence, 73 times in one day
+  against 422 real utterances. Language confidence separates them cleanly (0.28 against 1.00)
+  but 16 of 422 real sentences fall under any useful threshold - the ones with English names in
+  Portuguese, which are the worst to lose. Better to not start the clock than to filter speech.
+- **A recorded action cannot be undone.** Told "you resolved that wrong, do it again", the
+  machine refuses and the robot restates instead of saying it cannot.
+- **Startup order still matters.** Let one of the preview and `talk.py` be fully up before
+  starting the other; what breaks is the overlap.
+- **The baselines are from 2026-09-16 09:42.** A new sweep needs the board empty, or the pieces
+  on it become part of "empty board" and detection never sees them again.
+
 ## Decisions taken
 
 | Topic | Decision | Where |
@@ -1136,6 +1269,15 @@ small and soft for either. Pixels first, recogniser second.
 
 ## Open items
 
+- **`listening` is never called by the agent**, so nothing holds the gate while somebody reads
+  a card out loud. The prompt gets the visible behaviour right and the mechanism stays idle.
+- **The agent-quiet watchdog fires on Whisper's hallucinations** (`'E aí'` on near-silence).
+  Do not filter speech on language confidence: 16 of 422 real sentences fall under any useful
+  threshold, and they are the Portuguese ones with English names in them.
+- **A recorded action has no undo**, so a turn resolved wrongly cannot be taken back.
+- **CAMERA_REBUILD is off by default** until there is a way to tell which camera the pipeline
+  bound to. Frames arriving is not evidence of the right one.
+- **The empty-board baselines are from 2026-09-16 09:42.** A new sweep needs the board clear.
 - **The path table has not been checked against the board** (`scripts/draw_map_graph.py`).
   Until it is, the robot will not choose a turn that moves a piece. Worth the owner's eye:
   spaces 9, 13 and 21 came out with a single path each, and London with no Train path at all.
