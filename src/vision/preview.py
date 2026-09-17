@@ -34,7 +34,7 @@ from typing import Any
 
 import numpy as np
 
-from src.config import CAPTURE_DIR, GAME_LOG_DIR, REACHY_HOST, REACHY_PORT
+from src.config import CAMERA_REBUILD, CAPTURE_DIR, GAME_LOG_DIR, REACHY_HOST, REACHY_PORT
 from src.logger import get_logger
 from src.strategy.state import BoardState
 
@@ -1476,10 +1476,16 @@ class Preview:
             now - self._fresh_at > CAMERA_DEAD_S
             and now - self._tried_at > CAMERA_RETRY_S
             and not self.busy_with_robot()
-            and hasattr(self.camera, "reopen")
         ):
-            log.warning("no new frame for %.0fs; rebuilding the camera", now - self._fresh_at)
             self._tried_at = now
+            if not CAMERA_REBUILD or not hasattr(self.camera, "reopen"):
+                log.warning(
+                    "no new frame for %.0fs; the camera is gone. Restart the preview "
+                    "(CAMERA_REBUILD=true to try rebuilding it, which may bind to the wrong camera)",
+                    now - self._fresh_at,
+                )
+                return False
+            log.warning("no new frame for %.0fs; rebuilding the camera", now - self._fresh_at)
             self.reopens += 1
             if self.camera.reopen():
                 self._fresh_at = self.clock()

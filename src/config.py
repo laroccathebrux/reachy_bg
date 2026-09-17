@@ -217,6 +217,13 @@ def voice_for(language: str, provider: str = TTS_PROVIDER) -> str:
 
 # --------------------------------------------------------------------------- vision
 VISION_URL = os.getenv("VISION_URL", "http://127.0.0.1:8090")
+# Rebuild the camera pipeline when frames stop arriving. Off by default, and the reason is
+# measured: on 2026-09-17 a rebuild bound to a different 1080p camera on this Mac (there are
+# three) and reported success, so the board matcher produced a confident homography over a
+# photo of the room and the robot told the table there were no pieces. Frames arriving is not
+# evidence of the right camera, and nothing the SDK or the daemon exposes says which one it
+# took. The drought is always logged; only the rebuild is gated.
+CAMERA_REBUILD = _env_bool("CAMERA_REBUILD", False)
 VISION_MODEL = os.getenv("VISION_MODEL", "yolov8s-worldv2.pt")
 VISION_MIN_CONFIDENCE = float(os.getenv("VISION_MIN_CONFIDENCE", "0.35"))
 
@@ -324,6 +331,7 @@ __all__ = [
     "LOCAL_TTS_VOICES",
     "voice_for",
     "VISION_URL",
+    "CAMERA_REBUILD",
     "VISION_MODEL",
     "VISION_MIN_CONFIDENCE",
     "DATA_DIR",

@@ -305,6 +305,15 @@ can say when that is, because the agent's audio goes straight to the USB speaker
 never sees it. It is a deadline rather than a flag, so a crash mid-sentence cannot leave the
 camera switched off, and a preview that is down never blocks the voice.
 
+**Frames arriving is not evidence of the right camera.** This Mac has three 1080p-capable
+cameras (`Reachy Mini Camera`, `UGREEN Camera 4K`, `FaceTime HD Camera`). After the daemon
+released the robot's, a rebuilt GStreamer pipeline bound to a different one and delivered frames
+happily: the preview page showed the room, the board matcher found a confident homography with
+26 inliers over a photo of a sitting room, every space read as "seen", and the robot told the
+table there were no pieces on the board. Neither resolution nor frame rate separates them, and
+nothing the SDK or the daemon exposes says which device was taken. So `CAMERA_REBUILD` is off by
+default: the drought is always logged, and only the rebuild is gated behind the flag.
+
 The camera dying under the preview: `talk.py` asks the SDK for `media_backend="no_media"`,
 and on that branch the SDK tells the **daemon** to release camera and audio - which is exactly
 where the preview's LOCAL backend reads its frames from. A pipeline already running survives it;

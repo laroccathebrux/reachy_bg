@@ -376,13 +376,35 @@ class DyingCamera:
         return None
 
 
-def test_a_repeated_frame_is_not_a_frame_and_the_camera_is_rebuilt():
+def test_a_dead_camera_is_reported_and_not_rebuilt_behind_the_owners_back(monkeypatch):
+    """The rebuild is off by default, and for a measured reason: on 2026-09-17 one bound to a
+    different 1080p camera on this Mac (there are three) and reported success, so the board
+    matcher produced a confident homography over a photo of the room and the robot told the
+    table there were no pieces. The drought is still logged - that half was always the useful
+    one - but nothing silently changes camera."""
+    from src.vision.preview import CAMERA_DEAD_S, Preview
+
+    now = [1000.0]
+    camera = DyingCamera(alive=0)
+    preview = Preview(camera)
+    preview.clock = lambda: now[0]
+    preview.grab_once()  # the first stale frame counts; the drought starts here
+
+    now[0] += CAMERA_DEAD_S + 1
+    assert preview.grab_once() is False
+    assert camera.reopens == 0, "not without CAMERA_REBUILD"
+    assert preview.reopens == 0
+
+
+def test_a_repeated_frame_is_not_a_frame_and_the_camera_is_rebuilt(monkeypatch):
     """2026-09-17: talk.py asks the SDK for no_media, and on that branch the SDK tells the
     *daemon* to release the camera this process reads from. The pipeline died mid-startup and
     get_frame went on handing back the same object, so the preview captured one frame in three
     minutes - a dark page, and a scan that reported an empty table instead of no camera."""
+    import src.vision.preview as mod
     from src.vision.preview import CAMERA_DEAD_S, Preview
 
+    monkeypatch.setattr(mod, "CAMERA_REBUILD", True)  # opt in, as an owner would
     now = [1000.0]
     camera = DyingCamera(alive=2)
     preview = Preview(camera)
@@ -407,9 +429,11 @@ def test_a_repeated_frame_is_not_a_frame_and_the_camera_is_rebuilt():
     assert preview.grab_once() is True  # the rebuilt pipeline delivers again
 
 
-def test_a_camera_that_will_not_come_back_is_not_hammered():
+def test_a_camera_that_will_not_come_back_is_not_hammered(monkeypatch):
+    import src.vision.preview as mod
     from src.vision.preview import CAMERA_DEAD_S, CAMERA_RETRY_S, Preview
 
+    monkeypatch.setattr(mod, "CAMERA_REBUILD", True)
     now = [1000.0]
 
     class Hopeless(DyingCamera):
