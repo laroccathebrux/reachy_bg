@@ -604,7 +604,8 @@ def main(argv: list[str] | None = None) -> int:
     if not args.no_robot and not daemon_is_up():
         log.warning(
             "the reachy daemon is not answering on %s: no camera and no movement this session. "
-            "Start it from a terminal app that has camera permission (iTerm): reachy-mini-daemon",
+            "Start it from a terminal app that has camera permission (iTerm), in this directory: "
+            "uv run reachy-mini-daemon",
             f"{REACHY_HOST}:{REACHY_PORT}",
         )
     locked = LANGUAGE_LOCK and not args.free_language
