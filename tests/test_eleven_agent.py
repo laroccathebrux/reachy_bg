@@ -297,3 +297,27 @@ def test_every_tool_schema_is_one_the_agent_api_accepts():
         assert tool.get("description"), f"{tool['name']} has no description"
         check(tool.get("parameters") or {}, tool["name"], problems)
     assert problems == []
+
+
+def test_game_state_carries_every_sheet_and_the_robots_own_skills():
+    """apply_effect wrote a Clue that Jacqueline Fine had spent, and game_state carried only her
+    name, player and space - so the robot said it had nothing recorded and asked the table for a
+    number it already held. The skills are there for the same reason: the number of dice in a
+    test is on the sheet, and it was costing a tool call and a question every time."""
+    from src.speech.eleven_agent import game_state_report
+    from src.strategy.game import ROBOT, GameState
+
+    game = GameState()
+    game.set_ancient_one("Azathoth")
+    game.add_investigator("Lily Chen", controller=ROBOT)
+    game.add_investigator("Jacqueline Fine", controller="Alessandro")
+    game.apply_effect("Jacqueline Fine", clues=-1, sanity=-2)
+
+    report = game_state_report(game)
+    others = {i["name"]: i for i in report["investigators"]}
+    assert others["Jacqueline Fine"]["clues"] == 0
+    assert others["Jacqueline Fine"]["sanity"] == 6
+    assert "conditions" in others["Jacqueline Fine"]
+
+    assert report["my_investigator"]["skills"]["observation"] == 2
+    assert report["my_investigator"]["skills"]["strength"] == 4

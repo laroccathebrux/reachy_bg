@@ -357,7 +357,17 @@ class GameState:
             if waiting is None:
                 return f"{head}; everyone has had an encounter, the Mythos Phase is next"
             return f"{head}; {waiting.name} has an encounter to resolve"
-        return f"{head}; the Lead Investigator draws the Mythos card, then the round ends"
+        # Naming the Lead matters: the line used to say "the Lead Investigator draws the Mythos
+        # card" and the robot, which was the Lead, asked the table whose turn it was.
+        lead = self.lead or (self.order()[0].name if self.investigators else "")
+        who = (
+            "I draw"
+            if lead and lead == (self.robot_investigator.name if self.robot_investigator else "")
+            else f"{lead} draws"
+            if lead
+            else "the Lead Investigator draws"
+        )
+        return f"{head}; {who} the Mythos card, then the round ends"
 
     # ------------------------------------------------------------------ setup
     def set_ancient_one(self, name: str) -> AncientOne | None:

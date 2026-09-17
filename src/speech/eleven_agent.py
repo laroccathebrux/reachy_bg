@@ -683,9 +683,29 @@ def game_state_report(game: Any, board: str = "") -> dict[str, Any]:
             "sanity": mine.sanity,
             "clues": mine.clues,
             "possessions": list(mine.possessions),
+            "conditions": list(mine.conditions),
+            # The skills, so the number of dice in a test is never a question for the table.
+            "skills": {
+                "lore": mine.sheet.lore,
+                "influence": mine.sheet.influence,
+                "observation": mine.sheet.observation,
+                "strength": mine.sheet.strength,
+                "will": mine.sheet.will,
+            },
         },
+        # Health, Sanity and Clues for everybody, not only for the robot's own. apply_effect
+        # wrote a Clue that Jacqueline Fine had spent and this line did not carry it back, so the
+        # robot said it had nothing recorded and asked the table for a number it already held.
         "investigators": [
-            {"name": i.name, "player": "me" if i.is_robot else i.controller, "space": i.space}
+            {
+                "name": i.name,
+                "player": "me" if i.is_robot else i.controller,
+                "space": i.space,
+                "health": i.health,
+                "sanity": i.sanity,
+                "clues": i.clues,
+                "conditions": list(i.conditions),
+            }
             for i in game.investigators
         ],
         "reserve": list(game.reserve),

@@ -388,3 +388,17 @@ def test_an_effect_carries_cards_and_conditions():
     game.apply_effect("Lily Chen", lose=["Bull Whip"], conditions_lost=["Blessed"])
     assert "Bull Whip" not in who.possessions and "Blessed" not in who.conditions
     assert game.apply_effect("Nobody At All", sanity=-1)["applied"] is False
+
+
+def test_the_mythos_line_names_who_draws():
+    """It read "the Lead Investigator draws the Mythos card" and the robot, which was the Lead,
+    asked the table whose turn it was."""
+    game = _table()
+    game.lead = "Lily Chen"  # the robot's own
+    game.begin_round()
+    game.advance_phase()
+    game.advance_phase()
+    assert "I draw the Mythos card" in game.where_we_are()
+
+    game.lead = "Jacqueline Fine"
+    assert "Jacqueline Fine draws the Mythos card" in game.where_we_are()
