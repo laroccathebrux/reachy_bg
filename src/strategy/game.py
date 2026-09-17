@@ -128,6 +128,21 @@ class GameState:
         self.started_at = time.time()
         self.notes: list[str] = []
 
+    # ------------------------------------------------------------------ notes
+    def note(self, text: str) -> str | None:
+        """Write down something the table said that no other field holds.
+
+        Gates, monsters, what was agreed - the state has a field for the setup and one for each
+        investigator, and nothing for "there is a Gate open in Rome and a Serpent People on it".
+        That is what this is: the table's own words, kept as they were said, read back by
+        game_state. Returns the note, or None when it says nothing new.
+        """
+        text = " ".join(text.split())
+        if not text or text in self.notes:
+            return None
+        self.notes.append(text)
+        return text
+
     # ------------------------------------------------------------------ setup
     def set_ancient_one(self, name: str) -> AncientOne | None:
         found = ancient_one(name)

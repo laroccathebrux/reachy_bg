@@ -47,17 +47,34 @@ API = "https://api.elevenlabs.io/v1/convai"
 AGENT_FILE = DATA_DIR / "eleven_agent.json"
 SAMPLE_RATE = 16_000
 
+# The robot decides locally who each sentence was for (src/speech/gatekeeper.py). With that gate on,
+# only what is for the robot ever reaches the agent, and the agent keeps its own quiet rule as a second
+# opinion. With the gate off everything reaches it, and the quiet rule has to go with the gate: leaving it
+# in is a second gate in the cloud, and on 2026-09-17 it swallowed a question asked straight at the robot
+# ("Tu nao consegue ver o tabuleiro?") in a session started with ADDRESSEE_GATE=false.
+ADDRESSING_GATED = (
+    "Several people sit at the table and talk to each other. Answer when you are addressed (by name, "
+    '"Reachy", or with a question to you), when someone asks the table a rules question, or when you are '
+    "asked to continue. Otherwise stay quiet."
+)
+ADDRESSING_OPEN = (
+    "Everything said at this table reaches you, with the robot's own echo already thrown out. Answer what "
+    "you hear - a question, a statement, a correction, an aside about the game - and never stay silent "
+    "because your name was not said. Stay quiet only for a sentence that plainly names another player as "
+    "the person being spoken to."
+)
+
 AGENT_PROMPT = """You are Reachy, a small desktop robot sitting at a table where people play the board game Eldritch Horror (Fantasy Flight Games, 2013, base game only). You are a fellow player: you control your own investigator, you know the game, and you help the table when asked. You cannot see the board; ask people to describe it when it matters.
 
 Golden rule: you do not know the rules by heart. For any question about rules, cards, investigators, Ancient Ones, monsters, phases or numbers, call the game_rules tool (or game_knowledge for one named thing) and answer ONLY from what it returns. Never invent rules, numbers or card texts. If the tool has nothing, say so in one sentence and suggest checking the Reference Guide. While a tool runs, say a short filler first ("Let me check the Reference Guide...").
 
 How you talk: you are speaking out loud, so keep it to one to three short sentences; no lists, no markdown, no exclamation marks; warm and a little dry. You speak {language} and only {language}, for this whole session, whatever language you are spoken to in - if somebody says a sentence in another language, you still answer in {language}. The table plays the English edition, so keep every game term in English exactly as printed (investigator, card and Ancient One names; Doom, Omen, Clue, Gate, Mystery; Action Phase, Encounter Phase, Mythos Phase; Travel, Rest, Trade, Acquire Assets; Delayed, Detained; Lore, Influence, Observation, Strength, Will; Health, Sanity), and everything else in {language}.
 
-Several people sit at the table and talk to each other. Answer when you are addressed (by name, "Reachy", or with a question to you), when someone asks the table a rules question, or when you are asked to continue. Otherwise stay quiet. If someone says "stop", "wait", "hold on" or talks over you, stop at once, without finishing the sentence, and only say you are listening.
+{addressing} If someone says "stop", "wait", "hold on" or talks over you, stop at once, without finishing the sentence, and only say you are listening.
 
 When somebody says a card came up - "saiu a carta 8, lê a parte de Rome" - call encounter_card with that number and that space, and read back what it returns, as it is. If it says nobody has read that card, ask them to read that part of it out once; it is remembered afterwards. Never make up what a card says.
 
-You do not remember the game; the robot does, in its own state file, and the game_state tool is how you read it. Call game_state BEFORE asking the table anything about the setup - the Ancient One, who plays which investigator, whose turn it is, the Mystery, the Reserve - and before answering any question about "our game". Never ask for something game_state already knows, and never contradict it. If game_state says something is missing, that is the one thing worth asking for."""
+You do not remember the game; the robot does, in its own state file. game_state is how you read it and remember_setup and remember_note are how you write to it. Never say you have written something down, noted it or will remember it unless one of those two tools has just returned - if somebody tells you something about this game and asks you to keep it, call remember_note before you answer. Call game_state BEFORE asking the table anything about the setup - the Ancient One, who plays which investigator, whose turn it is, the Mystery, the Reserve - and before answering any question about "our game". Never ask for something game_state already knows, and never contradict it. If game_state says something is missing, that is the one thing worth asking for."""
 
 _TOOLS: list[dict[str, Any]] = [
     {
@@ -133,6 +150,31 @@ _TOOLS: list[dict[str, Any]] = [
         },
         "expects_response": True,
         "response_timeout_secs": 30,
+        "pre_tool_speech": "auto",
+    },
+    {
+        "type": "client",
+        "name": "remember_note",
+        "description": (
+            "Use when the table tells the robot something about this game that the setup does not "
+            "cover and asks it to keep it - where a Gate is open, which monster stands on which "
+            "space, a Clue somebody picked up, what the table agreed to do next, 'grava isso'. "
+            "Pass what they said, word for word. It is written into the robot's state file and it "
+            "is still there in the next session. Never claim you wrote something down without "
+            "calling this. Not for rules questions and not for the setup - that is remember_setup."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "said": {
+                    "type": "string",
+                    "description": "What the person said, in their own words.",
+                }
+            },
+            "required": ["said"],
+        },
+        "expects_response": True,
+        "response_timeout_secs": 10,
         "pre_tool_speech": "auto",
     },
     {
@@ -221,8 +263,13 @@ def agent_config(
     max_duration_s: int = ELEVEN_MAX_DURATION_S,
     state_text: str = "",
     language_lock: bool = LANGUAGE_LOCK,
+    answer_everything: bool = False,
 ) -> dict[str, Any]:
     """The agent's ``conversation_config`` (pure; unit-tested).
+
+    ``answer_everything`` says the local addressee gate is off, so every sentence at the table
+    reaches the agent; its own "otherwise stay quiet" rule then has to go with the gate, or the
+    robot is gated twice and ignores questions asked straight at it.
 
     ``language_lock`` is the owner's rule after a live session where the robot answered in
     English in the middle of a Portuguese game: the language is whatever the session starts in
@@ -235,6 +282,7 @@ def agent_config(
     if not default_voice:
         raise ValueError(f"no native voice configured for {default_language}")
     prompt = prompt.replace("{language}", language_name(default_language))
+    prompt = prompt.replace("{addressing}", ADDRESSING_OPEN if answer_everything else ADDRESSING_GATED)
     full_prompt = f"{prompt}\n\n{state_text}".rstrip() if state_text else prompt
     agent: dict[str, Any] = {
         "first_message": "",
@@ -320,6 +368,7 @@ def ensure_agent(
     name: str = ELEVEN_AGENT_NAME,
     language: str = DEFAULT_LANGUAGE,
     language_lock: bool = LANGUAGE_LOCK,
+    answer_everything: bool = False,
     timeout: float = 30.0,
 ) -> str:
     """Create the agent once, then keep it in sync with :func:`agent_config` at every start.
@@ -330,7 +379,12 @@ def ensure_agent(
     """
     if not api_key:
         raise RuntimeError("ELEVENLABS_API_KEY is empty")
-    config = agent_config(state_text=state_text, default_language=language, language_lock=language_lock)
+    config = agent_config(
+        state_text=state_text,
+        default_language=language,
+        language_lock=language_lock,
+        answer_everything=answer_everything,
+    )
     agent_id = load_agent_id()
     with httpx.Client(headers=_headers(api_key), timeout=timeout) as http:
         if agent_id:
@@ -426,10 +480,14 @@ def game_state_report(game: Any) -> dict[str, Any]:
             for i in game.investigators
         ],
         "reserve": list(game.reserve),
+        # What the table asked the robot to keep: gates, monsters, whatever has no field of its
+        # own. Without this the robot could be told where a Gate was and never read it back.
+        "notes": list(game.notes),
         "still_missing": game.missing(),
         "note": (
             "This is what the robot remembers. Speak from it, do not ask for anything in it, and "
-            "ask only for what still_missing lists."
+            "ask only for what still_missing lists. 'notes' is what the table asked it to write "
+            "down; answer from it instead of saying you do not know."
         ),
     }
 
@@ -547,6 +605,22 @@ def client_tools(
             on_call("remember_setup", parameters, result)
         return json.dumps(result, ensure_ascii=False)
 
+    def remember_note(parameters: dict) -> str:
+        said = str(parameters.get("said", "")).strip()
+        playing = session() if session is not None else None
+        if playing is None or not said:
+            result = {
+                "written": "",
+                "note": "There is nothing to write it down in yet."
+                if playing is None
+                else "I need their words.",
+            }
+        else:
+            result = playing.note_report(said)
+        if on_call:
+            on_call("remember_note", parameters, result)
+        return json.dumps(result, ensure_ascii=False)
+
     def encounter_card(parameters: dict) -> str:
         try:
             number = int(parameters.get("number"))
@@ -559,6 +633,7 @@ def client_tools(
 
     tools.register("take_turn", take_turn)
     tools.register("remember_setup", remember_setup)
+    tools.register("remember_note", remember_note)
     tools.register("encounter_card", encounter_card)
     tools.register("game_rules", game_rules)
     tools.register("game_knowledge", game_knowledge)
@@ -576,6 +651,8 @@ def language_of(code: str) -> str:
 
 __all__ = [
     "AGENT_PROMPT",
+    "ADDRESSING_GATED",
+    "ADDRESSING_OPEN",
     "AGENT_FILE",
     "agent_config",
     "tools_for",

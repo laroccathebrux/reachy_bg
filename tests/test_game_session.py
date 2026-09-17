@@ -373,3 +373,25 @@ def test_the_agents_tools_reach_the_session_that_was_built(tmp_path):
     report = json.loads(tools.tools["take_turn"][0]({}))
     assert report["note"] != "No game is loaded, so there is no turn for me to take."
     assert report.get("investigator") == "Lily Chen"
+
+
+def test_a_note_survives_the_session_and_comes_back_in_game_state(tmp_path):
+    """2026-09-16: the table said "em Roma tem um portal aberto e um monstro Serpent People"
+    and "grava na memória". The agent called game_state - a read - and answered "Anotado".
+    Nothing was written, because nothing could be: the setup fields have no room for a Gate."""
+    from src.speech.eleven_agent import game_state_report
+
+    session = _session(tmp_path, _Said())
+    report = session.note_report("em Roma tem um portal aberto e um monstro Serpent People")
+    assert report["written"] == "em Roma tem um portal aberto e um monstro Serpent People"
+
+    again = _session(tmp_path, _Said())  # a new process, the next day
+    assert again.game.notes == ["em Roma tem um portal aberto e um monstro Serpent People"]
+    assert "portal aberto" in " ".join(game_state_report(again.game)["notes"])
+
+
+def test_the_same_note_twice_is_not_written_twice(tmp_path):
+    session = _session(tmp_path, _Said())
+    assert session.note_report("o portal está em Roma")["written"] == "o portal está em Roma"
+    repeated = session.note_report("o  portal  está  em  Roma")
+    assert repeated["written"] == "" and session.game.notes == ["o portal está em Roma"]

@@ -253,6 +253,23 @@ themselves live in `src/speech/addressee.py` and the gate in `src/speech/gatekee
 With one person at the table (`--humans 1`) or `--always-answer` the gate is off and the
 decisions are logged as shadow decisions only.
 
+There is a second gate, and it is easy to forget: the agent's own prompt used to end with
+"Answer when you are addressed... otherwise stay quiet". That rule is the right one while the
+local gate is on - the agent is a second opinion on what already got through - but with the
+gate off it gates the robot twice in the cloud, where nothing here can see it. On 2026-09-17 a
+question asked straight at the robot ("Tu não consegue ver o tabuleiro?") was forwarded by a
+gate that was off and answered by nobody. So `ensure_agent(answer_everything=...)` now picks
+between `ADDRESSING_GATED` and `ADDRESSING_OPEN` in `src/speech/eleven_agent.py`, and
+`talk.py` settles the gate before it configures the agent rather than after.
+
+What the agent may write: `remember_setup` for the setup (Ancient One, investigators, Mystery,
+Reserve) and `remember_note` for everything else the table asks it to keep - where a Gate is
+open, which monster stands where, what was agreed. Both land in the same `game_state.json`,
+and `game_state` reads `notes` back, so a fact told on one evening is there the next. Before
+`remember_note` existed the agent had nowhere to put such a fact and said "Anotado" anyway,
+having called the read-only `game_state`; the prompt now forbids claiming a note without the
+tool.
+
 Language and voice: the agent's own `language_detection` tool is unreliable (the LLM often
 answers in English with the Portuguese voice, tested live). So the switch is local and
 deterministic: when the transcript (or, if the agent's ASR mangled the words, our Whisper on

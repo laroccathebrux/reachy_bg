@@ -620,7 +620,12 @@ def main(argv: list[str] | None = None) -> int:
             f"{REACHY_HOST}:{REACHY_PORT}",
         )
     locked = LANGUAGE_LOCK and not args.free_language
-    agent_id = ensure_agent(language=args.lang, language_lock=locked)
+    # The agent's prompt carries its own "otherwise stay quiet" rule, which is a second gate in
+    # the cloud. It has to know whether the local one is on, so the count is settled here - the
+    # players named on the command line are about to be enrolled, so they count as at the table.
+    humans = args.humans if args.humans is not None else (len(set(registry.names) | set(players)) or None)
+    gate_on = ADDRESSEE_GATE and not args.no_gate and humans != 1
+    agent_id = ensure_agent(language=args.lang, language_lock=locked, answer_everything=not gate_on)
     log.info(
         "session language: %s%s", args.lang, " (locked for the whole session)" if locked else " (may switch)"
     )
@@ -703,8 +708,6 @@ def main(argv: list[str] | None = None) -> int:
                 enrol(robot, ear, players)
                 audio.stop()
                 audio.muted = False
-            humans = args.humans if args.humans is not None else (len(registry.names) or None)
-            gate_on = ADDRESSEE_GATE and not args.no_gate and humans != 1
             session = build_game_session(args, diary, language=args.lang)
             table.game_session = session  # the agent's game_state tool reads it through here
             table.keeper = Gatekeeper(

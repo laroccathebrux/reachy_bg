@@ -24,6 +24,7 @@ def test_agent_config_has_the_native_voice_and_the_local_tools():
         "game_state",
         "take_turn",
         "remember_setup",
+        "remember_note",
         "encounter_card",
         "game_knowledge",
     ]
@@ -170,3 +171,23 @@ def test_the_game_state_tool_reads_the_game_at_call_time():
     after = json.loads(handler({}))
     assert before["ancient_one"] == ""
     assert after["ancient_one"] == "Azathoth"
+
+
+def test_the_quiet_rule_goes_away_with_the_local_gate():
+    """With the gate off every sentence at the table reaches the agent, so leaving its own
+    "otherwise stay quiet" rule in the prompt gates the robot twice - which is how a question
+    asked straight at it ("Tu nao consegue ver o tabuleiro?") was ignored on 2026-09-17."""
+    gated = _config()["agent"]["prompt"]["prompt"]
+    assert "Otherwise stay quiet." in gated
+    assert "{addressing}" not in gated
+
+    open_ = _config(answer_everything=True)["agent"]["prompt"]["prompt"]
+    assert "Otherwise stay quiet." not in open_
+    assert "never stay silent because your name was not said" in open_
+    assert "{addressing}" not in open_
+
+
+def test_the_prompt_forbids_claiming_a_note_that_was_never_written():
+    prompt = _config()["agent"]["prompt"]["prompt"]
+    assert "remember_note" in prompt
+    assert "Never say you have written something down" in prompt

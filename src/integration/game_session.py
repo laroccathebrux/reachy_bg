@@ -395,6 +395,24 @@ class GameSession:
             "note": "Say the sentence in 'say' as it is. Do not add anything to it.",
         }
 
+    def note_report(self, said: str) -> dict[str, Any]:
+        """Keep what the table just said about this game, and say it back so they hear it landed."""
+        written = self.game.note(said)
+        if written is None:
+            return {
+                "written": "",
+                "notes": list(self.game.notes),
+                "note": "There was nothing new in that; it is already written down."
+                if said.strip()
+                else "I need their words.",
+            }
+        self.save()
+        return {
+            "written": written,
+            "notes": list(self.game.notes),
+            "note": "It is written down and it survives the session. Say that you wrote it, in one short sentence.",
+        }
+
     def sentence(self, reading: SetupReading, language: str) -> str:
         """What the robot says back: what it wrote down, then the next thing it needs.
 
