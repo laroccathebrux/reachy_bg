@@ -270,3 +270,30 @@ def test_a_card_is_found_by_its_name_before_the_vector_search():
 
     missing = knowledge_lookup("Nonesuch", retriever=lambda *a, **k: [])
     assert "printed on the card" not in missing["passages"]
+
+
+def test_every_tool_schema_is_one_the_agent_api_accepts():
+    """2026-09-17: skill_test was rejected at startup with "Must set one of: description,
+    dynamic_variable, is_system_provided, constant_value, or is_omitted" on
+    parameters.properties.dice.array.items.integer - an array's items need a description of
+    their own, and a schema the API refuses stops the whole session from opening."""
+    from src.speech.eleven_agent import tools_for
+
+    def check(node, path, problems):
+        if not isinstance(node, dict):
+            return
+        if node.get("type") == "array":
+            items = node.get("items") or {}
+            if not items.get("description"):
+                problems.append(f"{path}.items has no description")
+            check(items, f"{path}.items", problems)
+        for name, child in (node.get("properties") or {}).items():
+            if not child.get("description"):
+                problems.append(f"{path}.{name} has no description")
+            check(child, f"{path}.{name}", problems)
+
+    problems: list[str] = []
+    for tool in tools_for(language_lock=False):
+        assert tool.get("description"), f"{tool['name']} has no description"
+        check(tool.get("parameters") or {}, tool["name"], problems)
+    assert problems == []

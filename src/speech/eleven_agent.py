@@ -222,6 +222,7 @@ _TOOLS: list[dict[str, Any]] = [
                     "description": "One entry per card whose value was read out.",
                     "items": {
                         "type": "object",
+                        "description": "One card and the number printed on it.",
                         "properties": {
                             "name": {"type": "string", "description": "The card name, in English."},
                             "value": {"type": "integer", "description": "The number printed on it."},
@@ -264,7 +265,7 @@ _TOOLS: list[dict[str, Any]] = [
             "properties": {
                 "dice": {
                     "type": "array",
-                    "items": {"type": "integer"},
+                    "items": {"type": "integer", "description": "One die face, 1 to 6."},
                     "description": "Every die face they read out, in any order.",
                 },
                 "investigator": {
@@ -299,18 +300,22 @@ _TOOLS: list[dict[str, Any]] = [
                 "clues": {"type": "integer", "description": "Clues gained (+) or spent (-)."},
                 "gain": {
                     "type": "array",
-                    "items": {"type": "string"},
+                    "items": {"type": "string", "description": "One name, in English."},
                     "description": "Cards gained, English names.",
                 },
-                "lose": {"type": "array", "items": {"type": "string"}, "description": "Cards discarded."},
+                "lose": {
+                    "type": "array",
+                    "items": {"type": "string", "description": "One card name, in English."},
+                    "description": "Cards discarded.",
+                },
                 "conditions_gained": {
                     "type": "array",
-                    "items": {"type": "string"},
+                    "items": {"type": "string", "description": "One name, in English."},
                     "description": "Conditions taken.",
                 },
                 "conditions_lost": {
                     "type": "array",
-                    "items": {"type": "string"},
+                    "items": {"type": "string", "description": "One name, in English."},
                     "description": "Conditions removed.",
                 },
             },
