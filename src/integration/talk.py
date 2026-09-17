@@ -389,13 +389,24 @@ class Table:
                     lambda: self.spoken_recently,
                     min_ms=900,
                     fallback_language=lambda: detect_language(self.spoken_recently),
+                    registry=self.ear.registry,
                 )
             if checker():
                 # Forward only the stretch where the voice was heard, not the robot's echo before it.
-                sent = self.audio.release_gate(frames=int(self.ear.voice_ms / 250) + 2)
+                # The voice may already have ended while the check ran: the gate then has no
+                # utterance end to wait for and has to close itself (see pass_through).
+                voice_ms = self.ear.voice_ms
+                sent = self.audio.release_gate(frames=int(voice_ms / 250) + 2, voice_in_progress=voice_ms > 0)
                 self.barge_ins += 1
-                self.diary.write("barge_in", heard=checker.heard, frames_forwarded=sent)
-                log.info("player talked over the robot (%r); forwarded %d held frames", checker.heard, sent)
+                who = checker.speaker or checker.heard
+                self.diary.write(
+                    "barge_in",
+                    heard=checker.heard,
+                    speaker=checker.speaker,
+                    score=round(checker.score, 3),
+                    frames_forwarded=sent,
+                )
+                log.info("player talked over the robot (%s); forwarded %d held frames", who, sent)
                 checker = None
 
     def on_agent_correction(self, original: str, corrected: str) -> None:

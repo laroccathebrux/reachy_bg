@@ -291,6 +291,7 @@ def say(session: Session, clip, timings: dict) -> bool:
                 lambda: session.speaking_text or clip.text,
                 min_ms=BARGE_IN_MIN_MS,
                 fallback_language=session.last_language.get(session.last_addressed_speaker, DEFAULT_LANGUAGE),
+                registry=getattr(mic, "registry", None),
             )
     try:
         finished = session.robot.say(clip, interrupt=interrupt)

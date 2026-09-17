@@ -1,12 +1,24 @@
-"""Echo-aware barge-in: interrupt the robot only for words that are not its own voice.
+"""Barge-in that tells a player from the robot's own echo, and interrupts only for the player.
 
 Energy alone cannot tell a player from the robot's echo at the Mac microphone (both peak
 around -25 dBFS), so while the robot speaks the microphone runs with a small extra margin and
-every stretch of "voice" longer than ``min_ms`` is transcribed. If most of the words belong to
-what the robot is currently saying, it is echo and playback continues; otherwise the player
-is talking over the robot and the clip is cut.
+every stretch of "voice" longer than ``min_ms`` is checked against the newest ``window_s``
+seconds of it.
 
-    barge_in = EchoAwareBargeIn(mic, transcriber, spoken_text=lambda: sentence_being_spoken)
+Two checks, in order of preference:
+
+* **Voiceprint** (when voiceprints are enrolled). The speaker embedding of the tail is matched
+  against the known players. A named player is talking over the robot; anything else is echo.
+  This is the fast path (tens of milliseconds) and it does not care how much of the segment is
+  the robot, which is what the transcript check gets wrong.
+* **Transcript** (nobody enrolled, or the embedding failed). Whisper on the tail; if most of
+  the words belong to what the robot is currently saying it is echo, otherwise it is a player.
+
+Only the tail is judged, never the whole segment: while the robot speaks, the voice segment
+opens on its own echo and never closes, so after a couple of seconds the segment is mostly the
+robot whatever the player says - and every check came back "echo".
+
+    barge_in = EchoAwareBargeIn(mic, transcriber, spoken_text=lambda: sentence, registry=registry)
     robot.say(clip, interrupt=barge_in)
 """
 
@@ -16,12 +28,15 @@ import time
 from collections.abc import Callable
 from typing import Any
 
+import numpy as np
+
 from src.logger import get_logger
 from src.speech.addressee import looks_like_echo
 
 log = get_logger(__name__)
 
 MIN_WORDS = 3  # fewer words cannot be judged; the echo check handles short fragments
+WINDOW_S = 2.0  # how much of the voice in progress a check listens to
 
 
 class EchoAwareBargeIn:
@@ -34,6 +49,9 @@ class EchoAwareBargeIn:
         min_ms: int = 900,
         recheck_ms: int = 1200,
         fallback_language: str | Callable[[], str] = "",
+        registry: Any = None,
+        window_s: float = WINDOW_S,
+        sample_rate: int = 16_000,
         clock: Callable[[], float] = time.monotonic,
     ):
         self.mic = mic
@@ -42,9 +60,14 @@ class EchoAwareBargeIn:
         self.min_ms = min_ms
         self.recheck_ms = recheck_ms
         self.fallback_language = fallback_language
+        self.registry = registry
+        self.window_s = window_s
+        self.sample_rate = sample_rate
         self.clock = clock
-        self._checked_ms = 0  # voice length at the last transcription
-        self.heard: str = ""  # what the player said when the interruption fired
+        self._checked_ms = 0  # voice length at the last check
+        self.heard: str = ""  # what the player said when the interruption fired (transcript path)
+        self.speaker: str = ""  # who they were (voiceprint path)
+        self.score: float = 0.0
         self.checks = 0
 
     def __call__(self) -> bool:
@@ -60,23 +83,44 @@ class EchoAwareBargeIn:
             return False
         self._checked_ms = voice_ms
         self.checks += 1
+        tail = audio[-max(1, int(self.window_s * self.sample_rate)) :]
         started = self.clock()
+        if self.registry is not None and self.registry.names:
+            player, detail = self._by_voiceprint(tail)
+        else:
+            player, detail = self._by_transcript(tail)
+        log.info(
+            "barge-in check %d (%.1fs voice, %.1fs tail, %.2fs): %s -> %s",
+            self.checks,
+            voice_ms / 1000,
+            tail.size / self.sample_rate,
+            self.clock() - started,
+            detail,
+            "player" if player else "echo",
+        )
+        return player
+
+    def _by_voiceprint(self, audio: np.ndarray) -> tuple[bool, str]:
+        """A known player's voice over the robot: the embedding matches one of the voiceprints."""
+        try:
+            name, score = self.registry.identify(audio)
+        except Exception as exc:
+            log.warning("voiceprint check failed (%s); reading the words instead", exc)
+            return self._by_transcript(audio)
+        if name:
+            self.speaker, self.score, self.heard = name, score, ""
+            return True, f"{name} {score:.2f}"
+        return False, f"no known voice ({score:.2f})"
+
+    def _by_transcript(self, audio: np.ndarray) -> tuple[bool, str]:
+        """Words that are not the robot's own: the fallback when nobody is enrolled."""
         fallback = self.fallback_language() if callable(self.fallback_language) else self.fallback_language
         result = self.transcriber.transcribe(audio, fallback_language=fallback)
         text = result.text
-        echo = looks_like_echo(text, self.spoken_text()) if text else True
-        log.info(
-            "barge-in check %d (%.1fs voice, %.2fs): %r -> %s",
-            self.checks,
-            voice_ms / 1000,
-            self.clock() - started,
-            text,
-            "echo" if echo else "player",
-        )
-        if text and len(text.split()) >= MIN_WORDS and not echo:
-            self.heard = text
-            return True
-        return False
+        if text and len(text.split()) >= MIN_WORDS and not looks_like_echo(text, self.spoken_text()):
+            self.heard, self.speaker, self.score = text, "", 0.0
+            return True, repr(text)
+        return False, repr(text)
 
 
-__all__ = ["EchoAwareBargeIn", "MIN_WORDS"]
+__all__ = ["EchoAwareBargeIn", "MIN_WORDS", "WINDOW_S"]

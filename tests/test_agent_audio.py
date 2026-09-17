@@ -2,7 +2,7 @@
 
 import numpy as np
 
-from src.speech.agent_audio import INPUT_BLOCK, RobotAudioInterface
+from src.speech.agent_audio import INPUT_BLOCK, MAX_PASS_FRAMES, RobotAudioInterface
 
 
 class Clock:
@@ -99,3 +99,42 @@ def test_muted_interface_sends_nothing():
     audio.muted = True
     feed(audio, clock, [1])
     assert audio.release_utterance(clock.t) == 0 and sent == []
+
+
+def test_a_barge_in_after_the_voice_ended_does_not_leave_the_gate_open():
+    """The failure of 2026-09-17: the check that fired the barge-in finished after the local
+    VAD had already closed the voice, so utterance_ended() had nothing left to close - the gate
+    stayed open, the next sentence streamed live instead of being held, and the release that
+    should have closed the agent's turn forwarded nothing."""
+    audio, clock, sent = make()
+    audio.speaking = True
+    feed(audio, clock, [1, 2])
+    audio.speaking = False
+    audio.release_gate(frames=2, voice_in_progress=False)  # the voice is already over
+    assert not audio.holding  # the held frames go out and the tail is armed
+    feed(audio, clock, [0, 0, 0, 0])
+    assert audio.holding  # the gate closed itself
+
+    end = feed(audio, clock, [3, 4, 5])  # the player's next sentence is held, not streamed
+    assert audio.held_frames == 3
+    assert audio.release_utterance(end) == 3
+
+
+def test_an_open_gate_closes_itself_if_the_utterance_never_ends():
+    audio, clock, sent = make()
+    audio.pass_through()  # a voice was running, so the tail waits for utterance_ended()
+    feed(audio, clock, [1] * MAX_PASS_FRAMES)
+    assert not audio.holding
+    feed(audio, clock, [0, 0, 0, 0])  # the watchdog armed the tail at MAX_PASS_FRAMES
+    assert audio.holding
+
+
+def test_the_turn_closing_silence_goes_out_even_when_nothing_was_held():
+    """Holding the microphone again is not silence to the agent - it is no audio at all, and
+    its turn detector waits on that for ever. The tail has to go out regardless."""
+    audio, clock, sent = make()
+    audio.pass_through()  # the frames stream live, so the utterance buffer stays empty
+    feed(audio, clock, [1, 2])
+    assert audio.release_utterance(clock.t) == 0
+    tail = sent[2:]
+    assert len(tail) == 4 and all(not np.frombuffer(b, dtype=np.int16).any() for b in tail)

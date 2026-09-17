@@ -53,6 +53,7 @@ OUTPUT_BLOCK = 1600  # 100 ms
 FRAME_S = INPUT_BLOCK / SAMPLE_RATE
 HOLD_MAX_FRAMES = 120  # 30 s of held utterance audio (VAD_MAX_UTTERANCE_S is 20)
 TURN_TAIL_S = 1.0  # silence appended to a released utterance so the agent closes the turn
+MAX_PASS_FRAMES = 80  # 20 s: an open gate that never hears utterance_ended() closes anyway
 
 
 def resolve_output_device(spec: str) -> int:
@@ -105,6 +106,7 @@ class RobotAudioInterface:
         self._utterance: deque[tuple[float, bytes]] = deque(maxlen=HOLD_MAX_FRAMES)
         self._passing = False  # forward frames until the current utterance ends (+ tail)
         self._pass_frames_left = -1  # tail frames still to forward once the utterance ended
+        self._passed_frames = 0  # frames forwarded on an open gate, for the watchdog
         self._lock = threading.Lock()
         self.held_frames = 0
         self.released_frames = 0
@@ -188,7 +190,7 @@ class RobotAudioInterface:
         """True while microphone audio is being held back (speaker busy or its tail)."""
         return self.gate_while_speaking and (self.speaking or self.clock() < self._spoke_until)
 
-    def release_gate(self, frames: int | None = None) -> int:
+    def release_gate(self, frames: int | None = None, *, voice_in_progress: bool = True) -> int:
         """A player is talking over the robot: stop playback and forward the held audio.
 
         ``frames`` limits the forwarded audio to the most recent 250 ms blocks (the player's
@@ -204,7 +206,7 @@ class RobotAudioInterface:
         for chunk in held:
             if self._send(chunk):
                 sent += 1
-        self.pass_through()
+        self.pass_through(voice_in_progress=voice_in_progress)
         return sent
 
     # ------------------------------------------------------------------ addressee gate
@@ -218,11 +220,18 @@ class RobotAudioInterface:
         with self._lock:
             return len(self._utterance) * FRAME_S
 
-    def pass_through(self) -> int:
+    def _tail_frames(self) -> int:
+        return max(1, int(round(self.turn_tail_s / FRAME_S)))
+
+    def pass_through(self, *, voice_in_progress: bool = True) -> int:
         """The decision is already known: forward what is held and let the rest stream live.
 
         Returns the frames forwarded. The gate closes again ``turn_tail_s`` after
-        :meth:`utterance_ended` is called.
+        :meth:`utterance_ended` is called - but that only fires when the local VAD closes a
+        voice, so with ``voice_in_progress=False`` (a barge-in decided on a check that finished
+        after the voice had already ended) the tail is armed here instead. Without that the gate
+        stayed open for good: the next sentence streamed live, never reached the utterance
+        buffer, and the release that should have closed the agent's turn forwarded nothing.
         """
         if not self.hold_utterances:
             return 0
@@ -230,7 +239,8 @@ class RobotAudioInterface:
             pending = list(self._utterance)
             self._utterance.clear()
             self._passing = True
-            self._pass_frames_left = -1
+            self._passed_frames = 0
+            self._pass_frames_left = -1 if voice_in_progress else self._tail_frames()
         sent = sum(1 for _, chunk in pending if self._send(chunk))
         self.released_frames += sent
         return sent
@@ -239,7 +249,7 @@ class RobotAudioInterface:
         """The local VAD closed the utterance: a passing gate forwards the tail, then holds again."""
         with self._lock:
             if self._passing and self._pass_frames_left < 0:
-                self._pass_frames_left = max(1, int(round(self.turn_tail_s / FRAME_S)))
+                self._pass_frames_left = self._tail_frames()
 
     def release_utterance(self, until: float, *, tail_s: float | None = None) -> int:
         """Forward the held frames that arrived up to ``until`` (monotonic) plus a silent tail.
@@ -249,11 +259,14 @@ class RobotAudioInterface:
         """
         pending, kept = self._split(until)
         sent = sum(1 for _, chunk in pending if self._send(chunk))
-        if sent:
-            tail = self.turn_tail_s if tail_s is None else tail_s
-            silence = np.zeros(INPUT_BLOCK, dtype=np.int16).tobytes()
-            for _ in range(int(round(tail / FRAME_S))):
-                self._send(silence)
+        # The tail goes out even when nothing was held: frames that streamed live through an
+        # open gate still need the silence that closes the agent's turn, and holding the
+        # microphone again is not silence to the agent - it is no audio at all, which its turn
+        # detector waits on for ever.
+        tail = self.turn_tail_s if tail_s is None else tail_s
+        silence = np.zeros(INPUT_BLOCK, dtype=np.int16).tobytes()
+        for _ in range(int(round(tail / FRAME_S))):
+            self._send(silence)
         self.released_frames += sent
         self._restore(kept)
         return sent
@@ -313,6 +326,11 @@ class RobotAudioInterface:
                     if self._pass_frames_left == 0:
                         self._passing = False
                         self._pass_frames_left = -1
+                        self._passed_frames = 0
+                else:
+                    self._passed_frames += 1
+                    if self._passed_frames >= MAX_PASS_FRAMES:
+                        self._pass_frames_left = self._tail_frames()
             else:
                 forward = False
                 self._utterance.append((stamp, data))
@@ -361,4 +379,5 @@ __all__ = [
     "INPUT_BLOCK",
     "FRAME_S",
     "TURN_TAIL_S",
+    "MAX_PASS_FRAMES",
 ]
