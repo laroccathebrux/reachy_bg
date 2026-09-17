@@ -372,7 +372,9 @@ class GameState:
         log.info("game: %s", found.describe())
         return found
 
-    def add_investigator(self, name: str, *, controller: str, space: str = "") -> InvestigatorState | None:
+    def add_investigator(
+        self, name: str, *, controller: str, space: str = "", quiet: bool = False
+    ) -> InvestigatorState | None:
         sheet = investigator(name)
         if sheet is None:
             self.unresolved.append(f"investigator: {name}")
@@ -386,7 +388,8 @@ class GameState:
             return self.by_name(sheet.name)
         state = InvestigatorState(sheet=sheet, controller=controller, space=space)
         self.investigators.append(state)
-        log.info("game: %s", state.describe())
+        if not quiet:
+            log.info("game: %s", state.describe())
         return state
 
     def by_name(self, name: str) -> InvestigatorState | None:
@@ -539,8 +542,15 @@ class GameState:
         game.notes = list(data.get("notes", []))
         game.started_at = float(data.get("started_at", time.time()))
         for item in data.get("investigators", []):
+            # Quietly, because add_investigator logs the sheet and the saved Health, Sanity and
+            # Clues are restored below it. Logging at creation printed a full sheet for an
+            # investigator who had taken damage, which sent the owner and this session chasing an
+            # edit that had in fact been written.
             state = game.add_investigator(
-                item["name"], controller=item.get("controller", ""), space=item.get("space", "")
+                item["name"],
+                controller=item.get("controller", ""),
+                space=item.get("space", ""),
+                quiet=True,
             )
             if state is None:
                 continue
@@ -552,6 +562,7 @@ class GameState:
             state.actions = list(item.get("actions", []))
             state.components = list(item.get("components", []))
             state.encountered = bool(item.get("encountered", False))
+            log.info("game: %s", state.describe())
         return game
 
 
