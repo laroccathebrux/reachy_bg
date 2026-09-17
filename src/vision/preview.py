@@ -687,22 +687,32 @@ class RobotCamera:
         log.warning("body yaw did not reach %.0f (at %s)", target, self.body_angle())
         return False
 
-    def reopen(self) -> bool:
-        """Rebuild the camera pipeline after the daemon released the hardware under us.
+    def reopen(self, settle_s: float = 6.0) -> bool:
+        """Get the camera back after the daemon released the hardware under us.
 
         ``talk.py`` asks the SDK for ``media_backend="no_media"``, and on that branch the SDK
         tells the *daemon* to release camera and audio - which is where this process reads its
         frames from. A pipeline already running survives it; one still being built dies with an
-        "Internal data stream error" and never comes back, and the page goes dark for the rest
-        of the session (2026-09-17, one frame captured in three minutes).
+        "Internal data stream error" and never comes back.
 
-        ``acquire_media`` is no help here: it returns early unless *this* SDK object released,
-        and it was another process that did. So the connection is rebuilt, which re-runs the
-        backend detection and the pipeline with it. The head is left alone: no wake, no rest.
+        Two steps, and the first is the one that matters: the daemon has to take the hardware
+        back, because a fresh client pointed at a camera the daemon no longer holds gets nothing.
+        ``ReachyMini.acquire_media`` will not do it - it returns early unless *that* object was
+        the one that released - so the daemon is asked directly. Then the connection is rebuilt
+        to run the backend detection again, and the head is left alone: no wake, no rest.
+
+        Returns True only once a frame has actually arrived. Reporting success without one made
+        the log claim "camera reopened" every twenty seconds at a table looking at a dark page.
         """
         from reachy_mini import ReachyMini
 
         from src.robot.reachy import Robot
+
+        try:
+            self._mini.client.acquire_media()
+        except Exception as exc:
+            log.warning("the daemon would not take the camera back: %s", exc)
+            return False
 
         old = self._mini
         try:
@@ -722,8 +732,18 @@ class RobotCamera:
             old.__exit__(None, None, None)
         except Exception as exc:
             log.debug("the old connection did not close cleanly: %s", exc)
-        log.info("camera reopened")
-        return True
+
+        deadline = time.monotonic() + settle_s
+        while time.monotonic() < deadline:
+            try:
+                if self.get_frame() is not None:
+                    log.info("camera reopened")
+                    return True
+            except Exception:
+                pass
+            time.sleep(0.3)
+        log.warning("the camera was rebuilt but no frame came; it is still gone")
+        return False
 
     def close(self) -> None:
         try:
@@ -947,7 +967,6 @@ class Preview:
     def moves_json(self) -> dict[str, Any]:
         return {
             "state": self.motion_state,
-            "reopens": self.reopens,
             "count": len(self.moves),
             "moves": self.moves[-12:][::-1],  # newest first, as the page lists them
         }
@@ -1486,6 +1505,7 @@ class Preview:
 
     def status(self) -> dict[str, Any]:
         now = self.clock()
+        # reopens lives here: a session that went blind and came back has to be visible.
         with self._lock:
             times = [t for t in self._times if now - t <= 3.0]
             frame = self.frame
