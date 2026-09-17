@@ -99,10 +99,13 @@ def test_the_shortlist_keeps_one_plan_of_every_kind(verified_map):
     assert kept == sorted(kept, key=lambda s: -s.score)
 
 
-def test_the_model_choice_is_the_decision(verified_map):
+def test_the_model_choice_is_the_decision_when_it_is_asked_to_choose(verified_map):
+    """The arrangement scripts/decide_replay.py measures, kept behind model_picks."""
     game = _game()
     chat_fn = _answers('{"choice": 2, "reason": "Vou para Tokyo.", "ask": ""}')
-    decision = decide.decide(game, language="pt-BR", chat_fn=chat_fn, think=False)
+    decision = decide.decide(
+        game, language="pt-BR", chat_fn=chat_fn, think=False, model_picks=True
+    )
     assert decision.chosen_by == "model"
     assert decision.reason == "Vou para Tokyo."
     assert decision.plan is not None
@@ -112,7 +115,7 @@ def test_the_model_choice_is_the_decision(verified_map):
 def test_a_choice_outside_the_list_is_asked_again_once_then_the_score_decides(verified_map):
     game = _game()
     chat_fn = _answers('{"choice": 99, "reason": "Nope."}')
-    decision = decide.decide(game, chat_fn=chat_fn, think=False)
+    decision = decide.decide(game, chat_fn=chat_fn, think=False, model_picks=True)
     assert len(chat_fn.calls) == 2  # asked again exactly once
     assert decision.chosen_by == "score"
     assert decision.plan is not None
@@ -133,7 +136,7 @@ def test_when_the_model_is_not_there_the_robot_still_plays(verified_map):
 def test_prose_around_the_json_is_still_read(verified_map):
     game = _game()
     chat_fn = _answers('Sure thing:\n{"choice": 1, "reason": "Fico e compro."}\nHope that helps.')
-    decision = decide.decide(game, chat_fn=chat_fn, think=False)
+    decision = decide.decide(game, chat_fn=chat_fn, think=False, model_picks=True)
     assert decision.chosen_by == "model"
     assert decision.reason == "Fico e compro."
 
@@ -218,3 +221,43 @@ def test_the_printed_rule_of_every_offered_action_goes_with_the_shortlist(verifi
     text = decide.rules_of(decide.shortlist(scored))
     assert "Acquire Assets: test Influence" in text  # not "pay with Clues", which it invented live
     assert "Rulebook, Action Phase" in text
+
+
+def test_the_score_picks_the_turn_and_the_model_only_says_it(verified_map):
+    """Measured on 2026-09-17: the model agreed with the score 21 of 24 times and then 13 of 16,
+    and every disagreement made the turn worse. So it is handed the turn, not the choice."""
+    game = _game()
+    chat_fn = _answers('{"reason": "Vou ficar em Shanghai e comprar.", "ask": ""}')
+    decision = decide.decide(game, language="pt-BR", chat_fn=chat_fn, think=False)
+
+    assert decision.chosen_by == "score"
+    assert decision.narrated_by == "model"
+    assert decision.reason == "Vou ficar em Shanghai e comprar."
+    assert decision.plan is decision.considered[0].plan  # the best-scored turn, always
+
+    # It is told the turn and why it won, and never offered a number to pick.
+    sent = chat_fn.calls[0][-1]["content"]
+    assert "The turn you are taking" in sent and "Why it came out on top" in sent
+    assert "choice (one number" not in sent
+
+
+def test_a_choice_the_model_slips_into_the_narration_changes_nothing(verified_map):
+    """It cannot take a different turn by answering as if it were still choosing."""
+    game = _game()
+    chat_fn = _answers('{"choice": 7, "reason": "Prefiro outra coisa."}')
+    decision = decide.decide(game, chat_fn=chat_fn, think=False)
+    assert decision.plan is decision.considered[0].plan
+    assert decision.chosen_by == "score"
+
+
+def test_a_silent_model_costs_a_plainer_sentence_and_never_a_different_turn(verified_map):
+    def chat_fn(messages, **kwargs):
+        raise LLMError("ollama is down")
+
+    game = _game()
+    with_model = decide.decide(game, chat_fn=_answers('{"reason": "Fico e compro."}'), think=False)
+    without = decide.decide(game, chat_fn=chat_fn, think=False)
+
+    assert without.plan.describe() == with_model.plan.describe()
+    assert without.narrated_by == "template" and without.reason
+    assert without.chosen_by == "score"

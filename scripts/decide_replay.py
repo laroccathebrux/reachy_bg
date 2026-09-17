@@ -1,9 +1,10 @@
 """How much does the reasoning model add over the score that already ranks the turns?
 
-``decide()`` scores every legal turn, keeps a shortlist, and asks the model to pick one of it.
-When the model does not answer, ``kept[0]`` - the best-scored turn - is the decision, and the
-whole pipeline still works. So the model is worth what it adds *over that fallback*, and this
-measures it on the same situations, with whatever models are installed:
+``decide()`` scores every legal turn and takes the best one; the model is handed that turn and
+asked only for the sentence. It was not always so, and this script is why: it puts the model
+back in the choice (``model_picks=True``) and measures what that arrangement is worth over the
+score it would be replacing. On 2026-09-17 the answer was "less than nothing" - see MODEL_PICKS
+in src/strategy/decide.py - and this is how that answer gets re-checked when a model changes:
 
     uv run python scripts/decide_replay.py
     uv run python scripts/decide_replay.py --models qwen3.6:35b-mlx,qwen2.5:3b --repeat 3
@@ -125,7 +126,12 @@ def main(argv: list[str] | None = None) -> int:
             for _ in range(args.repeat):
                 started = time.perf_counter()
                 try:
-                    decision = decide(game, language=args.language, chat_fn=_ask(model))
+                    # model_picks: decide() no longer lets the model choose (its default was
+                    # settled by this very script on 2026-09-17). Measuring the arrangement
+                    # that was dropped is the only way to know whether dropping it still holds.
+                    decision = decide(
+                        game, language=args.language, chat_fn=_ask(model), model_picks=True
+                    )
                 except LLMError as exc:
                     run.failures += 1
                     print(f"   {model}: no answer ({exc})")

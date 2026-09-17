@@ -10,19 +10,24 @@ hundred of them. Handing all of those to the model is the wrong shape of problem
 list alone is thousands of prompt tokens, which on this Mac is the largest part of the wait, and
 a model reading two hundred numbered lines picks worse, not better.
 
-So the work is split the way each side is good at it. A **score** here throws away what is
-plainly bad - Rest at full Health, walking away from the only Gate, buying with nothing in the
-Reserve - and keeps a shortlist that still holds one plan of every kind, so no whole idea is
-lost. The **model** then weighs the shortlist against the state of the game and writes the
-sentence a player would say. It may only answer with a number from the list; anything else is
-refused and asked again once, and if it cannot answer at all the best-scored plan stands with
-the score's own words. The robot always plays.
+So the work is split the way each side turned out to be good at it. A **score** here throws away
+what is plainly bad - Rest at full Health, walking away from the only Gate, buying with nothing
+in the Reserve - ranks what is left, and **takes the top one**. The **model** is then handed
+that turn, and the score's own words for why it won, and asked for the sentence a player would
+say. It never chooses. If it cannot answer at all, the score says it itself in plainer words and
+the turn is unchanged. The robot always plays.
 
-**The score is not the decision.** It is deliberately simple and readable, every term named in
-``Weights``, so that when the owner disagrees with a shortlist there is one number to argue
-about. Every plan that was cut is kept in ``Decision.considered`` and logged: a plan the owner
-would have played that the score threw away is the dataset that fixes the score, and later the
-world model of Phase 5.
+That division was measured, not assumed (``scripts/decide_replay.py``, 2026-09-17). The model
+agreed with the score in 21 of 24 decisions and then 13 of 16, **every disagreement made the
+turn worse**, and it answered differently on the same situation in 3 of 8 cases. It is a bad
+chooser and a good speaker. ``MODEL_PICKS`` and ``decide(model_picks=True)`` put it back in the
+choice, which is how the measuring goes on being possible.
+
+**The score is the decision, and it is meant to be argued with.** It is deliberately simple and
+readable, every term named in ``Weights``, so that when the owner disagrees with a turn there is
+one number to change. Every plan that was cut is kept in ``Decision.considered`` and logged: a
+plan the owner would have played that the score threw away is the dataset that fixes the score,
+and later the world model of Phase 5.
 
 **Unknowns are not scored away.** A candidate that depends on something the robot cannot see -
 which Monster that piece is, what a Reserve card costs - keeps its question, and the question
@@ -39,7 +44,12 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from src.llm.ollama_client import LLMError, chat
-from src.llm.prompts import DECISION_SCHEMA, decision_messages
+from src.llm.prompts import (
+    DECISION_SCHEMA,
+    NARRATION_SCHEMA,
+    decision_messages,
+    narration_messages,
+)
 from src.logger import get_logger
 from src.strategy import map_graph, moves
 from src.strategy.game import GameState, InvestigatorState
@@ -49,6 +59,16 @@ from src.strategy.reference import mystery
 log = get_logger(__name__)
 
 SHORTLIST = 8  # turns shown to the model; the rest are logged, not offered
+# Does the model choose the turn, or only say it? Measured with scripts/decide_replay.py on
+# 2026-09-17: qwen3.6:35b-mlx agreed with the score in 21 of 24 decisions and then 13 of 16, and
+# every single time it disagreed the turn it took was worse - it dropped the Rest of a hurt
+# investigator, it added an Acquire Assets against an empty Reserve, and it gave up a Trade that
+# was only possible because another investigator was standing on that space. It also answered
+# differently on the same situation in 3 of 8 cases, so the same table state does not produce
+# the same turn twice. So it does not choose. It still writes the sentence, which is the half it
+# is good at, and its worst failure now costs a clumsy sentence instead of a worse move.
+# scripts/decide_replay.py passes model_picks=True to go on measuring the other arrangement.
+MODEL_PICKS = False
 MAX_EFFECT_CHARS = 220  # a card's printed text is quoted, not retold, but not in full either
 NUM_CTX = 8192  # always explicit: Ollama otherwise reserves the model's native window
 
@@ -354,6 +374,7 @@ class Decision:
     ask: str = ""  # the model's own question, written in the language the table is speaking
     questions: tuple[str, ...] = ()  # everything the plan depends on, in English, for the log
     chosen_by: str = "score"  # "model" when the LLM picked it, "score" when it fell back
+    narrated_by: str = "template"  # who wrote `reason`: "model", or "template" from the score
     considered: tuple[Scored, ...] = ()
     seconds: float = 0.0
     refusals: tuple[str, ...] = field(default_factory=tuple)
@@ -369,6 +390,7 @@ class Decision:
             "ask": self.ask,
             "questions": list(self.questions),
             "chosen_by": self.chosen_by,
+            "narrated_by": self.narrated_by,
             "seconds": round(self.seconds, 2),
             "refusals": list(self.refusals),
             "considered": [s.record() for s in self.considered],
@@ -393,9 +415,15 @@ def decide(
     advice: list[dict[str, Any]] | None = None,
     plan: Any = None,
     think: bool = False,
+    model_picks: bool = MODEL_PICKS,
     chat_fn: Callable[..., Any] = chat,
 ) -> Decision:
     """Pick this investigator's turn and explain it in one to three spoken sentences.
+
+    The **score** picks the turn; the model is asked only to say it out loud. That split was
+    measured rather than assumed - see ``MODEL_PICKS`` above and ``scripts/decide_replay.py`` -
+    and ``model_picks=True`` puts the model back in the choice, which is how the measuring is
+    kept honest.
 
     ``think`` is off by default because it was measured on this Mac and is not worth it: with the
     model warm, a turn takes 4 s without the reasoning trace and 114 s with it, and the long
@@ -436,30 +464,57 @@ def decide(
     rules = rules_of(kept)
     if rules:
         state_text += "\nThe actions in the list, as the reference card prints them:\n" + rules
-    messages = decision_messages(state_text, options_text(kept), language)
     chosen, reason, ask, by = kept[0], "", "", "score"
-    for attempt in (1, 2):
+    said_by = "template"
+    if model_picks:
+        messages = decision_messages(state_text, options_text(kept), language)
+        for attempt in (1, 2):
+            try:
+                reply = chat_fn(messages, num_ctx=NUM_CTX, think=think, format=DECISION_SCHEMA)
+            except LLMError as exc:
+                log.warning("decide: the model did not answer (%s); the score decides", exc)
+                break
+            picked, reason, ask = _read_reply(reply.text)
+            if picked is not None and 1 <= picked <= len(kept):
+                chosen, by, said_by = kept[picked - 1], "model", "model"
+                break
+            log.info(
+                "decide: attempt %d gave %r, which is not one of the %d turns", attempt, picked, len(kept)
+            )
+            messages = messages + [
+                {"role": "assistant", "content": reply.text},
+                {
+                    "role": "user",
+                    "content": (
+                        "That is not one of the turns. Answer again with choice between 1 and "
+                        f"{len(kept)}."
+                    ),
+                },
+            ]
+            reason = ""
+    else:
+        # The turn is settled; the model is handed it, and the score's own words for why, and
+        # asked for the sentence. A model that cannot answer costs a plainer sentence and never
+        # a different turn, which is the whole point of doing it this way round.
+        messages = narration_messages(
+            state_text,
+            chosen.plan.describe(),
+            "; ".join(chosen.reasons),
+            options_text(kept[1:]),
+            language,
+        )
         try:
-            reply = chat_fn(messages, num_ctx=NUM_CTX, think=think, format=DECISION_SCHEMA)
+            reply = chat_fn(messages, num_ctx=NUM_CTX, think=think, format=NARRATION_SCHEMA)
         except LLMError as exc:
-            log.warning("decide: the model did not answer (%s); the score decides", exc)
-            break
-        picked, reason, ask = _read_reply(reply.text)
-        if picked is not None and 1 <= picked <= len(kept):
-            chosen, by = kept[picked - 1], "model"
-            break
-        log.info("decide: attempt %d gave %r, which is not one of the %d turns", attempt, picked, len(kept))
-        messages = messages + [
-            {"role": "assistant", "content": reply.text},
-            {
-                "role": "user",
-                "content": f"That is not one of the turns. Answer again with choice between 1 and {len(kept)}.",
-            },
-        ]
-        reason = ""
+            log.warning("decide: the model did not answer (%s); the score says it itself", exc)
+        else:
+            _, reason, ask = _read_reply(reply.text)
+            if reason.strip():
+                said_by = "model"
 
     if not reason.strip():
         reason = _fallback_reason(chosen)
+        said_by = "template"
     asked = tuple(dict.fromkeys(([ask.strip()] if ask.strip() else []) + list(questions)))
     decision = Decision(
         chosen.plan,
@@ -467,14 +522,16 @@ def decide(
         ask=ask.strip(),
         questions=asked,
         chosen_by=by,
+        narrated_by=said_by,
         considered=tuple(sorted(scored, key=lambda s: -s.score)),
         seconds=time.perf_counter() - started,
         refusals=blocked,
     )
     log.info(
-        "decide: %s (%s, %.1fs, %d plans, %d shown)",
+        "decide: %s (chosen by the %s, said by the %s, %.1fs, %d plans, %d shown)",
         decision.plan.describe() if decision.plan else "nothing",
         by,
+        said_by,
         decision.seconds,
         len(scored),
         len(kept),

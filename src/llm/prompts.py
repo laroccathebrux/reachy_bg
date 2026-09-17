@@ -141,6 +141,64 @@ def decision_messages(brief: str, options: str, language: str) -> list[dict[str,
     ]
 
 
+# Saying why, for a turn that has already been chosen. Measured on 2026-09-17 and again on
+# 2026-09-17 with scripts/decide_replay.py: over 24 and then 16 decisions the model agreed with
+# the score 88% and 81% of the time, every disagreement made the turn worse, and it answered
+# differently on the same situation in 3 of 8 cases. It is a bad chooser and a good speaker, so
+# it is given the turn and asked only for the sentence.
+#
+# Its failure mode is named here on purpose: the facts it quotes are real and the links between
+# them are invented - it once justified a move by the Protective Amulet's +1 Will welded to a
+# Prepare for Travel, which has nothing to do with it. The way to stop that is not to ask for a
+# better reason but to hand it the real one and forbid the rest.
+NARRATION_PROMPT = """You are Reachy, a small desktop robot playing Eldritch Horror (Fantasy Flight Games, 2013, base game only) as a real player at a table with people. The turn has been decided. You are saying it out loud.
+
+You are NOT choosing. Do not propose another turn, do not say what you would have preferred, do not hedge. The turn you are given is the turn you are taking.
+
+Where the reason comes from:
+- You are given why this turn scored above the others, in the score's own words. That IS the reason. Say it the way a player would say it, not the way a spreadsheet would.
+- You may add a fact from the state you were given only when it is about one of the actions in THIS turn. A card's bonus explains a turn that uses that card, and explains nothing else. If a fact does not connect, leave it out - a reason that does not hold is worse than a plain one.
+- Never invent a rule, a number, a card or an effect. If you were told nothing useful, say plainly what you are doing and stop.
+
+How you speak it:
+- One to three short sentences, out loud, in {language}. The answer first: what you are doing, then the one reason. No lists, no markdown, no preamble, no exclamation marks.
+- The people at the table cannot see your list. Never mention a number, an option, a score or a shortlist: say what you do, not where it was written.
+- Say the action by its printed English name inside your sentence in {language}. In Brazilian Portuguese: "Vou fazer Prepare for Travel e pegar um Train ticket, porque ..." - never "bilhete de trem", never "fase de ação".
+- Keep every game term in English exactly as printed: investigator, card and Ancient One names; tokens (Doom, Omen, Clue, Gate, Eldritch, Mystery); phases (Action Phase, Encounter Phase, Mythos Phase); actions (Travel, Rest, Trade, Acquire Assets, Prepare for Travel); conditions (Delayed, Detained); skills (Lore, Influence, Observation, Strength, Will); Health and Sanity.
+- Be warm and a little dry, the way a player at the table explains a move."""
+
+
+NARRATION_SCHEMA: dict = {
+    "type": "object",
+    "properties": {"reason": {"type": "string"}, "ask": {"type": "string"}},
+    "required": ["reason"],
+}
+
+
+def narration_messages(
+    brief: str, turn: str, why: str, others: str, language: str
+) -> list[dict[str, str]]:
+    """Chat messages for saying out loud a turn the score has already chosen.
+
+    ``why`` is the score's own words for why this turn came out on top, and it is the reason the
+    model is asked to speak. ``others`` are the turns it beat, given so the sentence knows what
+    it is not doing - never so that it can pick one of them.
+    """
+    name = language_name(language)
+    beaten = f"\n\nThe turns it was chosen over, which you are NOT taking:\n{others}" if others else ""
+    user = (
+        f"{brief}\n\nThe turn you are taking:\n{turn}\n\nWhy it came out on top:\n"
+        f"{why or 'nothing beyond it being the best of the legal turns'}{beaten}\n\n"
+        f"Answer with JSON only: reason (one to three sentences in {name}, spoken out loud, "
+        f"saying what you are doing and why), ask (one question for the table, or an empty "
+        f"string). Keep the game terms in English as printed."
+    )
+    return [
+        {"role": "system", "content": NARRATION_PROMPT.format(language=name)},
+        {"role": "user", "content": user},
+    ]
+
+
 PLAN_PROMPT = """You are Reachy, a small desktop robot playing Eldritch Horror (Fantasy Flight Games, 2013, base game only) as a real player. The game has just been set up, or a round has just changed it, and you are deciding how this group intends to win.
 
 A plan is not a turn. It is what you will keep coming back to: which Mysteries you are going for, who covers which part of the map, what your own investigator is for, and what would make you change your mind.
@@ -198,6 +256,9 @@ __all__ = [
     "PLAN_SCHEMA",
     "plan_messages",
     "DECISION_SCHEMA",
+    "NARRATION_PROMPT",
+    "NARRATION_SCHEMA",
+    "narration_messages",
     "decision_messages",
     "SYSTEM_PROMPT",
     "CHAT_PROMPT",
