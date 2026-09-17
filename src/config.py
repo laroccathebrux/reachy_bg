@@ -180,6 +180,10 @@ ELEVEN_AGENT_NAME = os.getenv("ELEVEN_AGENT_NAME", "Reachy Eldritch Horror")
 ELEVEN_AGENT_LLM = os.getenv("ELEVEN_AGENT_LLM", "gpt-4.1-mini")
 ELEVEN_TURN_TIMEOUT_S = float(os.getenv("ELEVEN_TURN_TIMEOUT_S", "300"))
 ELEVEN_MAX_DURATION_S = _env_int("ELEVEN_MAX_DURATION_S", 7200)
+# Audio went to the agent and nothing came back for this long: the cloud session is probably
+# dead. The table hears silence and, without this, so does the log - measured against the
+# 2026-09-17 session, where a healthy answer came back 1.2 to 2.5 s after the gate released.
+AGENT_QUIET_S = float(os.getenv("AGENT_QUIET_S", "12"))
 # The robot speaker is a USB audio device on the Mac ("Reachy Mini Audio"); streaming to it
 # directly is the only audible path for streamed audio on macOS.
 AUDIO_OUTPUT_DEVICE = _env_str("AUDIO_OUTPUT_DEVICE", "Reachy Mini Audio")
@@ -314,6 +318,7 @@ __all__ = [
     "ELEVEN_AGENT_LLM",
     "ELEVEN_TURN_TIMEOUT_S",
     "ELEVEN_MAX_DURATION_S",
+    "AGENT_QUIET_S",
     "AUDIO_OUTPUT_DEVICE",
     "HEAD_SWAY",
     "LOCAL_TTS_VOICES",

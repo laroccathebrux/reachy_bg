@@ -360,3 +360,51 @@ def test_a_voice_wholly_inside_the_playback_is_still_the_robots_own(tmp_path):
     assert verdict.decision.reason == "self_echo"
     assert verdict.route == "echo_gate"
     assert asr.calls == 0  # nothing even worth transcribing
+
+
+def test_an_unnamed_voice_under_the_robots_own_is_never_forwarded(tmp_path):
+    """2026-09-17: "Uma coisa?" - the tail of the robot's own "...mais alguma coisa?" - carried
+    too few content words for looks_like_echo, so with the gate off it was forced through to the
+    agent, which stopped answering the table for the rest of the session. The voiceprint had
+    already said it matched nobody."""
+    k, audio, asr, _, _ = keeper(
+        tmp_path,
+        [Result("Uma coisa?")],
+        answer_everything=True,
+        names=("Alessandro",),
+        spoken_recently=lambda: "Quer que eu ajude com mais alguma coisa?",
+    )
+    u = utterance(100.0)
+    k.audio.last_played_at = 100.2  # the voice began under the playback
+    verdict = k.judge(u, "", 0.07)  # and no voiceprint matched it
+    assert verdict.route == "discarded"
+    assert audio.calls == [("discard", u.ended_at)]
+
+
+def test_a_named_voice_under_the_robots_own_still_goes_through(tmp_path):
+    """The guard must not eat a player who talks over the end of a sentence."""
+    k, audio, asr, _, _ = keeper(
+        tmp_path,
+        [Result("a primeira ação da Jacqueline Fine vai ser viajar")],
+        answer_everything=True,
+        names=("Alessandro",),
+        spoken_recently=lambda: "Quer que eu ajude com mais alguma coisa?",
+    )
+    u = utterance(100.0)
+    k.audio.last_played_at = 100.2
+    verdict = k.judge(u, "Alessandro", 0.73)
+    assert verdict.route == "released"
+
+
+def test_with_nobody_enrolled_the_guard_does_not_swallow_the_table(tmp_path):
+    """No voiceprints means no voice ever has a name; the guard has to stay out of the way."""
+    k, audio, asr, _, _ = keeper(
+        tmp_path,
+        [Result("a primeira ação da Jacqueline Fine vai ser viajar")],
+        answer_everything=True,
+        names=(),  # nobody enrolled: the voiceprint says nothing about anybody
+        spoken_recently=lambda: "Quer que eu ajude com mais alguma coisa?",
+    )
+    u = utterance(100.0)
+    k.audio.last_played_at = 100.2
+    assert k.judge(u, "", 0.0).route == "released"

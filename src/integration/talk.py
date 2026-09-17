@@ -70,6 +70,7 @@ import numpy as np
 
 from src.config import (
     ADDRESSEE_GATE,
+    AGENT_QUIET_S,
     DEFAULT_LANGUAGE,
     DIARIZER_URL,
     ELEVENLABS_API_KEY,
@@ -246,6 +247,12 @@ class Table:
         self.restart: Any = None  # set by main: restart(language, text)
         self._switching = False
         self.keeper: Gatekeeper | None = None  # set by main once the table size is known
+        # The agent going quiet is invisible from here: the gate keeps releasing, the frames keep
+        # going out, and the table gets silence. On 2026-09-17 three sentences were forwarded
+        # (107, 112 and 41 frames) and never answered, and the log said nothing for 90 seconds.
+        self.waiting_since: float | None = None  # a released utterance with no transcript yet
+        self.waiting_text = ""
+        self.mute_warnings = 0
         self._judge_queue: queue.Queue[tuple[Utterance, str, float] | None] = queue.Queue()
         self._judge: threading.Thread | None = None
 
@@ -294,6 +301,8 @@ class Table:
             )
             if verdict.route == "echo_gate":
                 continue
+            if verdict.route in ("released", "early") and verdict.forwarded:
+                self.released(verdict.text)  # start the clock on the agent answering
             log.info(
                 "gate [%s %.2f%s] %s: %r  (%s, %s; whisper %d ms, decided %d ms after the voice ended)",
                 name or "?",
@@ -307,8 +316,32 @@ class Table:
                 verdict.decision_ms,
             )
 
+    def released(self, text: str) -> None:
+        """The gate sent an utterance to the agent: start waiting for it to come back."""
+        if self.waiting_since is None:
+            self.waiting_since = time.monotonic()
+            self.waiting_text = text
+
+    def check_agent_alive(self, quiet_s: float = AGENT_QUIET_S) -> bool:
+        """Say so, once, when audio went to the agent and nothing came back. True when warned."""
+        started = self.waiting_since
+        if started is None or time.monotonic() - started < quiet_s:
+            return False
+        self.waiting_since = None
+        self.mute_warnings += 1
+        self.diary.write("agent_quiet", seconds=round(quiet_s, 1), text=self.waiting_text)
+        log.warning(
+            "the agent has not answered for %.0fs (%d so far); last sent: %r. "
+            "The table is hearing silence - the cloud session may be dead; restart if it keeps up.",
+            quiet_s,
+            self.mute_warnings,
+            self.waiting_text[:60],
+        )
+        return True
+
     def on_user_transcript(self, text: str) -> None:
         """What the agent's ASR made of the audio the gate released (the diary keeps both texts)."""
+        self.waiting_since = None
         heard = self.ear.last_utterance()
         name, score = ("", 0.0) if heard is None else (heard[1], heard[2])
         language = detect_language(text)
@@ -374,6 +407,7 @@ class Table:
         )
         while not stop.is_set():
             time.sleep(0.1)
+            self.check_agent_alive()
             if not self.audio.gated:
                 checker = None
                 if spotter is not None and self.audio.holding:

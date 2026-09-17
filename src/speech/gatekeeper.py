@@ -257,7 +257,27 @@ class Gatekeeper:
         # the learned classifier will be trained on, and a session with the gate off has to stay
         # comparable with one with it on. Only the routing changes: everything is released. The
         # robot's own echo is the exception, because answering itself is not answering the table.
-        forced = self.answer_everything and not decision.addressed and decision.reason != "self_echo"
+        #
+        # The text check alone is not enough for that exception. A short fragment of the robot's
+        # own sentence - "Uma coisa?" out of "...mais alguma coisa?" - carries too few content
+        # words to be recognised, and on 2026-09-17 one was forwarded and the agent stopped
+        # answering the table for the rest of the session. The voiceprint is the better witness:
+        # it matched nobody at all, and the voice began while the speaker was playing. That is
+        # the robot, not a player. Only meaningful when somebody is enrolled - with an empty
+        # registry no voice ever has a name and this would drop the whole table.
+        anonymous_echo = (
+            bool(self.names)
+            and not speaker
+            and utterance.started_at <= self.audio.last_played_at + ECHO_SLACK_S
+        )
+        if anonymous_echo and not decision.addressed:
+            log.info("no voice matched and it began under the robot's own: %r", text[:60])
+        forced = (
+            self.answer_everything
+            and not decision.addressed
+            and decision.reason != "self_echo"
+            and not anonymous_echo
+        )
 
         forwarded = dropped = 0
         confident_switch = (
