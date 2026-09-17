@@ -138,3 +138,12 @@ def test_the_turn_closing_silence_goes_out_even_when_nothing_was_held():
     assert audio.release_utterance(clock.t) == 0
     tail = sent[2:]
     assert len(tail) == 4 and all(not np.frombuffer(b, dtype=np.int16).any() for b in tail)
+
+
+def test_release_drops_the_echo_half_of_a_voice_that_ran_over_the_robot():
+    audio, clock, sent = make()
+    echo_end = feed(audio, clock, [1, 2])  # the robot's own voice at the microphone
+    end = feed(audio, clock, [3, 4, 5])  # the player, talking over the end of it
+    assert audio.release_utterance(end, since=echo_end) == 3
+    assert [np.frombuffer(b, dtype=np.int16)[0] for b in sent[:3]] == [3, 4, 5]
+    assert audio.discarded_frames == 2  # the echo is dropped, never sent

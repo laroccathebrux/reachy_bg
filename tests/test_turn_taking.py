@@ -159,7 +159,9 @@ class _Audio:
         self.dropped += 1
         return 4
 
-    def release_utterance(self, until: float) -> int:
+    def release_utterance(
+        self, until: float, *, since: float | None = None, tail_s: float | None = None
+    ) -> int:
         self.released += 1
         return 4
 

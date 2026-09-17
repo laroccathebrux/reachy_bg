@@ -35,6 +35,7 @@ log = get_logger(__name__)
 SWITCH_MIN_WORDS = 3  # shorter fragments get a wrong language too easily to restart the session
 SWITCH_MIN_CONFIDENCE = 0.8
 ECHO_SLACK_S = 0.5  # an utterance that started this long after playback ended can still be echo
+MIN_OVER_S = 0.7  # voice left after the robot stopped, below which there is nothing to judge
 
 
 @dataclass(frozen=True)
@@ -146,6 +147,28 @@ class Gatekeeper:
         return self.audio.pass_through() if self.active else 0
 
     # ------------------------------------------------------------------ judgement
+    def _after_playback(self, utterance: Any) -> tuple[Any, float | None]:
+        """``(audio, echo_until)``: the part of the voice the robot was not making.
+
+        ``echo_until`` is the monotonic time the robot's own voice stopped reaching the
+        microphone, or None when it was not speaking during this one. Frames that arrived
+        before it are its echo and neither transcribed nor forwarded.
+        """
+        cut = self.audio.last_played_at + self.audio.gate_tail_s
+        audio = utterance.audio
+        rate = utterance.sample_rate or 1
+        if utterance.started_at > cut or utterance.ended_at - cut < MIN_OVER_S:
+            return audio, None
+        keep = int((utterance.ended_at - cut) * rate)
+        if keep <= 0 or keep >= audio.size:
+            return audio, None
+        log.info(
+            "voice over the robot: dropping %.1fs of echo, judging the last %.1fs",
+            (audio.size - keep) / rate,
+            keep / rate,
+        )
+        return audio[-keep:], cut
+
     def judge(self, utterance: Any, speaker: str = "", score: float = 0.0, label: str = "") -> Verdict:
         until = utterance.ended_at
         early_at = self.early_release_at
@@ -164,10 +187,19 @@ class Gatekeeper:
             verdict = Verdict("echo_gate", Decision(False, "self_echo", 0.9), "", "", 0, dropped, 0, 0)
             return self._done(verdict, utterance, speaker, score, label, None)
 
+        # A player who starts talking over the end of the robot's sentence leaves the local VAD
+        # one unbroken voice whose first half is the robot's own echo. Judging that whole thing
+        # asks the wrong question: most of the words are the robot's, looks_like_echo says echo,
+        # and self_echo is the one verdict that survives even with the gate off - so the player's
+        # sentence went in the bin with the echo. On 2026-09-17 "Dá uma olhada, porque eu já te
+        # falei isso" was dropped that way. Only what was said after the speaker fell silent is
+        # theirs, so only that is transcribed, and only that is forwarded.
+        audio, echo_until = self._after_playback(utterance)
+
         started = self.clock()
         with self.asr_lock:
             result = self.transcriber.transcribe(
-                utterance.audio, utterance.sample_rate, fallback_language=self.voice_language(), fast=True
+                audio, utterance.sample_rate, fallback_language=self.voice_language(), fast=True
             )
         whisper_ms = int((self.clock() - started) * 1000)
         text = (result.text or "").strip()
@@ -181,7 +213,12 @@ class Gatekeeper:
 
         spoke_at = self.robot_spoke_at()
         since = None if spoke_at is None else round(max(0.0, utterance.started_at - spoke_at), 1)
-        may_be_echo = utterance.started_at <= self.audio.last_played_at + ECHO_SLACK_S
+        # A voiceprint that matched a player settles it: the robot's own voice scores far below
+        # the match threshold against every enrolled player (measured over a session: echo at most
+        # 0.25, a player 0.45 and up), so a name here means a person spoke, whatever the words
+        # look like. Without this the text alone decided, and a sentence that repeated the robot's
+        # own words back at it - which is what people do - read as echo.
+        may_be_echo = not speaker and utterance.started_at <= self.audio.last_played_at + ECHO_SLACK_S
         if may_be_echo and looks_like_echo(text, self.spoken_recently()):
             decision = Decision(False, "self_echo", 0.9)
         else:
@@ -234,13 +271,13 @@ class Gatekeeper:
             if decision.addressed and confident_switch:
                 route = "switched"
         elif forced:
-            forwarded = self.audio.release_utterance(until)
+            forwarded = self.audio.release_utterance(until, since=echo_until)
             route = "released"
         elif decision.addressed and confident_switch:
             dropped = self.audio.discard_utterance(until)
             route = "switched"
         elif decision.addressed:
-            forwarded = self.audio.release_utterance(until)
+            forwarded = self.audio.release_utterance(until, since=echo_until)
             route = "released"
         else:
             dropped = self.audio.discard_utterance(until)

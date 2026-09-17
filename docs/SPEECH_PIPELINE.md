@@ -253,6 +253,18 @@ themselves live in `src/speech/addressee.py` and the gate in `src/speech/gatekee
 With one person at the table (`--humans 1`) or `--always-answer` the gate is off and the
 decisions are logged as shadow decisions only.
 
+One voice, two speakers: when a player starts talking over the end of the robot's sentence
+the energy never drops, so the local VAD hands the gatekeeper a single utterance whose first
+half is the robot's own echo. Judged whole it is echo - most of the words are the robot's - and
+`self_echo` is the one verdict that survives `answer_everything`, so the player's sentence was
+discarded with it (2026-09-17, "Dá uma olhada, porque eu já te falei isso"). `_after_playback`
+now cuts at `last_played_at + gate_tail_s`: only what was said after the robot fell silent is
+transcribed, and `release_utterance(..., since=...)` forwards only those frames, so the agent
+never hears the robot's half either. A voice that ends before the robot does has no player half
+and is still dropped whole by the `echo_gate` branch. A voiceprint that matched a player also
+overrules the text: the robot's own voice measured at most 0.25 against an enrolled player and a
+player 0.45 and up, so a name there means a person spoke, whatever the words look like.
+
 There is a second gate, and it is easy to forget: the agent's own prompt used to end with
 "Answer when you are addressed... otherwise stay quiet". That rule is the right one while the
 local gate is on - the agent is a second opinion on what already got through - but with the

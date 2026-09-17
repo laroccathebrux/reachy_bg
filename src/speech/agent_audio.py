@@ -251,13 +251,22 @@ class RobotAudioInterface:
             if self._passing and self._pass_frames_left < 0:
                 self._pass_frames_left = self._tail_frames()
 
-    def release_utterance(self, until: float, *, tail_s: float | None = None) -> int:
+    def release_utterance(
+        self, until: float, *, since: float | None = None, tail_s: float | None = None
+    ) -> int:
         """Forward the held frames that arrived up to ``until`` (monotonic) plus a silent tail.
 
-        Frames that arrived later belong to the next utterance and stay held. Returns the
-        frames forwarded (the tail not counted).
+        Frames that arrived later belong to the next utterance and stay held. ``since`` drops
+        the frames that arrived before it: when a player starts talking over the end of the
+        robot's sentence the local VAD hears one unbroken voice, and the first half of it is the
+        robot's own echo. Forwarding that half makes the agent answer itself. Returns the frames
+        forwarded (the tail and anything dropped before ``since`` not counted).
         """
         pending, kept = self._split(until)
+        if since is not None:
+            echo = [f for f in pending if f[0] <= since]
+            pending = [f for f in pending if f[0] > since]
+            self.discarded_frames += len(echo)
         sent = sum(1 for _, chunk in pending if self._send(chunk))
         # The tail goes out even when nothing was held: frames that streamed live through an
         # open gate still need the silence that closes the agent's turn, and holding the

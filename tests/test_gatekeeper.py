@@ -16,8 +16,8 @@ class FakeAudio:
         self.last_played_at = 0.0
         self.gate_tail_s = 0.3
 
-    def release_utterance(self, until):
-        self.calls.append(("release", until))
+    def release_utterance(self, until, *, since=None, tail_s=None):
+        self.calls.append(("release", until, since))
         return 8
 
     def discard_utterance(self, until):
@@ -87,7 +87,7 @@ def test_named_utterance_is_released_and_logged_as_live_decision(tmp_path):
     clock["t"] = u.ended_at + 0.9
     verdict = k.judge(u, "Alessandro", 0.7)
     assert verdict.route == "released" and verdict.decision.reason == "name"
-    assert audio.calls == [("release", u.ended_at)] and verdict.forwarded == 8
+    assert audio.calls == [("release", u.ended_at, None)] and verdict.forwarded == 8
     assert verdict.decision_ms == 900
     record = logged(tmp_path)[0]
     assert record["shadow"] is False and record["route"] == "released" and record["speaker"] == "Alessandro"
@@ -298,7 +298,8 @@ def test_with_the_gate_off_the_robot_still_does_not_answer_itself(tmp_path):
         spoken_recently=lambda: "Doom advances by one",
     )
     k.audio.last_played_at = 100.5
-    verdict = k.judge(utterance(100.0), "Alessandro", 0.7)
+    # The robot's own voice matches no voiceprint: identify() gives no name under the threshold.
+    verdict = k.judge(utterance(100.0), "", 0.05)
     assert verdict.decision.reason == "self_echo"
     assert verdict.route == "discarded"
 
@@ -316,3 +317,46 @@ def test_with_the_gate_off_a_turn_call_is_still_the_robots_own(tmp_path):
     assert verdict.route == "my_turn"
     assert handled == ["é a vez da Lily Chen"]
     assert audio.calls[-1][0] == "discard"  # the agent must not answer it as well
+
+
+def test_a_player_talking_over_the_end_of_a_sentence_is_not_thrown_out_with_the_echo(tmp_path):
+    """2026-09-17, the one that made the owner shout. The robot said "Se quiser, posso ajudar a
+    lembrar qual é ou o que ele faz. Só me dizer o nome dele." and the owner answered over the
+    end of it. The local VAD heard one unbroken 8.2 s voice, most of its words were the robot's,
+    looks_like_echo said echo - and self_echo is the one verdict that survives with the gate off,
+    so "Dá uma olhada, porque eu já te falei isso" was discarded instead of answered."""
+    robot_line = "Se quiser, posso ajudar a lembrar qual é ou o que ele faz. Só me dizer o nome dele."
+    k, audio, asr, _, _ = keeper(
+        tmp_path,
+        [Result("Dá uma olhada, porque eu já te falei isso.")],  # only the tail is transcribed
+        answer_everything=True,
+        spoken_recently=lambda: robot_line,
+    )
+    # The voice starts inside the playback and runs 3.5 s past the end of it.
+    u = utterance(100.0, speech_s=7.6)
+    k.audio.last_played_at = 104.0  # the robot stopped here; +gate_tail_s is the cut
+
+    verdict = k.judge(u, "Alessandro", 0.36)
+
+    assert verdict.decision.reason != "self_echo"
+    assert verdict.route == "released"
+    assert verdict.text == "Dá uma olhada, porque eu já te falei isso."
+    # Only the words said after the robot went quiet are forwarded, so it cannot answer itself.
+    assert audio.calls == [("release", u.ended_at, 104.3)]
+
+
+def test_a_voice_wholly_inside_the_playback_is_still_the_robots_own(tmp_path):
+    """The guard above must not become "never echo": a voice that ends before the robot does
+    has no player half to keep, and the whole thing is the echo."""
+    k, audio, asr, _, _ = keeper(
+        tmp_path,
+        [Result("Doom advances by one")],
+        answer_everything=True,
+        spoken_recently=lambda: "Doom advances by one",
+    )
+    u = utterance(100.0, speech_s=2.0)
+    k.audio.last_played_at = 110.0  # still playing well past the end of this voice
+    verdict = k.judge(u, "", 0.04)
+    assert verdict.decision.reason == "self_echo"
+    assert verdict.route == "echo_gate"
+    assert asr.calls == 0  # nothing even worth transcribing
