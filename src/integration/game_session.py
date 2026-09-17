@@ -365,6 +365,7 @@ class GameSession:
                 "note": "I do not know which investigator I am playing. Ask the table.",
             }
         game = self.game
+        game.checkpoint("my turn")
         if not game.started:
             game.begin_round()  # "vamos começar o primeiro turno" opens round 1
             self.save()
@@ -388,9 +389,11 @@ class GameSession:
                 "move": last.plan.describe() if last is not None and last.plan else "",
                 "where": game.where_we_are(),
                 "say": "",
+                "can_undo": game.undoable,
                 "note": (
                     "I have already taken my two actions this round. Say what I did, do not "
-                    "decide again, and ask the table to move on to the next phase."
+                    "decide again, and ask the table to move on to the next phase. If they say "
+                    "it was resolved wrongly and want it done again, call undo_that first."
                 ),
             }
         decision = self.taker.decide_now(language)
@@ -437,6 +440,7 @@ class GameSession:
 
     def effect_report(self, investigator: str = "", **deltas: Any) -> dict[str, Any]:
         """Write what an encounter did into the investigator's sheet, and read it back."""
+        self.game.checkpoint("that effect")
         result = self.game.apply_effect(investigator, **deltas)
         if result.get("applied"):
             self.save()
@@ -446,6 +450,7 @@ class GameSession:
     def phase_report(self) -> dict[str, Any]:
         """Move the game on one phase - the table said the phase or the round is over."""
         was = self.game.where_we_are()
+        self.game.checkpoint("moving the game on a phase")
         self.game.advance_phase()
         self.save()
         return {
@@ -459,6 +464,7 @@ class GameSession:
     def encounter_report(self, name: str = "") -> dict[str, Any]:
         """The table says an investigator has resolved its encounter this round."""
         who = name.strip() or (self.taker.investigator or "")
+        self.game.checkpoint(f"{who}'s encounter" if who else "that encounter")
         ok, why = self.game.record_encounter(who)
         if ok:
             self.save()
@@ -469,8 +475,39 @@ class GameSession:
             "note": "" if ok else why,
         }
 
+    def undo_report(self) -> dict[str, Any]:
+        """Take back the last thing the table had the robot write down.
+
+        People misread a card, say the wrong number and change their minds, and until this
+        existed nothing could be taken back: told "you resolved that wrong, do it again", the
+        machine refused, the robot restated what it had done, and the table had to play on with
+        a state it knew was wrong. It reaches back through the session, one change per call.
+        """
+        undone = self.game.undo()
+        if undone is None:
+            return {
+                "undone": "",
+                "where": self.game.where_we_are(),
+                "note": (
+                    "There is nothing of this game I can take back - nothing has been written "
+                    "down since I opened it. Say that, and ask them what should be written."
+                ),
+            }
+        self.save()
+        return {
+            "undone": undone,
+            "where": self.game.where_we_are(),
+            "can_undo": self.game.undoable,
+            "note": (
+                f"I took back {undone}. Say so in one short sentence, say where the game is now, "
+                "and ask them what it should be instead. Do not decide anything again until "
+                "they answer."
+            ),
+        }
+
     def note_report(self, said: str) -> dict[str, Any]:
         """Keep what the table just said about this game, and say it back so they hear it landed."""
+        self.game.checkpoint("that note")
         written = self.game.note(said)
         if written is None:
             return {

@@ -184,6 +184,13 @@ ELEVEN_MAX_DURATION_S = _env_int("ELEVEN_MAX_DURATION_S", 7200)
 # dead. The table hears silence and, without this, so does the log - measured against the
 # 2026-09-17 session, where a healthy answer came back 1.2 to 2.5 s after the gate released.
 AGENT_QUIET_S = float(os.getenv("AGENT_QUIET_S", "12"))
+# How much of an utterance has to stand above its own quiet floor before the "the agent has gone
+# silent" clock is started for it (src/speech/microphone.py, voiced_fraction). Whisper writes
+# "E aí" over room noise, the gate forwards it, the agent rightly says nothing, and the watchdog
+# reported the cloud session dead: 73 of those in one day against 422 real utterances. Measured
+# over 218 forwarded clips, 0.60 leaves 2 of 51 noise clips arming the clock and 96 of 167 real
+# sentences still arming it - and missing one costs nothing, because the next sentence arms it.
+AGENT_QUIET_MIN_VOICE = float(os.getenv("AGENT_QUIET_MIN_VOICE", "0.60"))
 # The robot speaker is a USB audio device on the Mac ("Reachy Mini Audio"); streaming to it
 # directly is the only audible path for streamed audio on macOS.
 AUDIO_OUTPUT_DEVICE = _env_str("AUDIO_OUTPUT_DEVICE", "Reachy Mini Audio")
@@ -326,6 +333,7 @@ __all__ = [
     "ELEVEN_TURN_TIMEOUT_S",
     "ELEVEN_MAX_DURATION_S",
     "AGENT_QUIET_S",
+    "AGENT_QUIET_MIN_VOICE",
     "AUDIO_OUTPUT_DEVICE",
     "HEAD_SWAY",
     "LOCAL_TTS_VOICES",

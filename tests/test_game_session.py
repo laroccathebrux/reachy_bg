@@ -454,3 +454,82 @@ def test_the_phase_moves_on_and_survives_the_session(tmp_path):
     again = _session(tmp_path, _Said())
     assert again.game.round == 1 and again.game.phase == "encounter"
     assert again.game.by_name("Lily Chen").encountered is True
+
+
+def test_a_turn_resolved_wrongly_can_be_taken_back(tmp_path):
+    """Told "you resolved that wrong, do it again", the machine refused and the robot restated
+    what it had done. Now it takes it back and asks what it should have been."""
+    from src.strategy.game import ROBOT, GameState
+
+    game = GameState()
+    game.set_ancient_one("Azathoth")
+    mine = game.add_investigator("Lily Chen", controller=ROBOT)
+    assert mine is not None
+    game.begin_round()
+    session = GameSession(game, path=tmp_path / "game.json", background=False)
+
+    session.effect_report("Lily Chen", health=-2, sanity=-1)
+    assert (mine.health, mine.sanity) == (4, 5)
+
+    report = session.undo_report()
+    assert report["undone"] == "that effect"
+    assert (mine.health, mine.sanity) == (6, 6)
+    # And it survives: the file on disk is the one the table would come back to.
+    assert GameState.load(tmp_path / "game.json").by_name("Lily Chen").health == 6
+
+
+def test_undo_reaches_back_one_real_change_at_a_time(tmp_path):
+    from src.strategy.game import ROBOT, GameState
+
+    game = GameState()
+    game.set_ancient_one("Azathoth")
+    game.add_investigator("Lily Chen", controller=ROBOT)
+    game.begin_round()
+    session = GameSession(game, path=tmp_path / "game.json", background=False)
+
+    session.note_report("Tem um Gate aberto em Roma.")
+    session.effect_report("Lily Chen", clues=2)
+    assert game.notes == ["Tem um Gate aberto em Roma."] and game.by_name("Lily Chen").clues == 2
+
+    assert session.undo_report()["undone"] == "that effect"
+    assert game.by_name("Lily Chen").clues == 0 and game.notes  # the note is still there
+    assert session.undo_report()["undone"] == "that note"
+    assert game.notes == []
+    assert session.undo_report()["undone"] == ""  # nothing left to take back
+
+
+def test_a_door_that_was_refused_is_not_something_to_undo(tmp_path):
+    """Writing the same note twice changes nothing; undoing that would look to the table like
+    the robot ignoring them, and the real change would need two goes."""
+    from src.strategy.game import ROBOT, GameState
+
+    game = GameState()
+    game.set_ancient_one("Azathoth")
+    game.add_investigator("Lily Chen", controller=ROBOT)
+    game.begin_round()
+    session = GameSession(game, path=tmp_path / "game.json", background=False)
+
+    session.effect_report("Lily Chen", clues=1)
+    session.note_report("Tem um Gate aberto em Roma.")
+    session.note_report("Tem um Gate aberto em Roma.")  # already written: nothing happens
+
+    assert session.undo_report()["undone"] == "that note"
+    assert game.notes == []
+    assert session.undo_report()["undone"] == "that effect"
+    assert game.by_name("Lily Chen").clues == 0
+
+
+def test_the_phase_can_be_moved_back(tmp_path):
+    """"você passou a fase cedo demais" used to be unanswerable."""
+    from src.strategy.game import ROBOT, GameState
+
+    game = GameState()
+    game.set_ancient_one("Azathoth")
+    game.add_investigator("Lily Chen", controller=ROBOT)
+    game.begin_round()
+    session = GameSession(game, path=tmp_path / "game.json", background=False)
+
+    session.phase_report()
+    assert game.phase == "encounter"
+    assert session.undo_report()["undone"] == "moving the game on a phase"
+    assert game.phase == "action" and game.round == 1

@@ -116,6 +116,47 @@ def rms_dbfs(frame: np.ndarray) -> float:
     return 20.0 * math.log10(rms) if rms > 0 else _SILENCE_DB
 
 
+# A hiss and a sentence can reach the same peak level, so a level threshold cannot tell them
+# apart; what a voice has and room noise does not is *shape*. These are the numbers measured
+# over the 218 utterances this Mac forwarded to the agent on 2026-09-17 (218 = 51 of Whisper's
+# "E aí" on near-silence, 167 real sentences), each clip judged against its own floor so the
+# measure survives a change of microphone gain:
+#
+#   voiced fraction   noise: median 0.31, p95 0.59     speech: median 0.61, p05 0.41
+#
+# Absolute peak level was measured too and separates no better (noise p95 -25.3 dBFS against
+# speech p05 -31.5, which overlap), so the scale-free measure is the one kept.
+VOICE_FRAME_S = 0.03
+VOICE_OVER_FLOOR_DB = 8.0  # a frame this far above the clip's own quiet 20% is carrying voice
+
+
+def voiced_fraction(
+    audio: np.ndarray, sample_rate: int = AUDIO_SAMPLE_RATE, frame_s: float = VOICE_FRAME_S
+) -> float:
+    """What share of this clip is loud relative to its own quiet floor: 0.0 to 1.0.
+
+    Speech is a run of syllables well above the gaps between them; room noise, a fan or a chair
+    is level, so almost nothing in it stands out from its own floor. Nothing here looks at the
+    words or at the language, deliberately: filtering speech by Whisper's language confidence
+    was measured and rejected, because 16 of 422 real sentences fall under any useful threshold
+    and they are the Portuguese ones with English names in them - the worst ones to lose.
+    """
+    if audio is None:
+        return 0.0
+    samples = np.asarray(audio)
+    window = max(1, int(frame_s * sample_rate))
+    frames = samples.size // window
+    if frames < 4:
+        return 0.0
+    block = samples[: frames * window].astype(np.float64).reshape(frames, window)
+    if samples.dtype.kind in "iu":
+        block = block / _INT16_FULL_SCALE
+    power = (block * block).mean(axis=1)
+    db = 10.0 * np.log10(np.maximum(power, 1e-12))
+    floor = float(np.percentile(db, 20))
+    return float((db > floor + VOICE_OVER_FLOOR_DB).sum() / frames)
+
+
 def resample(audio: np.ndarray, src_rate: int, dst_rate: int) -> np.ndarray:
     """Resample mono int16 audio; integer ratios use a box filter plus decimation."""
     if src_rate == dst_rate or audio.size == 0:
@@ -502,6 +543,8 @@ __all__ = [
     "resolve_input_device",
     "resample",
     "rms_dbfs",
+    "voiced_fraction",
+    "VOICE_OVER_FLOOR_DB",
     "read_wav",
     "write_wav",
 ]

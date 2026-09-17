@@ -70,6 +70,7 @@ import numpy as np
 
 from src.config import (
     ADDRESSEE_GATE,
+    AGENT_QUIET_MIN_VOICE,
     AGENT_QUIET_S,
     DEFAULT_LANGUAGE,
     DIARIZER_URL,
@@ -300,11 +301,14 @@ class Table:
                 dropped=verdict.dropped,
                 decision_ms=verdict.decision_ms,
                 whisper_ms=verdict.whisper_ms,
+                voice=round(verdict.voice, 3),
             )
             if verdict.route == "echo_gate":
                 continue
             if verdict.route in ("released", "early") and verdict.forwarded:
-                self.released(verdict.text)  # start the clock on the agent answering
+                # An early release is the robot's own name heard mid-sentence: a person said it,
+                # so there is nothing to weigh up. Everything else is judged on its audio.
+                self.released(verdict.text, 1.0 if verdict.route == "early" else verdict.voice)
             log.info(
                 "gate [%s %.2f%s] %s: %r  (%s, %s; whisper %d ms, decided %d ms after the voice ended)",
                 name or "?",
@@ -335,8 +339,20 @@ class Table:
 
         return hold_still(hold_s)
 
-    def released(self, text: str) -> None:
-        """The gate sent an utterance to the agent: start waiting for it to come back."""
+    def released(self, text: str, voice: float = 1.0) -> None:
+        """The gate sent an utterance to the agent: start waiting for it to come back.
+
+        ``voice`` is how much of that audio stood above its own quiet floor. Whisper writes words
+        over room noise - "E aí" 73 times in one day against 422 real utterances - the gate
+        forwards them with the gate off, the agent rightly answers nothing, and the watchdog
+        called the cloud session dead. So the clock is not started for audio that does not look
+        like somebody speaking. Not started, not filtered: the audio still goes to the agent
+        exactly as before, because the one thing not to do here is decide what is speech and
+        throw away what fails - 16 of 422 real sentences fail every test worth having.
+        """
+        if voice < AGENT_QUIET_MIN_VOICE:
+            log.debug("not starting the agent clock for %r (voice %.2f)", text[:40], voice)
+            return
         if self.waiting_since is None:
             self.waiting_since = time.monotonic()
             self.waiting_text = text

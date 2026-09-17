@@ -481,3 +481,61 @@ def test_a_reading_cannot_hold_the_floor_for_ever(tmp_path):
     k.hold_floor(seconds=5)
     clock["t"] = 206.0  # past the deadline, whatever the reader is doing
     assert k.check_floor() is True and not k.holding_floor
+
+
+def test_the_ear_holds_the_floor_without_waiting_for_the_agent_to_call_a_tool(tmp_path):
+    """The ``listening`` tool was never called once in a whole session, so nothing protected a
+    card reading from being answered over. The rule is local now: the announcement is still
+    routed to the agent (so it can say "estou ouvindo"), and everything after it is held."""
+    k, audio, asr, clock, _ = keeper(
+        tmp_path,
+        [
+            Result("Espera, deixa eu ler a carta de Shanghai"),
+            Result("você procura por cópias antigas do jornal"),
+        ],
+        answer_everything=True,
+    )
+    assert not k.holding_floor
+
+    announcement = k.judge(utterance(200.0), "Alessandro", 0.7)
+    assert announcement.route == "released"  # the agent hears it and answers that it is listening
+    assert k.holding_floor and k.floors == 1
+
+    clock["t"] = 204.0
+    reading = k.judge(utterance(203.0), "Alessandro", 0.7)
+    assert reading.route == "listening"  # held in the buffer, not answered over
+    assert audio.calls == [("release", 202.6, None)]  # only the announcement went up
+
+
+def test_a_question_with_wait_in_front_of_it_is_still_a_question(tmp_path):
+    """Holding the floor on "espera, quantos dados eu rolo?" would leave the table waiting for
+    an answer that never comes."""
+    k, _, _, _, _ = keeper(tmp_path, [Result("Espera, quantos dados eu rolo?")], answer_everything=True)
+    assert k.judge(utterance(200.0), "Alessandro", 0.7).route == "released"
+    assert not k.holding_floor
+
+
+def test_the_robot_saying_wait_does_not_gag_the_table(tmp_path):
+    """Its own echo announces nothing: it is the robot's voice coming back through the mic."""
+    k, _, _, _, _ = keeper(
+        tmp_path,
+        [Result("Espera, deixa eu ler a carta")],
+        answer_everything=True,
+        spoken_recently=lambda: "Espera, deixa eu ler a carta",
+    )
+    k.audio.last_played_at = 200.2
+    verdict = k.judge(utterance(200.0), "", 0.0)
+    assert verdict.decision.reason == "self_echo"
+    assert not k.holding_floor
+
+
+def test_the_reader_saying_wait_again_restarts_the_clock(tmp_path):
+    """A hold that is already running is refreshed, not ignored: a long card gets a long hold."""
+    k, _, _, clock, _ = keeper(
+        tmp_path, [Result("Espera, ainda estou lendo")], answer_everything=True
+    )
+    k.hold_floor(seconds=5)
+    held_until = k.floor_held_until
+    clock["t"] = 203.0
+    assert k.judge(utterance(202.0), "Alessandro", 0.7).route == "listening"
+    assert k.floor_held_until > held_until

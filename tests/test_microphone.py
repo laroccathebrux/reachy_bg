@@ -248,3 +248,41 @@ def test_wav_round_trip(tmp_path):
         wav.writeframes(stereo_48k.astype(np.int16).tobytes())
     mono = read_wav(tmp_path / "s.wav")
     assert mono.size == audio.size
+
+
+def test_voiced_fraction_separates_a_voice_from_room_noise():
+    """Whisper writes "E aí" over near-silence and the watchdog called the agent dead for it.
+    A voice is syllables standing above the gaps between them; a hiss is level."""
+    from src.speech.microphone import voiced_fraction
+
+    rate = 16_000
+    rng = np.random.default_rng(7)
+    hiss = (rng.normal(0, 300, rate * 2)).astype(np.int16)
+    assert voiced_fraction(hiss, rate) < 0.4
+
+    # Syllables: 120 ms of voice, 120 ms of near-silence, over and over.
+    beat = int(0.12 * rate)
+    loud = (rng.normal(0, 6000, beat)).astype(np.int16)
+    quiet = (rng.normal(0, 200, beat)).astype(np.int16)
+    speech = np.concatenate([loud, quiet] * 8)
+    assert voiced_fraction(speech, rate) > 0.4
+
+
+def test_voiced_fraction_is_not_fooled_by_the_gain():
+    """It is measured against the clip's own floor, so turning the microphone up changes nothing."""
+    from src.speech.microphone import voiced_fraction
+
+    rate = 16_000
+    rng = np.random.default_rng(11)
+    beat = int(0.12 * rate)
+    speech = np.concatenate(
+        [(rng.normal(0, 6000, beat)).astype(np.int16), (rng.normal(0, 200, beat)).astype(np.int16)] * 8
+    )
+    quieter = (speech // 4).astype(np.int16)
+    assert abs(voiced_fraction(speech, rate) - voiced_fraction(quieter, rate)) < 0.1
+
+
+def test_voiced_fraction_of_a_clip_too_short_to_judge_is_zero():
+    from src.speech.microphone import voiced_fraction
+
+    assert voiced_fraction(np.zeros(100, dtype=np.int16), 16_000) == 0.0

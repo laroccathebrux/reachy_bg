@@ -82,6 +82,8 @@ You are a player, not an assistant. Your investigator's moves are yours: decide 
 
 The game has a shape and you keep it: every round is Action Phase, then Encounter Phase, then Mythos Phase. game_state tells you the round, the phase and who the table is waiting on - read it, never ask. take_turn is the robot's own two actions and it records them, so once it has acted it says so instead of deciding again: do not ask it twice in one round and do not repeat the plan back a second time. next_phase is how the table moves the game on. If somebody reads out what a Reserve card costs, call card_value at once - asking for the same number twice is the fastest way to look like you were not listening.\n\nWhen somebody says a card came up - "saiu a carta 8, lê a parte de Rome" - call encounter_card with that number and that space, and read back what it returns, as it is. If it says nobody has read that card, ask them to read that part of it out once; it is remembered afterwards. Never make up what a card says.
 
+Being corrected is part of playing. If the table says something was resolved wrongly, written down wrong or done too early, call undo_that - it takes the last change back - then say what you took back and ask what it should be instead. Never tell them it cannot be changed, and never argue that you already did it: they are looking at the board and you are not.
+
 You do not remember the game; the robot does, in its own state file. game_state is how you read it and remember_setup and remember_note are how you write to it. Never say you have written something down, noted it or will remember it unless one of those two tools has just returned - if somebody tells you something about this game and asks you to keep it, call remember_note before you answer. Call game_state BEFORE asking the table anything about the setup - the Ancient One, who plays which investigator, whose turn it is, the Mystery, the Reserve - and before answering any question about "our game". Never ask for something game_state already knows, and never contradict it. If game_state says something is missing, that is the one thing worth asking for."""
 
 _TOOLS: list[dict[str, Any]] = [
@@ -264,6 +266,20 @@ _TOOLS: list[dict[str, Any]] = [
             "first, then say one short line that you are listening and nothing else. It keeps "
             "you quiet through the pauses people take while reading, which is when you were "
             "interrupting them. You will hear the whole thing at once when they stop."
+        ),
+        "parameters": {"type": "object", "properties": {}, "required": []},
+        "expects_response": True,
+        "response_timeout_secs": 10,
+    },
+    {
+        "type": "client",
+        "name": "undo_that",
+        "description": (
+            "The table says something you wrote down was wrong - an encounter resolved the "
+            "wrong way, the wrong numbers, a phase moved on too early, a turn that has to be "
+            "taken again. This takes back the last thing that was written, one call per change. "
+            "Call it BEFORE saying you cannot change it: you can. Then say what you took back "
+            "and ask them what it should be instead."
         ),
         "parameters": {"type": "object", "properties": {}, "required": []},
         "expects_response": True,
@@ -956,6 +972,17 @@ def client_tools(
             on_call("listening", parameters, result)
         return json.dumps(result, ensure_ascii=False)
 
+    def undo_that(parameters: dict) -> str:
+        playing = session() if session is not None else None
+        result = (
+            {"undone": "", "note": "There is no game to take anything back from."}
+            if playing is None
+            else playing.undo_report()
+        )
+        if on_call:
+            on_call("undo_that", parameters, result)
+        return json.dumps(result, ensure_ascii=False)
+
     def skill_test(parameters: dict) -> str:
         playing = session() if session is not None else None
         dice = parameters.get("dice") or []
@@ -1014,6 +1041,7 @@ def client_tools(
     tools.register("card_value", card_value)
     tools.register("scan_board", scan_board)
     tools.register("listening", listening)
+    tools.register("undo_that", undo_that)
     tools.register("skill_test", skill_test)
     tools.register("apply_effect", apply_effect)
     tools.register("next_phase", next_phase)

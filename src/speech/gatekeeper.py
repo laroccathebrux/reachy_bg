@@ -28,7 +28,15 @@ from dataclasses import dataclass
 from typing import Any
 
 from src.logger import get_logger
-from src.speech.addressee import Decision, TurnLogger, decide, looks_like_echo, mentions_robot
+from src.speech.microphone import voiced_fraction
+from src.speech.addressee import (
+    Decision,
+    TurnLogger,
+    announces_reading,
+    decide,
+    looks_like_echo,
+    mentions_robot,
+)
 
 log = get_logger(__name__)
 
@@ -61,6 +69,10 @@ class Verdict:
     dropped: int  # 250 ms frames the agent never heard
     decision_ms: int  # from the VAD closing the utterance to the audio being released or dropped
     whisper_ms: int
+    # How much of the judged audio stands above its own quiet floor. Whisper writes words over
+    # room noise; this says whether there was a voice making them. Only the watchdog reads it -
+    # nothing is ever dropped on it, so being wrong here costs a warning, never a sentence.
+    voice: float = 0.0
 
 
 class Gatekeeper:
@@ -125,6 +137,7 @@ class Gatekeeper:
         self.last_voice_at = 0.0
         self.early_text = ""
         self.early_language = ""
+        self.floors = 0  # how often the floor was held this session, whoever armed it
         self.verdicts: list[Verdict] = []
 
     def _floor_seconds(self, speaker: str, label: str) -> float | None:
@@ -155,16 +168,20 @@ class Gatekeeper:
     def holding_floor(self) -> bool:
         return self.floor_held_until is not None and self.clock() < self.floor_held_until
 
-    def hold_floor(self, seconds: float = LISTEN_MAX_S) -> dict[str, Any]:
+    def hold_floor(self, seconds: float = LISTEN_MAX_S, by: str = "the agent") -> dict[str, Any]:
         """Somebody is about to read something out: stay quiet until they stop for good.
 
         Their audio still reaches the utterance buffer, and goes to the agent in one piece when
         the reading ends - so the robot hears the whole card, once, instead of answering into
         the middle of it.
+
+        ``by`` is who armed it: the agent calling the ``listening`` tool, or this ear hearing the
+        announcement itself. Both end the same way, at :meth:`check_floor`.
         """
         self.floor_held_until = self.clock() + max(1.0, seconds)
         self.last_voice_at = self.clock()
-        log.info("holding the floor for a reading (up to %.0fs)", seconds)
+        self.floors += 1
+        log.info("holding the floor for a reading (up to %.0fs, armed by %s)", seconds, by)
         return {"listening": True, "note": "Say in one short line that you are listening, then stop."}
 
     def release_floor(self) -> int:
@@ -184,6 +201,23 @@ class Gatekeeper:
         if now < self.floor_held_until and now - self.last_voice_at < LISTEN_SILENCE_S:
             return False
         self.release_floor()
+        return True
+
+    def _hold_if_announced(self, text: str, language: str, decision: Decision) -> bool:
+        """Arm the hold here when the speaker announced a reading, instead of waiting for a tool.
+
+        The ``listening`` tool exists for this and the agent went a whole session without calling
+        it once: the prompt produced the visible half ("estou ouvindo") and nothing held the
+        floor, so the next breath of the reading was released and answered over. The transcript
+        is already here and the rule is already written, so the ear arms it itself - and the
+        utterance that announced it is still routed normally, which is what lets the agent say
+        the one short line back.
+
+        The robot's own echo never arms it: it says "espera" itself.
+        """
+        if decision.reason == "self_echo" or not announces_reading(text, language):
+            return False
+        self.hold_floor(by="the ear")
         return True
 
     # ------------------------------------------------------------------ early release
@@ -243,6 +277,9 @@ class Gatekeeper:
         # falei isso" was dropped that way. Only what was said after the speaker fell silent is
         # theirs, so only that is transcribed, and only that is forwarded.
         audio, echo_until = self._after_playback(utterance)
+        # Measured on the same slice Whisper is about to see, so the words and the voice that
+        # made them are judged on the same audio.
+        voice = voiced_fraction(audio, utterance.sample_rate)
 
         started = self.clock()
         with self.asr_lock:
@@ -255,7 +292,7 @@ class Gatekeeper:
         if not text:
             dropped = self.audio.discard_utterance(until) if self.active else 0
             verdict = Verdict(
-                "no_speech", Decision(False, "no_speech", 0.5), "", language, 0, dropped, 0, whisper_ms
+                "no_speech", Decision(False, "no_speech", 0.5), "", language, 0, dropped, 0, whisper_ms, voice
             )
             return self._done(verdict, utterance, speaker, score, label, None)
 
@@ -298,7 +335,7 @@ class Gatekeeper:
             if handled:
                 dropped = self.audio.discard_utterance(until) if self.active else 0
                 self._floor_opened(speaker, label)
-                verdict = Verdict(handled, decision, text, language, 0, dropped, 0, whisper_ms)
+                verdict = Verdict(handled, decision, text, language, 0, dropped, 0, whisper_ms, voice)
                 return self._done(verdict, utterance, speaker, score, label, since)
 
         # With the gate off the rules still run and are still logged - that file is the dataset
@@ -332,11 +369,14 @@ class Gatekeeper:
         )
 
         self.last_voice_at = max(self.last_voice_at, utterance.ended_at)
+        announced = announces_reading(text, language) and decision.reason != "self_echo"
         if self.holding_floor and decision.reason != "name":
             # Held, not judged away: the frames stay in the buffer and go up in one piece when
             # the reading ends. Naming the robot still cuts through, because that is a person
             # deliberately stopping to talk to it.
-            verdict = Verdict("listening", decision, text, language, 0, 0, 0, whisper_ms)
+            if announced:
+                self.hold_floor(by="the ear")  # "espera, ainda estou lendo": the clock restarts
+            verdict = Verdict("listening", decision, text, language, 0, 0, 0, whisper_ms, voice)
             return self._done(verdict, utterance, speaker, score, label, since)
 
         forwarded = dropped = 0
@@ -364,8 +404,11 @@ class Gatekeeper:
             route = "discarded"
         if decision.addressed:
             self._floor_opened(speaker, label)
-        verdict = Verdict(route, decision, text, language, forwarded, dropped, 0, whisper_ms)
+        verdict = Verdict(route, decision, text, language, forwarded, dropped, 0, whisper_ms, voice)
         verdict = self._done(verdict, utterance, speaker, score, label, since)
+        # Armed after the routing, never before it: this sentence is the announcement and has to
+        # reach the agent for it to answer "estou ouvindo". What is held is everything after it.
+        self._hold_if_announced(text, language, decision)
         if route == "switched" and self.on_switch is not None:
             self.on_switch(language, text, f"whisper {result.language_confidence:.2f}")
         return verdict
@@ -382,6 +425,7 @@ class Gatekeeper:
             verdict.dropped,
             int((self.clock() - utterance.ended_at) * 1000),
             verdict.whisper_ms,
+            verdict.voice,
         )
         self.verdicts = (self.verdicts + [verdict])[-50:]
         self.turn_log.log(
@@ -399,6 +443,7 @@ class Gatekeeper:
             dropped=verdict.dropped,
             decision_ms=verdict.decision_ms,
             whisper_ms=verdict.whisper_ms,
+            voice=round(verdict.voice, 3),
             speech_s=round(utterance.speech_s, 2),
             capture=str(utterance.path) if getattr(utterance, "path", None) else "",
         )

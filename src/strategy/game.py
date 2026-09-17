@@ -44,6 +44,7 @@ ROBOT = "reachy"  # the controller value that means "the robot plays this invest
 PHASES = ("action", "encounter", "mythos")
 MAX_ACTIONS = 2  # GAME_REFERENCE.md: "up to 2 actions, each distinct action at most once per round"
 PHASE_NAMES = {"action": "Action Phase", "encounter": "Encounter Phase", "mythos": "Mythos Phase"}
+UNDO_DEPTH = 20  # how many changes back the table can go; a round is a handful of them
 
 
 @dataclass
@@ -136,6 +137,61 @@ class GameState:
         self.unresolved: list[str] = []  # names said that the reference did not recognise
         self.started_at = time.time()
         self.notes: list[str] = []
+        # What the state looked like before each of the last few things the table asked for, so
+        # that "you resolved that wrong, do it again" has somewhere to go. In memory only: a
+        # correction belongs to the conversation it happens in, and a file that carried every
+        # snapshot would grow with the game for a button nobody presses the next day.
+        self.history: list[tuple[str, dict[str, Any]]] = []
+
+    # ------------------------------------------------------------------ taking it back
+    # Everything written here is written because somebody said so out loud, and people misspeak,
+    # misread a card and change their minds. Until this existed a turn resolved wrongly could not
+    # be taken back: told "you resolved that wrong, do it again", the machine refused and the
+    # robot restated what it had done instead of saying it could not undo it.
+    #
+    # One checkpoint per thing the table asked for, not per field: a turn spends two actions and
+    # "refaz" means the turn, not half of it. The callers in src/integration/game_session.py are
+    # the doors, so the granularity is the tool call.
+
+    def checkpoint(self, label: str) -> None:
+        """Remember the state as it is now, before something changes it."""
+        self.history.append((label, self.record()))
+        del self.history[:-UNDO_DEPTH]
+
+    @staticmethod
+    def _undone_by(snapshot: dict[str, Any]) -> dict[str, Any]:
+        """The parts of a record undo puts back, for comparing two of them.
+
+        The board is left out because it is the camera's, not the table's: a scan that happened
+        between the checkpoint and now must not make a change look like one.
+        """
+        return {k: v for k, v in snapshot.items() if k not in ("board", "briefing", "missing")}
+
+    def undo(self) -> str | None:
+        """Put the state back as it was before the last recorded change. Returns what was undone.
+
+        A door that was asked for and refused - a phase that could not advance, a note that was
+        already written - leaves a checkpoint that changes nothing, and undoing that would look
+        to the table like the robot ignoring them. Those are skipped, so one "refaz" always
+        reaches one real change.
+        """
+        while self.history:
+            label, snapshot = self.history.pop()
+            if self._undone_by(snapshot) == self._undone_by(self.record()):
+                continue  # nothing happened after this checkpoint; keep looking
+            self.apply_record(snapshot, quiet=True)
+            log.info("game: undid %s; back to %s", label, self.where_we_are())
+            return label
+        return None
+
+    @property
+    def undoable(self) -> str:
+        """What "do it again" would take back, or "" when there is nothing to take back."""
+        now = self._undone_by(self.record())
+        for label, snapshot in reversed(self.history):
+            if self._undone_by(snapshot) != now:
+                return label
+        return ""
 
     # ------------------------------------------------------------------ notes
     def note(self, text: str) -> str | None:
@@ -536,27 +592,39 @@ class GameState:
         path.write_text(json.dumps(self.record(), indent=1), encoding="utf-8")
         return path
 
-    @classmethod
-    def load(cls, path: Path) -> GameState:
-        data = json.loads(Path(path).read_text(encoding="utf-8"))
-        game = cls()
+    def apply_record(self, data: dict[str, Any], *, quiet: bool = False) -> GameState:
+        """Make this state be what ``record()`` wrote: reading a saved game, and undoing.
+
+        ``self.board`` is deliberately left alone. It is the camera's live view of the table, and
+        a scan is not something anybody can take back by saying "resolveu errado". A saved file
+        never carried it either.
+
+        Investigators already in play are written over in place rather than replaced. Undo runs
+        in the middle of a live session, where the turn taker and the board link are holding
+        those objects; handing them a fresh list would leave every one of them pointing at a
+        sheet nobody updates again.
+        """
+        self.ancient_one, self.doom = None, None
         if data.get("ancient_one"):
-            game.set_ancient_one(data["ancient_one"])
-        game.doom = data.get("doom", game.doom)
+            self.set_ancient_one(data["ancient_one"])
+        self.doom = data.get("doom", self.doom)
         for key in ("omen", "mystery", "phase", "lead"):
-            setattr(game, key, data.get(key, "") or "")
-        game.mysteries_solved = int(data.get("mysteries_solved", 0))
-        game.round = int(data.get("round", 0))
-        game.reserve = list(data.get("reserve", []))
-        game.unresolved = list(data.get("unresolved", []))
-        game.notes = list(data.get("notes", []))
-        game.started_at = float(data.get("started_at", time.time()))
-        for item in data.get("investigators", []):
+            setattr(self, key, data.get(key, "") or "")
+        self.mysteries_solved = int(data.get("mysteries_solved", 0))
+        self.round = int(data.get("round", 0))
+        self.reserve = list(data.get("reserve", []))
+        self.unresolved = list(data.get("unresolved", []))
+        self.notes = list(data.get("notes", []))
+        self.started_at = float(data.get("started_at", time.time()))
+        saved = data.get("investigators", [])
+        keep = {investigator(item["name"]).name for item in saved if investigator(item.get("name", ""))}
+        self.investigators = [i for i in self.investigators if i.name in keep]
+        for item in saved:
             # Quietly, because add_investigator logs the sheet and the saved Health, Sanity and
             # Clues are restored below it. Logging at creation printed a full sheet for an
             # investigator who had taken damage, which sent the owner and this session chasing an
             # edit that had in fact been written.
-            state = game.add_investigator(
+            state = self.add_investigator(
                 item["name"],
                 controller=item.get("controller", ""),
                 space=item.get("space", ""),
@@ -564,6 +632,8 @@ class GameState:
             )
             if state is None:
                 continue
+            state.controller = item.get("controller", state.controller)
+            state.space = item.get("space", "") or state.space
             for key in ("health", "sanity", "clues", "piece_id", "train_tickets", "ship_tickets"):
                 if item.get(key) is not None:
                     setattr(state, key, item[key])
@@ -572,8 +642,22 @@ class GameState:
             state.actions = list(item.get("actions", []))
             state.components = list(item.get("components", []))
             state.encountered = bool(item.get("encountered", False))
-            log.info("game: %s", state.describe())
-        return game
+            if not quiet:
+                log.info("game: %s", state.describe())
+        return self
+
+    @classmethod
+    def load(cls, path: Path) -> GameState:
+        data = json.loads(Path(path).read_text(encoding="utf-8"))
+        return cls().apply_record(data)
 
 
-__all__ = ["MAX_ACTIONS", "PHASES", "PHASE_NAMES", "ROBOT", "GameState", "InvestigatorState"]
+__all__ = [
+    "MAX_ACTIONS",
+    "PHASES",
+    "PHASE_NAMES",
+    "ROBOT",
+    "UNDO_DEPTH",
+    "GameState",
+    "InvestigatorState",
+]

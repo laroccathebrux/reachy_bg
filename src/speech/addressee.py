@@ -172,6 +172,53 @@ def is_question(text: str, language: str) -> bool:
     return len(pair) == 2 and pair in _INTERROGATIVE_PAIRS.get(language, frozenset())
 
 
+# Somebody saying out loud that they are about to read something, or asking the robot to hold
+# on because they have not finished. The answer to one of these is silence, not a sentence: a
+# reader pauses to breathe, VAD_SILENCE_MS is 600 ms, and the robot answered into the gap.
+#
+# The agent has a ``listening`` tool for exactly this and never called it once in a whole
+# session, so the mechanism sat idle while the prompt got the visible half right. This is the
+# same judgement made locally, on the transcript the gate already has, before anything reaches
+# the cloud - and a rule that fires here costs no tokens and cannot be forgotten by a model.
+# Matched against accent-stripped, lower-cased text (``_strip_accents``), so the patterns carry
+# no accents either: "peraí" arrives here as "perai" and r"\bpera[ií]\b" would never fire.
+_READING_AHEAD = {
+    "pt-BR": (
+        r"\b(?:vou|vamos|deixa\s+eu|deixe\s+me|me\s+deixa)\s+ler\b",
+        r"\b(?:estou|to|tou)\s+(?:lendo|falando|explicando|terminando)\b",
+        r"\bdeixa\s+eu\s+(?:falar|terminar|acabar|explicar)\b",
+        r"\bnao\s+(?:me\s+)?interromp",
+        r"\bso\s+um\s+(?:minuto|segundo|instante|momento|pouco|pouquinho)\b",
+        r"\b(?:espera|esperai|perai|aguarda)\b",
+    ),
+    "en-US": (
+        r"\b(?:let\s+me|i'?ll|i\s+am\s+going\s+to|i'?m\s+going\s+to)\s+read\b",
+        r"\bi'?m\s+(?:reading|talking|explaining|still\s+\w+ing)\b",
+        r"\bi\s+am\s+(?:reading|talking|explaining)\b",
+        r"\blet\s+me\s+(?:finish|talk|explain)\b",
+        r"\bdon'?t\s+interrupt\b",
+        r"\b(?:hold\s+on|hang\s+on|one\s+(?:second|moment|minute))\b",
+        r"\bgive\s+me\s+a\s+(?:second|moment|minute)\b",
+        r"\bwait\b",
+    ),
+}
+
+
+def announces_reading(text: str, language: str) -> bool:
+    """Is the speaker telling the robot to wait while they read or finish talking?
+
+    A question never counts, however it is phrased: "espera, quantos dados eu rolo?" is a
+    question with "espera" in front of it, and holding the floor on it would leave the table
+    waiting for an answer that never comes. That is the same line the agent's prompt draws -
+    "somebody announcing what they are about to do is not a question" - drawn here instead.
+    """
+    if is_question(text, language):
+        return False
+    flat = _strip_accents(text.lower())
+    patterns = _READING_AHEAD.get(language) or _READING_AHEAD["en-US"]
+    return any(re.search(p, flat) for p in patterns)
+
+
 _GAME_TERMS = frozenset(
     "doom omen gate gates mystery mysteries clue clues monster monsters investigator investigators ancient "
     "asset assets spell spells artifact artifacts condition conditions encounter encounters mythos rumor "
@@ -346,4 +393,5 @@ __all__ = [
     "about_the_game",
     "second_person",
     "needs_rules",
+    "announces_reading",
 ]
