@@ -125,8 +125,11 @@ def test_a_scan_is_started_and_waited_for(monkeypatch):
         "at": 200.0,
         "ok": True,
         "mode": "detect",
-        "believed": [{"space": "Rome", "kind": "piece"}, {"space": None, "near": "Tokyo", "kind": "die"}],
-        "doubtful": [{"space": "London"}],
+        "believed": [
+            {"x": 1, "y": 1, "space": "Rome", "kind": "piece"},
+            {"x": 2, "y": 2, "space": None, "near": "Tokyo", "kind": "die"},
+        ],
+        "doubtful": [{"x": 3, "y": 3, "space": "London"}],
     }
 
     monkeypatch.setattr(
@@ -195,3 +198,44 @@ def test_no_camera_is_not_a_crash(monkeypatch):
     monkeypatch.setattr(httpx, "post", dead)
     out = scan()
     assert out["scanned"] is False and "camera is not running" in out["note"]
+
+
+def test_a_piece_the_vision_layer_would_not_claim_is_not_reported(monkeypatch):
+    """A piece can sit in both lists: the scan's own summary withholds the doubtful ones ("not
+    reporting 8: seen from one view only and never confirmed") while `believed` still carries
+    them. Reading only `believed` had the robot announce as a piece exactly what the vision
+    layer had decided not to claim (2026-09-17)."""
+    import httpx
+
+    from src.vision.board_link import scan
+
+    found = {
+        "at": 200.0,
+        "ok": True,
+        "mode": "detect",
+        "believed": [
+            {"x": 10, "y": 10, "space": "Rome", "kind": "piece", "name": "Portal"},
+            {"x": 12, "y": 14, "space": "Rome", "kind": "piece", "name": "Monster"},
+            {"x": 99, "y": 99, "space": "8", "kind": "piece", "name": None},
+        ],
+        "doubtful": [{"x": 99, "y": 99, "space": "8", "why": "seen from one view only"}],
+    }
+    polls = [0]
+    monkeypatch.setattr(
+        httpx,
+        "post",
+        lambda url, **k: type("R", (), {"status_code": 200, "raise_for_status": lambda s: None})(),
+    )
+
+    def get(url, **k):
+        polls[0] += 1
+        return type("R", (), {"json": lambda s: {"at": 100.0} if polls[0] == 1 else found})()
+
+    monkeypatch.setattr(httpx, "get", get)
+    out = scan(wait_s=5, poll_s=0.01)
+
+    where = [p["where"] for p in out["pieces"]]
+    assert where == ["Rome", "Rome"], "the doubtful one is left out"
+    assert out["count"] == 2 and out["unsure"] == 1
+    # Two pieces can share a space, so position and not space is the key.
+    assert [p["what"] for p in out["pieces"]] == ["Portal", "Monster"]

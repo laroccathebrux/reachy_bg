@@ -168,18 +168,37 @@ def scan(*, url: str = VISION_URL, wait_s: float = 40.0, poll_s: float = 1.0) ->
         if not isinstance(result, dict) or float(result.get("at") or 0.0) <= before:
             continue  # still the previous scan, or none yet: the sweep is not done
         if result.get("ok") and result.get("mode") == "detect":
+            # A piece can be in both lists: the scan's own summary withholds the doubtful ones
+            # ("not reporting 8: seen from one view only and never confirmed") while `believed`
+            # still carries them. Reading only `believed` announced as a piece exactly what the
+            # vision layer had decided not to claim, so its judgement is honoured here. Pixel
+            # position is the key, because two pieces can share a space - Rome held a Gate and a
+            # Monster on 2026-09-17.
+            def key(piece: dict[str, Any]) -> tuple[int, int] | None:
+                x, y = piece.get("x"), piece.get("y")
+                if x is None or y is None:
+                    return None  # no position to compare: never match, never silently drop
+                return (round(float(x)), round(float(y)))
+
+            doubtful = {k for k in (key(p) for p in (result.get("doubtful") or [])) if k}
+            kept = [p for p in (result.get("believed") or []) if (k := key(p)) is None or k not in doubtful]
             pieces = [
-                {"where": p.get("space") or p.get("near") or "off the spaces", "kind": p.get("kind", "piece")}
-                for p in (result.get("believed") or [])
+                {
+                    "where": p.get("space") or p.get("near") or "off the spaces",
+                    "kind": p.get("kind", "piece"),
+                    "what": p.get("name") or "",
+                }
+                for p in kept
             ]
             return {
                 "scanned": True,
                 "count": len(pieces),
                 "pieces": pieces[:MAX_PIECES],
-                "unsure": len(result.get("doubtful") or []),
+                "unsure": len(doubtful),
                 "note": (
-                    "This is what the camera found just now. It reports where pieces are, never "
-                    "which is which: ask the table to name anything that matters."
+                    "This is what the camera found just now, with anything it was unsure of left "
+                    "out. 'what' is only set for a piece it recognised by shape; everything else "
+                    "is a position and nothing more, so ask the table to name what matters."
                 ),
             }
     return {
