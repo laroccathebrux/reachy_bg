@@ -51,6 +51,7 @@ from src.llm.prompts import (
     narration_messages,
 )
 from src.logger import get_logger
+from src.strategy import intent as intents_module
 from src.strategy import map_graph, moves
 from src.strategy.game import GameState, InvestigatorState
 from src.strategy.moves import Situation, TurnPlan
@@ -94,6 +95,10 @@ class Weights:
     trade: float = 0.4
     monster_ahead: float = 2.0  # per named Monster on the space the turn ends on
     unknown: float = 0.2  # per thing the plan depends on that the robot cannot see
+    # What one priority decided between rounds is worth (src/strategy/intent.py). Deliberately
+    # the same size as one Monster: it re-ranks turns the score had nearly level and cannot
+    # overturn "there is a fight waiting on that space".
+    intent: float = 1.0
 
 
 DEFAULT_WEIGHTS = Weights()
@@ -111,7 +116,7 @@ class Scored:
         return {"score": round(self.score, 2), "reasons": list(self.reasons), **self.plan.record()}
 
 
-def goals(game: GameState) -> dict[str, list[str]]:
+def goals(game: GameState, intents: tuple[Any, ...] = ()) -> dict[str, list[str]]:
     """The board features worth walking towards, by space, as far as anything has named them.
 
     Gates and Clues are what an investigator travels for: a Gate closed is doom held back, a Clue
@@ -134,6 +139,10 @@ def goals(game: GameState) -> dict[str, list[str]]:
     if active is not None:
         for space in active.spaces:
             found.setdefault(space, []).append(f"the Mystery {active.name}")
+    # A space the round's own thinking decided to walk towards counts like any other
+    # destination, and is scored by the same distance term. One idea, one number.
+    for space in intents_module.reach_spaces(intents):
+        found.setdefault(space, []).append("where I decided to go this round")
     return found
 
 
@@ -156,11 +165,19 @@ def _monsters_on(game: GameState, space: str) -> list[str]:
 
 
 def score(
-    game: GameState, situation: Situation, plan: TurnPlan, weights: Weights = DEFAULT_WEIGHTS
+    game: GameState,
+    situation: Situation,
+    plan: TurnPlan,
+    weights: Weights = DEFAULT_WEIGHTS,
+    intents: tuple[Any, ...] = (),
 ) -> Scored:
-    """A readable number for one turn, and the reasons that made it."""
+    """A readable number for one turn, and the reasons that made it.
+
+    ``intents`` are the priorities the robot settled on between rounds, already checked against
+    the board by ``src.strategy.intent.verify``. They are bounded on purpose: see that module.
+    """
     value, reasons = 0.0, []
-    goal_labels = goals(game)
+    goal_labels = goals(game, intents)
     goal_spaces = list(goal_labels)
     before = map_graph.nearest(situation.space, goal_spaces)[1] if goal_spaces else None
     ends_at = plan.ends_at
@@ -208,6 +225,10 @@ def score(
         hurt = 1.0 + (situation.max_health - situation.health) / max(situation.max_health, 1)
         value -= weights.monster_ahead * len(monsters) * hurt
         reasons.append(f"ends the turn with {', '.join(monsters)} on the space, which means a fight")
+
+    meant, said = intents_module.bonus(intents, plan, ends_at, weights.intent)
+    value += meant
+    reasons.extend(said)
 
     value -= weights.unknown * len(plan.unknowns)
     return Scored(plan, value, tuple(reasons))
@@ -412,6 +433,7 @@ def decide(
     language: str = "en-US",
     limit: int = SHORTLIST,
     weights: Weights = DEFAULT_WEIGHTS,
+    intents: tuple[Any, ...] = (),
     advice: list[dict[str, Any]] | None = None,
     plan: Any = None,
     think: bool = False,
@@ -456,7 +478,7 @@ def decide(
             refusals=blocked,
         )
 
-    scored = [score(game, situation, plan, weights) for plan in all_plans]
+    scored = [score(game, situation, plan, weights, intents) for plan in all_plans]
     kept = shortlist(scored, limit)
     questions = tuple(dict.fromkeys(u for item in kept for u in item.plan.unknowns))
 

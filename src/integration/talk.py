@@ -601,6 +601,9 @@ def build_game_session(args: Any, diary: Diary, *, language: str) -> GameSession
         diary.write("game_plan", **plan.record())
     warm_up_reasoning()
     session.taker.on_decision = lambda decision, text: diary.write("turn", said=text, **decision.record())
+    # Every round's thinking goes in the diary whole - what it looked up, what it settled on, and
+    # every intent the board would not support. That file is where the owner argues with it.
+    session.thinker.on_done = lambda thinking: diary.write("thinking", **thinking.record())
     session.on_setup = lambda reading, text: diary.write("setup", heard=text, **reading.record())
     log.info("game: %s", session.game.briefing())
     diary.write("game_opened", briefing=session.game.briefing(), missing=session.game.missing())

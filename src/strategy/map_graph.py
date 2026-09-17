@@ -291,6 +291,15 @@ def nearest(start: str, goals: Iterable[str]) -> tuple[str | None, int | None]:
     return best, best_steps
 
 
+def all_spaces() -> tuple[str, ...]:
+    """Every space printed on the board, by the name src/vision/spaces.py gives it.
+
+    The authority on whether a space exists. Anything that takes a space name from outside this
+    code - what a person said, what a model wrote - checks it here first.
+    """
+    return tuple(BY_NAME)
+
+
 def unreachable() -> tuple[str, ...]:
     """Spaces no path touches. A space missing from the table would silently disappear."""
     return tuple(name for name in BY_NAME if not BY_SPACE.get(name))
@@ -298,6 +307,7 @@ def unreachable() -> tuple[str, ...]:
 
 __all__ = [
     "VERIFIED",
+    "all_spaces",
     "TRAIN",
     "SHIP",
     "UNCHARTED",

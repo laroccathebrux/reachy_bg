@@ -66,11 +66,16 @@ class TurnTaker:
         decide_fn: Callable[..., Decision] = decide,
         on_decision: Callable[[Decision, str], None] | None = None,
         background: bool = True,
+        intents: Callable[[], tuple[Any, ...]] = lambda: (),
     ) -> None:
         self.game = game
         self.say = say
         self.language = language
         self.plan = plan
+        # What the robot settled on between rounds (src/strategy/reflect.py), read at the moment
+        # it plays rather than held here: the thinking may have finished a second ago, or not at
+        # all, and either way the turn happens.
+        self.intents = intents
         self.decide_fn = decide_fn
         self.on_decision = on_decision
         self.background = background
@@ -141,7 +146,9 @@ class TurnTaker:
         with self._busy:
             started = time.monotonic()
             try:
-                decision = self.decide_fn(self.game, language=language, plan=self.plan)
+                decision = self.decide_fn(
+                    self.game, language=language, plan=self.plan, intents=self.intents()
+                )
             except Exception as exc:  # a decision that crashes must not take the turn down
                 log.exception("turn: the decision failed (%s)", exc)
                 return None
@@ -166,7 +173,9 @@ class TurnTaker:
                 self.say(NO_INVESTIGATOR.get(language, NO_INVESTIGATOR["en-US"]), language)
                 return
             try:
-                decision = self.decide_fn(self.game, language=language, plan=self.plan)
+                decision = self.decide_fn(
+                    self.game, language=language, plan=self.plan, intents=self.intents()
+                )
             except Exception as exc:  # a decision that crashes must not take the conversation down
                 log.exception("turn: the decision failed (%s)", exc)
                 return

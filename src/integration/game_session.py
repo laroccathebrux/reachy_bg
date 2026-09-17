@@ -37,11 +37,13 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from src.config import REFLECT_BETWEEN_ROUNDS
 from src.integration.turn_taking import TurnTaker
 from src.logger import get_logger
 from src.speech.addressee import is_question
 from src.strategy.game import PHASES, GameState
 from src.strategy.reference import ANCIENT_ONES, INVESTIGATORS
+from src.strategy.reflect import Thinker
 from src.strategy.setup import SetupReading, pending, read_setup
 
 log = get_logger(__name__)
@@ -223,6 +225,7 @@ class GameSession:
         setup_fn: Callable[..., SetupReading] = read_setup,
         taker: TurnTaker | None = None,
         background: bool = True,
+        reflect: bool | None = None,
         on_setup: Callable[[SetupReading, str], None] | None = None,
     ) -> None:
         self.game = game
@@ -235,8 +238,23 @@ class GameSession:
         self.setup_fn = setup_fn
         self.background = background
         self.on_setup = on_setup
+        # The dead time while the humans take their turns is where the slow thinking lives: a
+        # loop with tools, never in the turn path (src/strategy/reflect.py). It writes priorities
+        # the score reads; if it has not finished, the turn happens anyway with none.
+        #
+        # Always on its own thread, whatever ``background`` says. ``background=False`` means
+        # "this is a test or a script, do it inline", and a minute of model inline is the one
+        # thing this must never be. It follows ``background`` only in whether it runs at all,
+        # which keeps the test suite off Ollama.
+        self.reflects = (background and REFLECT_BETWEEN_ROUNDS) if reflect is None else reflect
+        self.thinker = Thinker(game, language=language, background=True)
         self.taker = taker or TurnTaker(
-            game, say=self.say, language=language, plan=plan, background=background
+            game,
+            say=self.say,
+            language=language,
+            plan=plan,
+            background=background,
+            intents=self.thinker.take,
         )
         self.readings = 0
         self._busy = threading.Lock()
@@ -400,6 +418,10 @@ class GameSession:
         if decision is None:
             return {"took_a_turn": False, "say": "", "note": "The turn could not be worked out."}
         self.save()
+        # The robot has played; the rest of this round belongs to the other players, and that is
+        # minutes of time nobody is waiting on. Start thinking about the next one.
+        if self.reflects:
+            self.thinker.start()
         return {
             "took_a_turn": decision.acted,
             "where": game.where_we_are(),

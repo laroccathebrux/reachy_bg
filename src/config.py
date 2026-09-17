@@ -183,6 +183,12 @@ ELEVEN_MAX_DURATION_S = _env_int("ELEVEN_MAX_DURATION_S", 7200)
 # Audio went to the agent and nothing came back for this long: the cloud session is probably
 # dead. The table hears silence and, without this, so does the log - measured against the
 # 2026-09-17 session, where a healthy answer came back 1.2 to 2.5 s after the gate released.
+# Does the robot think between rounds (src/strategy/reflect.py)? The loop runs on its own
+# thread while the humans take their turns and writes priorities the score reads next round. It
+# is never in the turn path - "think=True" in the turn was measured at 114 s against 4 s and
+# rejected - so switching it off costs turns nothing and only makes them less deliberate.
+REFLECT_BETWEEN_ROUNDS = os.getenv("REFLECT_BETWEEN_ROUNDS", "true").lower() not in ("0", "false", "no")
+
 AGENT_QUIET_S = float(os.getenv("AGENT_QUIET_S", "12"))
 # How much of an utterance has to stand above its own quiet floor before the "the agent has gone
 # silent" clock is started for it (src/speech/microphone.py, voiced_fraction). Whisper writes
@@ -333,6 +339,7 @@ __all__ = [
     "ELEVEN_TURN_TIMEOUT_S",
     "ELEVEN_MAX_DURATION_S",
     "AGENT_QUIET_S",
+    "REFLECT_BETWEEN_ROUNDS",
     "AGENT_QUIET_MIN_VOICE",
     "AUDIO_OUTPUT_DEVICE",
     "HEAD_SWAY",
