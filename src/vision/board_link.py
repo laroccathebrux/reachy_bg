@@ -136,6 +136,19 @@ def scan(*, url: str = VISION_URL, wait_s: float = 40.0, poll_s: float = 1.0) ->
     import httpx
 
     base = url.rstrip("/")
+
+    def last_at() -> float:
+        try:
+            body = httpx.get(f"{base}/scan_result", timeout=3.0).json()
+        except Exception:
+            return 0.0
+        return float(body.get("at") or 0.0) if isinstance(body, dict) else 0.0
+
+    # The preview keeps only the last scan, so a result that is already there says nothing about
+    # the one about to start. Without this the call read the previous scan as its own and came
+    # back in a second: the robot answered before it had looked, talked over its own sweep, and
+    # the sway resumed mid-turn and blurred the views it was meant to protect.
+    before = last_at()
     try:
         started = httpx.post(f"{base}/scan", json={"mode": "detect"}, timeout=5.0)
         if started.status_code == 409:
@@ -152,7 +165,9 @@ def scan(*, url: str = VISION_URL, wait_s: float = 40.0, poll_s: float = 1.0) ->
             result = httpx.get(f"{base}/scan_result", timeout=3.0).json()
         except Exception:
             continue
-        if isinstance(result, dict) and result.get("ok") and result.get("mode") == "detect":
+        if not isinstance(result, dict) or float(result.get("at") or 0.0) <= before:
+            continue  # still the previous scan, or none yet: the sweep is not done
+        if result.get("ok") and result.get("mode") == "detect":
             pieces = [
                 {"where": p.get("space") or p.get("near") or "off the spaces", "kind": p.get("kind", "piece")}
                 for p in (result.get("believed") or [])

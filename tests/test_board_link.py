@@ -120,7 +120,9 @@ def test_a_scan_is_started_and_waited_for(monkeypatch):
     from src.vision.board_link import scan
 
     posts, polls = [], [0]
+    stale = {"at": 100.0, "ok": True, "mode": "detect", "believed": [], "doubtful": []}
     found = {
+        "at": 200.0,
         "ok": True,
         "mode": "detect",
         "believed": [{"space": "Rome", "kind": "piece"}, {"space": None, "near": "Tokyo", "kind": "die"}],
@@ -137,15 +139,36 @@ def test_a_scan_is_started_and_waited_for(monkeypatch):
 
     def get(url, **k):
         polls[0] += 1
-        body = {} if polls[0] < 2 else found  # not finished on the first poll
+        # The first read is the one taken before the scan starts, and it holds the PREVIOUS
+        # scan. Reading that as this scan's answer is exactly the bug: the robot answered in a
+        # second, before it had looked.
+        body = stale if polls[0] <= 2 else found
         return type("R", (), {"json": lambda self: body})()
 
     monkeypatch.setattr(httpx, "get", get)
     out = scan(wait_s=10, poll_s=0.01)
     assert posts and posts[0].endswith("/scan")
+    assert polls[0] > 2, "it must not accept the scan that was already there"
     assert out["scanned"] is True and out["count"] == 2 and out["unsure"] == 1
     assert out["pieces"][0]["where"] == "Rome"
     assert out["pieces"][1]["where"] == "near Tokyo" or out["pieces"][1]["where"] == "Tokyo"
+
+
+def test_a_scan_that_never_finishes_is_not_reported_as_an_empty_board(monkeypatch):
+    """Timing out has to read as "I could not look", never as "there is nothing there"."""
+    import httpx
+
+    from src.vision.board_link import scan
+
+    stale = {"at": 100.0, "ok": True, "mode": "detect", "believed": [], "doubtful": []}
+    monkeypatch.setattr(
+        httpx,
+        "post",
+        lambda url, **k: type("R", (), {"status_code": 200, "raise_for_status": lambda s: None})(),
+    )
+    monkeypatch.setattr(httpx, "get", lambda url, **k: type("R", (), {"json": lambda s: stale})())
+    out = scan(wait_s=0.05, poll_s=0.01)
+    assert out["scanned"] is False and "did not finish" in out["note"]
 
 
 def test_a_scan_already_running_is_said_plainly(monkeypatch):

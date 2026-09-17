@@ -1296,6 +1296,7 @@ class Preview:
         if mode == "baseline":
             self.baselines.save(self.baseline_dir())
             self.last_scan = {
+                "at": time.time(),
                 "ok": True,
                 "mode": mode,
                 "views": views_out,
@@ -1336,6 +1337,8 @@ class Preview:
             text = f"{text} {reserve_text}"
         doubtful_out = [{**p.record(), "why": why} for p, why in weak]
         self.last_scan = {
+            # A caller that started this scan has to be able to tell it from the last one.
+            "at": time.time(),
             "ok": True,
             "mode": mode,
             "views": views_out,
